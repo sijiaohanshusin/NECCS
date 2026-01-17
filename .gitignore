@@ -2,55 +2,55 @@
 # Keil MDK (uVision) Generated
 # ==============================
 # 忽略编译输出文件夹 (通常位于 MDK-ARM 目录下)
-Objects/
-Listings/
-DebugConfig/
-RTE/
+#Objects/
+#Listings/
+#DebugConfig/
+#RTE/
 
 # 忽略构建过程中的中间文件
-*.o
-*.d
-*.crf
-*.dep
-*.map
-*.axf
-*.htm
-*.lnp
-*.sct
-*.lst
-*.hex
-*.bin
-*.lib
-*.elf
+#*.o
+#*.d
+#*.crf
+#*.dep
+#*.map
+#*.axf
+#*.htm
+#*.lnp
+#*.sct
+#*.lst
+#*.hex
+#*.bin
+#*.lib
+#*.elf
 
 # ==============================
 # Keil User Settings (重要!)
 # ==============================
 # .uvprojx 是工程文件，必须保留！
 # .uvoptx 是你的断点、窗口布局、调试器设置，必须忽略！
-*.uvoptx
-*.uvguix.*
-*.uvgui.*
+#*.uvoptx
+#*.uvguix.*
+#*.uvgui.*
 
 # 备份文件
-*.bak
-*.mbak
+#*.bak
+#*.mbak
 
 # ==============================
 # STM32CubeMX
 # ==============================
 # 这是一个生成的临时文件，记录最后一次生成的路径，通常可以忽略
-.mxproject
+#.mxproject
 
 # ==============================
 # J-Link / Debugger
 # ==============================
-JLinkLog.txt
-*.jlink
-*.ini
+#JLinkLog.txt
+#*.jlink
+#*.ini
 
 # ==============================
 # System / Misc
 # ==============================
-.DS_Store
-Thumbs.db
+#.DS_Store
+#Thumbs.db
