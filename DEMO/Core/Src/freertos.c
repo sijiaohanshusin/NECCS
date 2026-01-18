@@ -45,7 +45,10 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-
+TaskHandle_t StartTask_Handler;
+TaskHandle_t MyTask_Handler;
+TaskHandle_t MyTask2_Handler;
+TaskHandle_t MyTask3_Handler;
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -57,7 +60,10 @@ const osThreadAttr_t defaultTask_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-
+void StartTask(void *argument);
+void MyTask(void *argument);
+void MyTask2(void *argument);
+void MyTask3(void *argument);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -96,6 +102,7 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+  xTaskCreate(StartTask, "StartTask", 256, NULL, osPriorityNormal, &StartTask_Handler);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -117,13 +124,62 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    osDelay(1000);
   }
   /* USER CODE END StartDefaultTask */
 }
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+void StartTask(void *argument)
+{
+  // User-defined task code goes here
+  taskENTER_CRITICAL();
+  // Create MyTask
+  xTaskCreate(MyTask, "MyTask", 256, NULL, osPriorityNormal, &MyTask_Handler);
+  xTaskCreate(MyTask2, "MyTask2", 256, NULL, osPriorityNormal, &MyTask2_Handler);
+  xTaskCreate(MyTask3, "MyTask3", 256, NULL, osPriorityNormal, &MyTask3_Handler);
+  taskEXIT_CRITICAL();
+  vTaskDelete(StartTask_Handler);
+}
+void MyTask(void *argument)
+{
+  /* Infinite loop */
+  for(;;)
+  {
+    // User-defined task code goes here
+    osDelay(1000);
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+  }
+}
 
+void MyTask2(void *argument)
+{
+  /* Infinite loop */
+  for(;;)
+  {
+    // User-defined task code goes here
+    osDelay(1000);
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+  }
+}
+
+void MyTask3(void *argument)
+{
+  /* Infinite loop */
+  for(;;)
+  {
+    // User-defined task code goes here
+    osDelay(10);
+    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_SET&& MyTask2_Handler != NULL)
+    {
+      /* code */
+      vTaskDelete(MyTask2_Handler);
+      MyTask2_Handler = NULL;
+    }
+    
+  }
+}
 /* USER CODE END Application */
+
 
