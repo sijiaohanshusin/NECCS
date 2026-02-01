@@ -41,8 +41,8 @@
 "start\cmsis_os2.o"
 "start\heap_4.o"
 "start\port.o"
-"start\pcm6240.o"
 "start\soft_i2c.o"
+"start\pcmd3180.o"
 --strict --scatter "START\START.sct"
 --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
 --info sizes --info totals --info unused --info veneers

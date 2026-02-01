@@ -738,8 +738,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\Drivers\PCMD3180\Src\pcm6240.c</PathWithFileName>
-      <FilenameWithoutPath>pcm6240.c</FilenameWithoutPath>
+      <PathWithFileName>..\Drivers\PCMD3180\Src\soft_i2c.c</PathWithFileName>
+      <FilenameWithoutPath>soft_i2c.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>
@@ -750,8 +750,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\Drivers\PCMD3180\Src\soft_i2c.c</PathWithFileName>
-      <FilenameWithoutPath>soft_i2c.c</FilenameWithoutPath>
+      <PathWithFileName>..\Drivers\PCMD3180\Src\pcmd3180.c</PathWithFileName>
+      <FilenameWithoutPath>pcmd3180.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>

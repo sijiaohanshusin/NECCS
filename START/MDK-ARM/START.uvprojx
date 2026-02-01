@@ -771,14 +771,14 @@
           <GroupName>Drivers/PCMD3180</GroupName>
           <Files>
             <File>
-              <FileName>pcm6240.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Drivers\PCMD3180\Src\pcm6240.c</FilePath>
-            </File>
-            <File>
               <FileName>soft_i2c.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Drivers\PCMD3180\Src\soft_i2c.c</FilePath>
+            </File>
+            <File>
+              <FileName>pcmd3180.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\PCMD3180\Src\pcmd3180.c</FilePath>
             </File>
           </Files>
         </Group>

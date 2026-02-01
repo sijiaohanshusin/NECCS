@@ -39,3 +39,15 @@ start\soft_i2c.o: ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_tim.h
 start\soft_i2c.o: ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_tim_ex.h
 start\soft_i2c.o: ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_uart.h
 start\soft_i2c.o: ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_uart_ex.h
+start\soft_i2c.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
+start\soft_i2c.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h
+start\soft_i2c.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h
+start\soft_i2c.o: ../Core/Inc/FreeRTOSConfig.h
+start\soft_i2c.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/projdefs.h
+start\soft_i2c.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/portable.h
+start\soft_i2c.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/deprecated_definitions.h
+start\soft_i2c.o: ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F/portmacro.h
+start\soft_i2c.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrappers.h
+start\soft_i2c.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h
+start\soft_i2c.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/list.h
+start\soft_i2c.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
