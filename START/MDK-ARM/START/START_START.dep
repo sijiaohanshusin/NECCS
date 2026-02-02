@@ -1398,7 +1398,7 @@ I (../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrappers.h)(0x696B84BE
 I (../Middlewares/Third_Party/FreeRTOS/Source/include/task.h)(0x696B84BE)
 I (../Middlewares/Third_Party/FreeRTOS/Source/include/list.h)(0x696B84BE)
 F (..\Drivers\PCMD3180\Src\soft_i2c.c)(0x697F695A)(--c99 --gnu -c --cpu Cortex-M7.fp.dp -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32H7xx_HAL_Driver/Inc -I ../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F -I ../Drivers/CMSIS/Device/ST/STM32H7xx/Include -I ../Drivers/CMSIS/Include -I ..\Drivers\PCMD3180\Inc-I.\RTE\_START-IC:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\Core\Include-D__UVISION_VERSION="536" -D_RTE_ -DSTM32H743xx -D_RTE_ -DUSE_PWR_LDO_SUPPLY -DUSE_HAL_DRIVER -DSTM32H743xx-o start\soft_i2c.o --omf_browse start\soft_i2c.crf --depend start\soft_i2c.d)
-I (..\Drivers\PCMD3180\Inc\soft_i2c.h)(0x697B7570)
+I (..\Drivers\PCMD3180\Inc\soft_i2c.h)(0x6980607C)
 I (../Core/Inc/main.h)(0x6979D026)
 I (../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h)(0x696B8534)
 I (../Core/Inc/stm32h7xx_hal_conf.h)(0x697A037E)
@@ -1449,8 +1449,8 @@ I (../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrappers.h)(0x696B84BE
 I (../Middlewares/Third_Party/FreeRTOS/Source/include/task.h)(0x696B84BE)
 I (../Middlewares/Third_Party/FreeRTOS/Source/include/list.h)(0x696B84BE)
 I (../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h)(0x696B84BE)
-F (..\Drivers\PCMD3180\Src\pcmd3180.c)(0x697F6BAE)(--c99 --gnu -c --cpu Cortex-M7.fp.dp -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32H7xx_HAL_Driver/Inc -I ../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F -I ../Drivers/CMSIS/Device/ST/STM32H7xx/Include -I ../Drivers/CMSIS/Include -I ..\Drivers\PCMD3180\Inc-I.\RTE\_START-IC:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\Core\Include-D__UVISION_VERSION="536" -D_RTE_ -DSTM32H743xx -D_RTE_ -DUSE_PWR_LDO_SUPPLY -DUSE_HAL_DRIVER -DSTM32H743xx-o start\pcmd3180.o --omf_browse start\pcmd3180.crf --depend start\pcmd3180.d)
-I (..\Drivers\PCMD3180\Inc\pcmd3180.h)(0x697F6795)
+F (..\Drivers\PCMD3180\Src\pcmd3180.c)(0x69806113)(--c99 --gnu -c --cpu Cortex-M7.fp.dp -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32H7xx_HAL_Driver/Inc -I ../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F -I ../Drivers/CMSIS/Device/ST/STM32H7xx/Include -I ../Drivers/CMSIS/Include -I ..\Drivers\PCMD3180\Inc-I.\RTE\_START-IC:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\Core\Include-D__UVISION_VERSION="536" -D_RTE_ -DSTM32H743xx -D_RTE_ -DUSE_PWR_LDO_SUPPLY -DUSE_HAL_DRIVER -DSTM32H743xx-o start\pcmd3180.o --omf_browse start\pcmd3180.crf --depend start\pcmd3180.d)
+I (..\Drivers\PCMD3180\Inc\pcmd3180.h)(0x6980607E)
 I (C:\Keil_v5\ARM\ARMCC\include\stdint.h)(0x6025237E)
 I (../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h)(0x696B84BE)
 I (C:\Keil_v5\ARM\ARMCC\include\stddef.h)(0x6025237E)
@@ -1462,7 +1462,7 @@ I (../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F/portmacro.h
 I (../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrappers.h)(0x696B84BE)
 I (../Middlewares/Third_Party/FreeRTOS/Source/include/task.h)(0x696B84BE)
 I (../Middlewares/Third_Party/FreeRTOS/Source/include/list.h)(0x696B84BE)
-I (..\Drivers\PCMD3180\Inc\soft_i2c.h)(0x697B7570)
+I (..\Drivers\PCMD3180\Inc\soft_i2c.h)(0x6980607C)
 I (../Core/Inc/main.h)(0x6979D026)
 I (../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h)(0x696B8534)
 I (../Core/Inc/stm32h7xx_hal_conf.h)(0x697A037E)

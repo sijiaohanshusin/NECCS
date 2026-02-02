@@ -12,6 +12,7 @@
 static void Write_Reg(uint8_t devAddr, uint8_t reg, uint8_t val)
 {
     // TODO: 调用 soft_i2c.c 中的 PCMD_WriteReg(devAddr, reg, val);
+    PCMD_WriteReg(devAddr, reg, val);
 }
 
 // ==========================================
@@ -26,24 +27,32 @@ static void Write_Reg(uint8_t devAddr, uint8_t reg, uint8_t val)
  */
 uint8_t PCMD3180_Init_Device(uint8_t devAddr, uint8_t startSlot)
 {
-    // TODO: 1. 执行软复位 (PCMD_Ctrl_Reset)
-    
-    // TODO: 2. 必须有延时 (HAL_Delay 10ms) 等待复位完成
-
-    // TODO: 3. 进入睡眠模式 (PCMD_Ctrl_Sleep enable=1)
-    
-    // TODO: 4. 配置 ASI 格式 (PCMD_Config_ASI_Format)
-    
-    // TODO: 5. 配置 TDM 槽位 (PCMD_Config_TDM_Slots)
-    
-    // TODO: 6. 配置 PDM 接口与引脚 (PCMD_Config_PDM_IO)
-    
-    // TODO: 7. 配置 DSP/HPF (PCMD_Config_DSP)
-
-    // TODO: 8. 唤醒设备 (PCMD_Ctrl_Sleep enable=0)
-    
-    // TODO: 9. (可选) 检查 PLL 是否锁定或 ASI 总线错误
-    
+    //执行软复位 (PCMD_Ctrl_Reset)
+    PCMD_Ctrl_Reset(devAddr);
+    //等待复位完成
+    vTaskDelay(pdMS_TO_TICKS(10));//10ms复位时间
+    //进入睡眠模式
+    PCMD_Ctrl_Sleep(devAddr, 1);
+    //配置 ASI 格式                       
+    PCMD_Config_ASI_Format(devAddr);
+    //配置 TDM 槽位
+    PCMD_Config_TDM_Slots(devAddr, startSlot);
+    //配置 PDM 接口与引脚
+    PCMD_Config_PDM_IO(devAddr);
+    //配置 DSP/HPF
+    PCMD_Config_DSP(devAddr);
+    //配置通道输入为 PDM
+    PCMD_Config_Channels(devAddr);
+    //配置时钟架构
+    PCMD_Config_Clock_Mode(devAddr);
+    //唤醒设备
+    PCMD_Ctrl_Sleep(devAddr, 0);
+    //等待设备稳定
+    vTaskDelay(pdMS_TO_TICKS(10));//等待唤醒完成
+    //启用输入通道、ASI 输出与核心电源
+    PCMD_Enable_Blocks(devAddr);
+    //检查 PLL 是否锁定或 ASI 总线错误
+    //后面再写
     return 0;
 }
 
@@ -63,46 +72,110 @@ uint8_t PCMD3180_Check_ID(uint8_t devAddr)
 
 void PCMD_Ctrl_Reset(uint8_t devAddr)
 {
-    // TODO: 写入 SW_RESET (Reg 0x01) = 0x01
+    Write_Reg(devAddr, PCMD_REG_SW_RESET, 0x01);
 }
 
 void PCMD_Ctrl_Sleep(uint8_t devAddr, uint8_t enable)
 {
-    // TODO: 如果 enable==1, SLEEP_CFG (Reg 0x02) = 0x02
-    // TODO: 如果 enable==0, SLEEP_CFG (Reg 0x02) = 0x00 (Wake up)
+    if (enable==1 )
+    {
+        Write_Reg(devAddr, PCMD_REG_SLEEP_CFG, 0x80); // Sleep mode
+    }
+    else
+    {
+        Write_Reg(devAddr, PCMD_REG_SLEEP_CFG, 0x81); // Wake up
+    }
 }
 
 void PCMD_Config_ASI_Format(uint8_t devAddr)
 {
-    // TODO: 配置 Reg 0x07 (TDM mode, 16-bit) -> 建议 0x81
-    // TODO: 配置 Reg 0x08 (Tx Offset = 1) -> 建议 0x01
+    //SAI_CFG0: 其他时隙保持输出高阻态
+    Write_Reg(devAddr, PCMD_REG_ASI_CFG0, 0x01);
+    //SAI_CFG1: ASI数据MSB偏移一个BCLK周期
+    Write_Reg(devAddr, PCMD_REG_ASI_CFG1, 0x01);
+    //SAI_CFG2
+    Write_Reg(devAddr, PCMD_REG_ASI_CFG2, 0x00);
 }
 
 void PCMD_Config_TDM_Slots(uint8_t devAddr, uint8_t startSlot)
 {
-    // TODO: 这是一个循环或连续写入
     // 将 Ch1 - Ch8 (Reg 0x0B - 0x12) 分别映射到 startSlot, startSlot+1 ...
-    
-    /* 伪代码提示:
-    for (int i = 0; i < 8; i++) {
+    for (uint8_t i = 0; i < 8; i++)
+    {
         Write_Reg(devAddr, PCMD_REG_ASI_CH1 + i, startSlot + i);
     }
-    */
+}
+
+// 配置时钟架构
+void PCMD_Config_Clock_Mode(uint8_t devAddr)
+{
+    // 写入 0x00 即可完美适配
+    PCMD_WriteReg(devAddr, PCMD_REG_MST_CFG0, 0x00);
+    PCMD_WriteReg(devAddr, PCMD_REG_MST_CFG1, 0x00);
+    //配置时钟输入引脚
+    PCMD_WriteReg(devAddr, PCMD_REG_CLK_SRC, 0x00);
 }
 
 void PCMD_Config_PDM_IO(uint8_t devAddr)
 {
-    // TODO: 1. 设置 PDMCLK_CFG (Reg 0x1F) -> 64x OSR (0x01)
-    
-    // TODO: 2. 配置 GPIO 复用
+    PCMD_WriteReg(devAddr, PCMD_REG_PDMCLK_CFG, 0x40);
+    PCMD_WriteReg(devAddr, PCMD_REG_PDMIN_CFG, 0x00);
+    //配置 GPIO 复用
+    PCMD_WriteReg(devAddr, PCMD_REG_GPIO_CFG0, 0x00);
     // GPO1-4 (Reg 0x22-0x25) 全部设为 PDM CLK Output (通常是 0x04)
-    
+    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG0, 0x40);
+    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG1, 0x40);
+    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG2, 0x40);
+    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG3, 0x40);
     // TODO: 3. (可选) 显式配置 GPI 映射 (如果默认映射不对)
+    //GPO_VAL Register跳过
+    //GPIO_MON Register跳过
+    //GPI配置
+    PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG0, 0x45);
+    PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG1, 0x67);
 }
 
 void PCMD_Config_DSP(uint8_t devAddr)
 {
-    // TODO: 1. 启用 HPF (Reg 0x6B) -> 0x02 (96Hz for 48k)
-    
+    //启用 HPF (Reg 0x6B) -> 0x02 (96Hz for 48k)
+    PCMD_WriteReg(devAddr, PCMD_REG_DSP_CFG0, 0x02);//可在图形界面配置
     // TODO: 2. (可选) 设置输入增益 (Volume)
+    PCMD_WriteReg(devAddr, PCMD_REG_DSP_CFG1, 0x00);
+}
+
+void PCMD_Config_Channels(uint8_t devAddr)
+{
+    // 1. 配置 VREF (Reg 0x3B)
+    // 假设 AVDD=3.3V, 使用 2.75V VREF
+    PCMD_WriteReg(devAddr, PCMD_REG_BIAS_CFG, 0x00);
+
+    // 2. 批量配置 8 个通道
+    // 每个通道占 5 个寄存器 (CFG0 - CFG4)
+    // 我们只需要改 CFG0 (开启PDM)，其他(Vol, Phase)保持默认0
+    
+    uint8_t ch_base;
+    for (int i = 0; i < 8; i++) {
+        // 计算每个通道的 CFG0 地址
+        // CH1=0x3C, CH2=0x41, ... 偏移量是 5 * i
+        ch_base = PCMD_REG_CH1_CFG0 + (i * 5);
+        // 关键：将 Input Source 设为 PDM
+        PCMD_WriteReg(devAddr, ch_base, 0x40);
+        // (可选) 确保 Phase Calibration 为 0 (基地址 + 4)
+        PCMD_WriteReg(devAddr, ch_base + 4, 0x00);
+    }
+}
+
+void PCMD_Enable_Blocks(uint8_t devAddr)
+{
+    // 1. 开启输入通道 (Ch1-Ch8)
+    // 对应文档 Step g: Enable input channels
+    PCMD_WriteReg(devAddr, PCMD_REG_IN_CH_EN, 0xFF);
+
+    // 2. 开启 ASI 输出 (Ch1-Ch8)
+    // 对应文档 Step h: Enable ASI output
+    PCMD_WriteReg(devAddr, PCMD_REG_ASI_OUT_EN, 0xFF);
+
+    // 3. 启动 PLL 和 PDM 转换器核心电源
+    // 对应文档 Step i: Power-up PDM & PLL
+    PCMD_WriteReg(devAddr, PCMD_REG_PWR_CFG, 0xE0);
 }

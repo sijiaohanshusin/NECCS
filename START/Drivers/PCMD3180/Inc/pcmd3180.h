@@ -169,4 +169,14 @@ void PCMD_Config_PDM_IO(uint8_t devAddr);
 // 6. 信号处理配置 (HPF, 增益等)
 void PCMD_Config_DSP(uint8_t devAddr);
 
+// 7. 输入通道配置 (设置为 PDM 输入)
+void PCMD_Config_Channels(uint8_t devAddr);
+
+// 8. 时钟架构配置 (主从模式, 时钟源等)
+void PCMD_Config_Clock_Mode(uint8_t devAddr);
+
+// 9. 启用必要模块 (输入通道, ASI 输出, 核心电源)
+void PCMD_Enable_Blocks(uint8_t devAddr);
+
+
 #endif
