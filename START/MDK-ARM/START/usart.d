@@ -40,3 +40,14 @@ start\usart.o: ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_tim_ex.h
 start\usart.o: ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_uart.h
 start\usart.o: ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_uart_ex.h
 start\usart.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
+start\usart.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h
+start\usart.o: ../Core/Inc/FreeRTOSConfig.h
+start\usart.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/projdefs.h
+start\usart.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/portable.h
+start\usart.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/deprecated_definitions.h
+start\usart.o: ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F/portmacro.h
+start\usart.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrappers.h
+start\usart.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/semphr.h
+start\usart.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/queue.h
+start\usart.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h
+start\usart.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/list.h

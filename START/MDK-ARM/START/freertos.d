@@ -50,3 +50,5 @@ start\freertos.o: ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_uart_ex.h
 start\freertos.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h
 start\freertos.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
 start\freertos.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
+start\freertos.o: ../Drivers/PCMD3180/Inc/pcmd3180.h
+start\freertos.o: ../Drivers/PCMD3180/Inc/soft_i2c.h

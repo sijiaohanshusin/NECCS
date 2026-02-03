@@ -3,6 +3,7 @@
 "start\main.o"
 "start\gpio.o"
 "start\freertos.o"
+"start\dma.o"
 "start\sai.o"
 "start\usart.o"
 "start\stm32h7xx_it.o"
@@ -43,7 +44,7 @@
 "start\port.o"
 "start\soft_i2c.o"
 "start\pcmd3180.o"
---strict --scatter "START\START.sct"
+--library_type=microlib --strict --scatter "START\START.sct"
 --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
 --info sizes --info totals --info unused --info veneers
 --list "START.map" -o START\START.axf

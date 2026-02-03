@@ -1,5 +1,6 @@
 #include "pcmd3180.h"
 #include "soft_i2c.h" // 引入你的 I2C 驱动，用于调用 PCMD_WriteReg
+#include <stdio.h>
 
 // ==========================================
 // 内部辅助函数
@@ -178,4 +179,78 @@ void PCMD_Enable_Blocks(uint8_t devAddr)
     // 3. 启动 PLL 和 PDM 转换器核心电源
     // 对应文档 Step i: Power-up PDM & PLL
     PCMD_WriteReg(devAddr, PCMD_REG_PWR_CFG, 0xE0);
+}
+
+void PCMD_Check_Health(uint8_t devAddr)
+{
+    uint8_t status_int = 0;
+    uint8_t status_pwr = 0;
+    
+    // 1. 检查是否有过报错 (读完会自动清除)
+    PCMD_ReadReg(devAddr, PCMD_REG_INT_LTCH0, &status_int); // Reg 0x36
+    
+    if (status_int & 0x80) printf("[Error] ASI Bus Clock Error on 0x%02X!\r\n", devAddr);
+    if (status_int & 0x40) printf("[Error] PLL Lock Lost on 0x%02X!\r\n", devAddr);
+    
+    // 2. 检查电源配置是否掉线
+    PCMD_ReadReg(devAddr, PCMD_REG_PWR_CFG, &status_pwr);   // Reg 0x75
+    if (status_pwr != 0xE0) printf("[Error] Power Config Lost (Read: 0x%02X)!\r\n", status_pwr);
+    // 3. (可选) 检查 GPI1 实时状态
+    // 如果你在调试麦克风连接，可以取消注释下面这段
+    
+    uint8_t gpi_state;
+    PCMD_ReadReg(devAddr, PCMD_REG_GPI_MON, &gpi_state);    // Reg 0x2F
+    printf("GPI State: 0x%02X\r\n", gpi_state);
+    
+}
+
+// 引入 I2C 驱动头文件 (确保能调用 PCMD_ReadReg)
+#include "pcmd3180.h"
+#include <stdio.h>
+
+void PCMD_Dump_Registers(uint8_t devAddr)
+{
+    uint8_t val;
+    printf("\r\n========================================\r\n");
+    printf(" PCMD3180 Register Dump | Device: 0x%02X\r\n", devAddr);
+    printf("========================================\r\n");
+
+    // --- 1. 系统与状态 (System) ---
+    PCMD_ReadReg(devAddr, 0x00, &val); printf("[0x00] Page Select : 0x%02X (Expect 0x00)\r\n", val);
+    PCMD_ReadReg(devAddr, 0x02, &val); printf("[0x02] SLEEP_CFG   : 0x%02X (Expect 0x01/81)\r\n", val);
+    
+    // --- 2. ASI 总线配置 (ASI Bus) ---
+    PCMD_ReadReg(devAddr, 0x07, &val); printf("[0x07] ASI_CFG0    : 0x%02X (Expect 0x01)\r\n", val);
+    PCMD_ReadReg(devAddr, 0x08, &val); printf("[0x08] ASI_CFG1    : 0x%02X (Expect 0x01)\r\n", val);
+    PCMD_ReadReg(devAddr, 0x0B, &val); printf("[0x0B] CH1_SLOT    : 0x%02X\r\n", val);
+    
+    // --- 3. 时钟架构 (Clock) ---
+    PCMD_ReadReg(devAddr, 0x13, &val); printf("[0x13] MST_CFG0    : 0x%02X (Expect 0x00)\r\n", val);
+    PCMD_ReadReg(devAddr, 0x16, &val); printf("[0x16] CLK_SRC     : 0x%02X (Expect 0x00)\r\n", val);
+    PCMD_ReadReg(devAddr, 0x1F, &val); printf("[0x1F] PDMCLK_CFG  : 0x%02X (Expect 0x40)\r\n", val);
+    
+    // --- 4. 麦克风接口与引脚 (PDM IO) ---
+    PCMD_ReadReg(devAddr, 0x20, &val); printf("[0x20] PDMIN_CFG   : 0x%02X (Expect 0x00)\r\n", val);
+    PCMD_ReadReg(devAddr, 0x22, &val); printf("[0x22] GPO1_CFG    : 0x%02X (Expect 0x40)\r\n", val);
+    PCMD_ReadReg(devAddr, 0x2B, &val); printf("[0x2B] GPI_CFG0    : 0x%02X (Expect 0x45)\r\n", val);
+    
+    // --- 5. 关键状态监控 (Monitoring) ---
+    // GPI_MON: 实时查看引脚电平 (排查虚焊神器)
+    PCMD_ReadReg(devAddr, 0x2F, &val); printf("[0x2F] GPI_MON     : 0x%02X (Input State)\r\n", val);
+    // INT_LTCH0: 错误历史记录
+    PCMD_ReadReg(devAddr, 0x36, &val); printf("[0x36] INT_LTCH0   : 0x%02X (Error Log)\r\n", val);
+    
+    // --- 6. 通道配置 (Channel Sample) ---
+    // 只看 Ch1 就够了，其他通道应该是一样的
+    PCMD_ReadReg(devAddr, 0x3C, &val); printf("[0x3C] CH1_INSRC   : 0x%02X (Expect 0x40)\r\n", val);
+    
+    // --- 7. DSP 配置 ---
+    PCMD_ReadReg(devAddr, 0x6B, &val); printf("[0x6B] DSP_CFG0    : 0x%02X (Expect 0x02)\r\n", val);
+    
+    // --- 8. 全局使能与电源 (Enable & Power) ---
+    PCMD_ReadReg(devAddr, 0x73, &val); printf("[0x73] IN_CH_EN    : 0x%02X (Expect 0xFF)\r\n", val);
+    PCMD_ReadReg(devAddr, 0x74, &val); printf("[0x74] ASI_OUT_EN  : 0x%02X (Expect 0xFF)\r\n", val);
+    PCMD_ReadReg(devAddr, 0x75, &val); printf("[0x75] PWR_CFG     : 0x%02X (Expect 0xE0)\r\n", val);
+    
+    printf("========================================\r\n\r\n");
 }

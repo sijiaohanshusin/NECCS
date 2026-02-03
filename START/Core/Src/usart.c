@@ -22,6 +22,11 @@
 
 /* USER CODE BEGIN 0 */
 #include <stdio.h>
+#include "FreeRTOS.h"
+#include "semphr.h"
+#include "usart.h" // 确保包含 huart1 定义
+
+SemaphoreHandle_t txMutex = NULL;
 /* USER CODE END 0 */
 
 UART_HandleTypeDef huart1;
@@ -142,9 +147,24 @@ extern UART_HandleTypeDef huart1;
 // 重写 fputc 函数
 int fputc(int ch, FILE *f)
 {
-    // 采用轮询方式发送 1 个字节
-    // 注意：如果你用的不是 USART1，请将 &huart1 改为 &huart2 或其他
-    HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 1000);
+    // 如果是在中断中调用，绝不能使用阻塞式发送！
+    // 直接放弃发送或使用特殊处理，防止系统死锁
+    if (xPortIsInsideInterrupt()) {
+        return ch; // 这里的策略是：中断里禁止打印，防止卡死
+    }
+
+    // 确保互斥量已创建
+    if (txMutex != NULL) {
+        // 获取锁，等待时间设为最大，或者设为一个合理值比如 100ms
+        if (xSemaphoreTake(txMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 100);
+            xSemaphoreGive(txMutex); // 发送完释放锁
+        }
+    } else {
+        // 互斥量未初始化时的备选方案（慎用，可能还是会有冲突）
+        HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 100);
+    }
+    
     return ch;
 }
 /* USER CODE END 1 */

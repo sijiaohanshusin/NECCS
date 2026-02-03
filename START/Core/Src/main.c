@@ -19,13 +19,16 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "dma.h"
 #include "sai.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
+#include "pcmd3180.h"
+#include "soft_i2c.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,7 +49,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+extern int16_t Rx_Buff[AUDIO_BUFFER_SIZE];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -82,7 +85,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  Soft_I2C_Init();
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -94,9 +97,11 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART1_UART_Init();
   MX_SAI1_Init();
   /* USER CODE BEGIN 2 */
+
 
   /* USER CODE END 2 */
 
@@ -180,7 +185,25 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai)
+{
+    // 这里的地址和长度计算必须极其小心
+    // Invalidate: 告诉 CPU "Cache 里的数据脏了，去 RAM 里重新拉一份"
+    //SCB_InvalidateDCache_by_Addr((uint32_t *)Rx_Buff, AUDIO_BUFFER_SIZE * 2);
 
+    // 现在可以安全读取 Rx_Buff 了
+    // for (uint32_t i = 0; i < AUDIO_BUFFER_SIZE; i++)
+    // {
+    //   if (Rx_Buff[i]!=0xFF)
+    //   {
+    //     /* code */
+    //     printf("Received data[%lu]: 0x%04X\r\n", i, Rx_Buff[i]);
+    //   }
+      
+    // }
+    
+    
+}
 /* USER CODE END 4 */
 
  /* MPU Configuration */

@@ -49,6 +49,10 @@ start\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrappers.h
 start\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h
 start\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/list.h
 start\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
+start\main.o: ../Core/Inc/dma.h
 start\main.o: ../Core/Inc/sai.h
 start\main.o: ../Core/Inc/usart.h
 start\main.o: ../Core/Inc/gpio.h
+start\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
+start\main.o: ../Drivers/PCMD3180/Inc/pcmd3180.h
+start\main.o: ../Drivers/PCMD3180/Inc/soft_i2c.h

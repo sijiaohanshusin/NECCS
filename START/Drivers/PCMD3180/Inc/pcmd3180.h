@@ -137,6 +137,8 @@
 #define PCMD_REG_DEV_STS1       0x77  // [R]   设备状态1
 #define PCMD_REG_I2C_CKSUM      0x7E  // [R/W] I2C 校验和
 
+
+#define AUDIO_BUFFER_SIZE  (16 * 256)
 // ==========================================
 // 核心 API (供应用层调用)
 // ==========================================
@@ -178,5 +180,9 @@ void PCMD_Config_Clock_Mode(uint8_t devAddr);
 // 9. 启用必要模块 (输入通道, ASI 输出, 核心电源)
 void PCMD_Enable_Blocks(uint8_t devAddr);
 
+// 10. 健康检查 (PLL 锁定, ASI 错误等)
+void PCMD_Check_Health(uint8_t devAddr);
 
+// 11. 寄存器转储 (调试用)
+void PCMD_Dump_Registers(uint8_t devAddr);
 #endif

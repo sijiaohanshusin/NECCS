@@ -15,7 +15,8 @@ static void I2C_Delay_us(volatile uint32_t microseconds)
     uint32_t clk_cycle_start = DWT->CYCCNT;
     // H7通常运行在400MHz+, 1us = 400-480 cycles
     // SystemCoreClock 是系统核心时钟频率
-    microseconds *= (SystemCoreClock / 1000000); 
+    //microseconds *= (SystemCoreClock / 1000000); 
+    microseconds *= (SystemCoreClock / 100000); 
     while ((DWT->CYCCNT - clk_cycle_start) < microseconds);
 }
 
@@ -208,4 +209,30 @@ uint8_t PCMD_ReadReg(uint8_t devAddr, uint8_t regAddr, uint8_t *pData)
     I2C_Stop();
     osMutexRelease(i2cMutexHandle);
     return 0;
+}
+
+void I2C_Scan(void)
+{
+    printf("Scanning I2C bus...\r\n");
+    for(uint16_t i = 0; i < 128; i++)
+    {
+        // 尝试向地址 i 发送一个空写命令
+        // I2C_Start -> Send Addr(Write) -> Wait Ack
+        I2C_Start();
+        I2C_SendByte(i << 1); // 转换为8位写地址
+        
+        if(I2C_WaitAck() == 0) // 收到 ACK (0表示成功)
+        {
+            printf("Device found at 0x%02X\r\n", i);
+            I2C_Stop();
+        }
+        else
+        {
+            I2C_Stop(); // 没收到ACK，发送Stop
+        }
+        
+        // 稍微延时，防止发太快
+        osDelay(10);
+    }
+    printf("Scan done.\r\n");
 }
