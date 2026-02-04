@@ -58,17 +58,18 @@ TaskHandle_t MyTask_Handler;
 TaskHandle_t MyTask2_Handler;
 TaskHandle_t MyTask3_Handler;
 extern SAI_HandleTypeDef hsai_BlockA1;
+extern volatile int16_t found_val;
 // 缓冲区定义
 // 注意：在 STM32H7 上，为了 DMA 访问安全，建议将此数组放在 D2 域的 SRAM 中
 // 或者使用 __attribute__((section(".RxDecripSection"))) 等方式指定位置
 // 如果不指定，默认在 AXI SRAM，需要处理 Cache (见后文)
-int16_t Rx_Buff[AUDIO_BUFFER_SIZE];
+__attribute__((aligned(32))) int16_t Rx_Buff[AUDIO_BUFFER_SIZE];
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 512 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 
@@ -117,7 +118,7 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
-  xTaskCreate(PCMD3180InitTask, "PCMD3180InitTask", 512, NULL, osPriorityNormal, NULL);
+  xTaskCreate(PCMD3180InitTask, "PCMD3180InitTask", 512, NULL, osPriorityNormal + 2, NULL);
   xTaskCreate(StartTask, "StartTask", 256, NULL, osPriorityNormal, &StartTask_Handler);
   /* USER CODE END RTOS_THREADS */
 
@@ -143,6 +144,8 @@ void StartDefaultTask(void *argument)
   {
     /* USER CODE BEGIN 2 */
     PCMD_Dump_Registers(PCMD3180_ADDR_1);
+    I2C_Scan();
+    //printf("Received data sample: %d\n", found_val);
     /* USER CODE END 2 */
     osDelay(1000);
   }
@@ -198,7 +201,6 @@ void MyTask2(void *argument)
   {
     // User-defined task code goes here
     osDelay(1000);
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
   }
 }
 
@@ -223,3 +225,4 @@ void MyTask3(void *argument)
   }
 }
 /* USER CODE END Application */
+

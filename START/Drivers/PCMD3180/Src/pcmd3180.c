@@ -33,8 +33,12 @@ uint8_t PCMD3180_Init_Device(uint8_t devAddr, uint8_t startSlot)
     //等待复位完成
     vTaskDelay(pdMS_TO_TICKS(10));//10ms复位时间
     //进入睡眠模式
-    PCMD_Ctrl_Sleep(devAddr, 1);
-    //配置 ASI 格式                       
+    PCMD_Ctrl_Sleep(devAddr, 0);
+    //配置 ASI 格式      
+    vTaskDelay(pdMS_TO_TICKS(10));//10ms复位时间    
+    //配置各通道
+    PCMD_Config_Channels(devAddr);       
+    //配置 ASI 格式      
     PCMD_Config_ASI_Format(devAddr);
     //配置 TDM 槽位
     PCMD_Config_TDM_Slots(devAddr, startSlot);
@@ -42,14 +46,18 @@ uint8_t PCMD3180_Init_Device(uint8_t devAddr, uint8_t startSlot)
     PCMD_Config_PDM_IO(devAddr);
     //配置 DSP/HPF
     PCMD_Config_DSP(devAddr);
-    //配置通道输入为 PDM
-    PCMD_Config_Channels(devAddr);
     //配置时钟架构
     PCMD_Config_Clock_Mode(devAddr);
     //唤醒设备
     PCMD_Ctrl_Sleep(devAddr, 0);
+
+    PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG0, 0x45);
+    PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG1, 0x67);
     //等待设备稳定
     vTaskDelay(pdMS_TO_TICKS(10));//等待唤醒完成
+    PCMD_WriteReg(devAddr, PCMD_REG_IN_CH_EN, 0xFF);
+    PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG0, 0x45);
+    PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG1, 0x67);
     //启用输入通道、ASI 输出与核心电源
     PCMD_Enable_Blocks(devAddr);
     //检查 PLL 是否锁定或 ASI 总线错误
@@ -57,6 +65,60 @@ uint8_t PCMD3180_Init_Device(uint8_t devAddr, uint8_t startSlot)
     return 0;
 }
 
+// /**
+//  * @brief  初始化 PCMD3180 芯片 (严格遵循手册顺序 a-k)
+//  * @param  devAddr: 芯片地址 (0x4C 或 0x4D)
+//  * @param  startSlot: TDM 起始槽位
+//  * @return 0=成功
+//  */
+// uint8_t PCMD3180_Init_Device(uint8_t devAddr, uint8_t startSlot)
+// {
+//     // 0. 执行软复位 (Good Practice)
+//     PCMD_Ctrl_Reset(devAddr);
+//     vTaskDelay(pdMS_TO_TICKS(10)); // 等待复位完成
+
+//     // --- Step a: 唤醒设备 (Disable sleep mode) ---
+//     // 注意：PCMD_Ctrl_Sleep(..., 0) 写入的是 0x81 (Bit0=1 -> Active)
+//     // 手册要求必须先唤醒，再进行后续配置
+//     PCMD_Ctrl_Sleep(devAddr, 0); 
+
+//     // --- Step b: 等待至少 1ms (Wait for internal wake-up) ---
+//     vTaskDelay(pdMS_TO_TICKS(10)); // 给足 10ms 确保稳定
+
+//     // --- Step c ~ f: 配置各项参数 (Override default config) ---
+//     // 此时芯片已处于 Active 状态，可以安全写入配置
+    
+//     // 配置 ASI 格式 (TDM/I2S)
+//     PCMD_Config_ASI_Format(devAddr);
+    
+//     // 配置 TDM 槽位映射
+//     PCMD_Config_TDM_Slots(devAddr, startSlot);
+    
+//     // Step d: 配置输入源为 PDM (CHx_INSRC)
+//     PCMD_Config_Channels(devAddr);
+    
+//     // Step e & f: 配置 PDM 引脚 (GPOx->PDMCLK, GPIx->PDMDIN)
+//     // 你的 PCMD_Config_PDM_IO 函数里已经包含了这些寄存器的写入
+//     PCMD_Config_PDM_IO(devAddr);
+    
+//     // 配置 DSP/HPF
+//     PCMD_Config_DSP(devAddr);
+    
+//     // 配置时钟架构 (Master/Slave)
+//     PCMD_Config_Clock_Mode(devAddr);
+
+//     PCMD_Ctrl_Sleep(devAddr, 0); 
+//     // --- Step g, h, i: 全局使能 (Enable Blocks) ---
+//     // g: Enable input channels (IN_CH_EN)
+//     // h: Enable ASI output (ASI_OUT_EN)
+//     // i: Power-up PDM & PLL (PWR_CFG)
+//     PCMD_Enable_Blocks(devAddr);
+
+//     // Step j: Apply FSYNC and BCLK 
+//     // (这由 STM32 的 SAI/DMA 完成，通常在初始化此函数前后已经开启)
+
+//     return 0;
+// }
 /**
  * @brief  检查设备 ID 或 I2C 通讯是否正常
  */
@@ -124,10 +186,10 @@ void PCMD_Config_PDM_IO(uint8_t devAddr)
     //配置 GPIO 复用
     PCMD_WriteReg(devAddr, PCMD_REG_GPIO_CFG0, 0x00);
     // GPO1-4 (Reg 0x22-0x25) 全部设为 PDM CLK Output (通常是 0x04)
-    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG0, 0x40);
-    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG1, 0x40);
-    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG2, 0x40);
-    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG3, 0x40);
+    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG0, 0x41);
+    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG1, 0x41);
+    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG2, 0x41);
+    PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG3, 0x41);
     // TODO: 3. (可选) 显式配置 GPI 映射 (如果默认映射不对)
     //GPO_VAL Register跳过
     //GPIO_MON Register跳过
@@ -162,7 +224,7 @@ void PCMD_Config_Channels(uint8_t devAddr)
         // 关键：将 Input Source 设为 PDM
         PCMD_WriteReg(devAddr, ch_base, 0x40);
         // (可选) 确保 Phase Calibration 为 0 (基地址 + 4)
-        PCMD_WriteReg(devAddr, ch_base + 4, 0x00);
+        //PCMD_WriteReg(devAddr, ch_base + 4, 0x00);
     }
 }
 
@@ -178,7 +240,7 @@ void PCMD_Enable_Blocks(uint8_t devAddr)
 
     // 3. 启动 PLL 和 PDM 转换器核心电源
     // 对应文档 Step i: Power-up PDM & PLL
-    PCMD_WriteReg(devAddr, PCMD_REG_PWR_CFG, 0xE0);
+    PCMD_WriteReg(devAddr, PCMD_REG_PWR_CFG, 0x60);
 }
 
 void PCMD_Check_Health(uint8_t devAddr)
