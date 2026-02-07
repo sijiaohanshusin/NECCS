@@ -20,105 +20,42 @@ static void Write_Reg(uint8_t devAddr, uint8_t reg, uint8_t val)
 // 核心流程控制
 // ==========================================
 
-/**
- * @brief  初始化单个 PCMD3180 芯片
- * @param  devAddr: 芯片地址 (0x4C 或 0x4D)
- * @param  startSlot: TDM 起始槽位 (Chip A=0, Chip B=8)
- * @return 0=成功, 1=失败
- */
+// 核心配置逻辑：Wakeup -> Wait -> Config (High Drive) -> Enable
 uint8_t PCMD3180_Init_Device(uint8_t devAddr, uint8_t startSlot)
 {
-    //执行软复位 (PCMD_Ctrl_Reset)
+    // 0. 软复位
     PCMD_Ctrl_Reset(devAddr);
-    //等待复位完成
-    vTaskDelay(pdMS_TO_TICKS(10));//10ms复位时间
-    //进入睡眠模式
-    PCMD_Ctrl_Sleep(devAddr, 0);
-    //配置 ASI 格式      
-    vTaskDelay(pdMS_TO_TICKS(10));//10ms复位时间    
-    //配置各通道
-    PCMD_Config_Channels(devAddr);       
-    //配置 ASI 格式      
-    PCMD_Config_ASI_Format(devAddr);
-    //配置 TDM 槽位
-    PCMD_Config_TDM_Slots(devAddr, startSlot);
-    //配置 PDM 接口与引脚
-    PCMD_Config_PDM_IO(devAddr);
-    //配置 DSP/HPF
-    PCMD_Config_DSP(devAddr);
-    //配置时钟架构
-    PCMD_Config_Clock_Mode(devAddr);
-    //唤醒设备
-    PCMD_Ctrl_Sleep(devAddr, 0);
+    vTaskDelay(pdMS_TO_TICKS(10));
 
-    PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG0, 0x45);
-    PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG1, 0x67);
-    //等待设备稳定
-    vTaskDelay(pdMS_TO_TICKS(10));//等待唤醒完成
-    PCMD_WriteReg(devAddr, PCMD_REG_IN_CH_EN, 0xFF);
-    PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG0, 0x45);
-    PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG1, 0x67);
-    //启用输入通道、ASI 输出与核心电源
+    // 1. 唤醒设备 (关键：写 0x81 到 Reg 0x02)
+    PCMD_Ctrl_Sleep(devAddr, 0); 
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    // --- 配置阶段 ---
+    // ASI 格式 (Offset=1, TDM Mode)
+    PCMD_Config_ASI_Format(devAddr);
+    // TDM 槽位 (Chip A=0, Chip B=8)
+    PCMD_Config_TDM_Slots(devAddr, startSlot);
+    
+    // PDM 接口与驱动能力
+    // 建议保留 0x41 (High Drive) 以获得最佳波形边沿
+    PCMD_Config_PDM_IO(devAddr); 
+    
+    // DSP (HPF Enabled 96Hz)
+    PCMD_Config_DSP(devAddr);
+    // 输入源设为 PDM
+    PCMD_Config_Channels(devAddr);
+    // 时钟架构 (Slave Mode, Auto Clock)
+    PCMD_Config_Clock_Mode(devAddr);
+
+    // --- 启动阶段 ---
+    // 全局使能 (PWR_CFG=0x60: Ext Mic Power, PLL ON)
     PCMD_Enable_Blocks(devAddr);
-    //检查 PLL 是否锁定或 ASI 总线错误
-    //后面再写
+
     return 0;
 }
 
-// /**
-//  * @brief  初始化 PCMD3180 芯片 (严格遵循手册顺序 a-k)
-//  * @param  devAddr: 芯片地址 (0x4C 或 0x4D)
-//  * @param  startSlot: TDM 起始槽位
-//  * @return 0=成功
-//  */
-// uint8_t PCMD3180_Init_Device(uint8_t devAddr, uint8_t startSlot)
-// {
-//     // 0. 执行软复位 (Good Practice)
-//     PCMD_Ctrl_Reset(devAddr);
-//     vTaskDelay(pdMS_TO_TICKS(10)); // 等待复位完成
 
-//     // --- Step a: 唤醒设备 (Disable sleep mode) ---
-//     // 注意：PCMD_Ctrl_Sleep(..., 0) 写入的是 0x81 (Bit0=1 -> Active)
-//     // 手册要求必须先唤醒，再进行后续配置
-//     PCMD_Ctrl_Sleep(devAddr, 0); 
-
-//     // --- Step b: 等待至少 1ms (Wait for internal wake-up) ---
-//     vTaskDelay(pdMS_TO_TICKS(10)); // 给足 10ms 确保稳定
-
-//     // --- Step c ~ f: 配置各项参数 (Override default config) ---
-//     // 此时芯片已处于 Active 状态，可以安全写入配置
-    
-//     // 配置 ASI 格式 (TDM/I2S)
-//     PCMD_Config_ASI_Format(devAddr);
-    
-//     // 配置 TDM 槽位映射
-//     PCMD_Config_TDM_Slots(devAddr, startSlot);
-    
-//     // Step d: 配置输入源为 PDM (CHx_INSRC)
-//     PCMD_Config_Channels(devAddr);
-    
-//     // Step e & f: 配置 PDM 引脚 (GPOx->PDMCLK, GPIx->PDMDIN)
-//     // 你的 PCMD_Config_PDM_IO 函数里已经包含了这些寄存器的写入
-//     PCMD_Config_PDM_IO(devAddr);
-    
-//     // 配置 DSP/HPF
-//     PCMD_Config_DSP(devAddr);
-    
-//     // 配置时钟架构 (Master/Slave)
-//     PCMD_Config_Clock_Mode(devAddr);
-
-//     PCMD_Ctrl_Sleep(devAddr, 0); 
-//     // --- Step g, h, i: 全局使能 (Enable Blocks) ---
-//     // g: Enable input channels (IN_CH_EN)
-//     // h: Enable ASI output (ASI_OUT_EN)
-//     // i: Power-up PDM & PLL (PWR_CFG)
-//     PCMD_Enable_Blocks(devAddr);
-
-//     // Step j: Apply FSYNC and BCLK 
-//     // (这由 STM32 的 SAI/DMA 完成，通常在初始化此函数前后已经开启)
-
-//     return 0;
-// }
 /**
  * @brief  检查设备 ID 或 I2C 通讯是否正常
  */
@@ -266,9 +203,6 @@ void PCMD_Check_Health(uint8_t devAddr)
     
 }
 
-// 引入 I2C 驱动头文件 (确保能调用 PCMD_ReadReg)
-#include "pcmd3180.h"
-#include <stdio.h>
 
 void PCMD_Dump_Registers(uint8_t devAddr)
 {

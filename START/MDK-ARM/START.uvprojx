@@ -540,6 +540,11 @@
               <FileType>1</FileType>
               <FilePath>../Core/Src/stm32h7xx_hal_timebase_tim.c</FilePath>
             </File>
+            <File>
+              <FileName>mpu.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\mpu.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
