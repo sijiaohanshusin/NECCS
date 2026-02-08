@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>USE_PWR_LDO_SUPPLY,USE_HAL_DRIVER,STM32H743xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../Drivers/PCMD3180/Inc</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../User/Algorithm;../User/App;../User/Hardware</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -361,7 +361,7 @@
             </VariousControls>
           </Aads>
           <LDads>
-            <umfTarg>1</umfTarg>
+            <umfTarg>0</umfTarg>
             <Ropi>0</Ropi>
             <Rwpi>0</Rwpi>
             <noStLib>0</noStLib>
@@ -370,7 +370,7 @@
             <TextAddressRange></TextAddressRange>
             <DataAddressRange></DataAddressRange>
             <pXoBase></pXoBase>
-            <ScatterFile></ScatterFile>
+            <ScatterFile>..\MDK\START.sct</ScatterFile>
             <IncludeLibs></IncludeLibs>
             <IncludeLibsPath></IncludeLibsPath>
             <Misc></Misc>
@@ -387,6 +387,49 @@
               <FileName>startup_stm32h743xx.s</FileName>
               <FileType>2</FileType>
               <FilePath>startup_stm32h743xx.s</FilePath>
+            </File>
+            <File>
+              <FileName>START.sct</FileName>
+              <FileType>2</FileType>
+              <FilePath>..\MDK\START.sct</FilePath>
+              <FileOption>
+                <CommonProperty>
+                  <UseCPPCompiler>2</UseCPPCompiler>
+                  <RVCTCodeConst>0</RVCTCodeConst>
+                  <RVCTZI>0</RVCTZI>
+                  <RVCTOtherData>0</RVCTOtherData>
+                  <ModuleSelection>0</ModuleSelection>
+                  <IncludeInBuild>0</IncludeInBuild>
+                  <AlwaysBuild>0</AlwaysBuild>
+                  <GenerateAssemblyFile>2</GenerateAssemblyFile>
+                  <AssembleAssemblyFile>2</AssembleAssemblyFile>
+                  <PublicsOnly>2</PublicsOnly>
+                  <StopOnExitCode>11</StopOnExitCode>
+                  <CustomArgument></CustomArgument>
+                  <IncludeLibraryModules></IncludeLibraryModules>
+                  <ComprImg>1</ComprImg>
+                </CommonProperty>
+                <FileArmAds>
+                  <Aads>
+                    <interw>2</interw>
+                    <Ropi>2</Ropi>
+                    <Rwpi>2</Rwpi>
+                    <thumb>2</thumb>
+                    <SplitLS>2</SplitLS>
+                    <SwStkChk>2</SwStkChk>
+                    <NoWarn>2</NoWarn>
+                    <uSurpInc>2</uSurpInc>
+                    <useXO>2</useXO>
+                    <ClangAsOpt>0</ClangAsOpt>
+                    <VariousControls>
+                      <MiscControls></MiscControls>
+                      <Define></Define>
+                      <Undefine></Undefine>
+                      <IncludePath></IncludePath>
+                    </VariousControls>
+                  </Aads>
+                </FileArmAds>
+              </FileOption>
             </File>
           </Files>
         </Group>
@@ -830,17 +873,52 @@
           </Files>
         </Group>
         <Group>
-          <GroupName>Drivers/PCMD3180</GroupName>
+          <GroupName>User/App</GroupName>
           <Files>
             <File>
-              <FileName>soft_i2c.c</FileName>
+              <FileName>app_data_output.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\Drivers\PCMD3180\Src\soft_i2c.c</FilePath>
+              <FilePath>..\User\App\app_data_output.c</FilePath>
             </File>
+            <File>
+              <FileName>app_data_stream.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_data_stream.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_main_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_main_task.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>User/Algorithm</GroupName>
+          <Files>
+            <File>
+              <FileName>ai_beamforming.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\Algorithm\ai_beamforming.c</FilePath>
+            </File>
+            <File>
+              <FileName>ai_preprocess.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\Algorithm\ai_preprocess.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>User/Hardware</GroupName>
+          <Files>
             <File>
               <FileName>pcmd3180.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\Drivers\PCMD3180\Src\pcmd3180.c</FilePath>
+              <FilePath>..\User\Hardware\pcmd3180.c</FilePath>
+            </File>
+            <File>
+              <FileName>soft_i2c.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\Hardware\soft_i2c.c</FilePath>
             </File>
           </Files>
         </Group>

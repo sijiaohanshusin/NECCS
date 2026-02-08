@@ -1,5 +1,5 @@
-start\pcmd3180.o: ..\Drivers\PCMD3180\Src\pcmd3180.c
-start\pcmd3180.o: ../Drivers/PCMD3180/Inc/pcmd3180.h
+start\pcmd3180.o: ..\User\Hardware\pcmd3180.c
+start\pcmd3180.o: ..\User\Hardware\pcmd3180.h
 start\pcmd3180.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
 start\pcmd3180.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h
 start\pcmd3180.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stddef.h
@@ -11,7 +11,7 @@ start\pcmd3180.o: ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_C
 start\pcmd3180.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrappers.h
 start\pcmd3180.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h
 start\pcmd3180.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/list.h
-start\pcmd3180.o: ../Drivers/PCMD3180/Inc/soft_i2c.h
+start\pcmd3180.o: ..\User\Hardware\soft_i2c.h
 start\pcmd3180.o: ../Core/Inc/main.h
 start\pcmd3180.o: ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h
 start\pcmd3180.o: ../Core/Inc/stm32h7xx_hal_conf.h
