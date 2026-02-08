@@ -54,5 +54,5 @@ start\main.o: ../Core/Inc/sai.h
 start\main.o: ../Core/Inc/usart.h
 start\main.o: ../Core/Inc/gpio.h
 start\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
-start\main.o: ../Drivers/PCMD3180/Inc/pcmd3180.h
-start\main.o: ../Drivers/PCMD3180/Inc/soft_i2c.h
+start\main.o: ../User/Hardware/pcmd3180.h
+start\main.o: ../User/Hardware/soft_i2c.h

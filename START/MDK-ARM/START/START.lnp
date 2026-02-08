@@ -43,9 +43,14 @@
 "start\cmsis_os2.o"
 "start\heap_4.o"
 "start\port.o"
-"start\soft_i2c.o"
+"start\app_data_output.o"
+"start\app_data_stream.o"
+"start\app_main_task.o"
+"start\ai_beamforming.o"
+"start\ai_preprocess.o"
 "start\pcmd3180.o"
---library_type=microlib --strict --scatter "START\START.sct"
+"start\soft_i2c.o"
+--library_type=microlib --strict --scatter "..\MDK\START.sct"
 --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
 --info sizes --info totals --info unused --info veneers
 --list "START.map" -o START\START.axf

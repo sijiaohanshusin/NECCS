@@ -1,5 +1,5 @@
-start\soft_i2c.o: ..\Drivers\PCMD3180\Src\soft_i2c.c
-start\soft_i2c.o: ../Drivers/PCMD3180/Inc/soft_i2c.h
+start\soft_i2c.o: ..\User\Hardware\soft_i2c.c
+start\soft_i2c.o: ..\User\Hardware\soft_i2c.h
 start\soft_i2c.o: ../Core/Inc/main.h
 start\soft_i2c.o: ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h
 start\soft_i2c.o: ../Core/Inc/stm32h7xx_hal_conf.h

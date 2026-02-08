@@ -3,7 +3,7 @@
 <title>Static Call Graph - [START\START.axf]</title></head>
 <body><HR>
 <H1>Static Call Graph for image START\START.axf</H1><HR>
-<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 5060960: Last Updated: Sun Feb 08 00:07:49 2026
+<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 5060960: Last Updated: Sun Feb 08 22:51:28 2026
 <BR><P>
 <H3>Maximum Stack Usage =        416 bytes + Unknown(Cycles, Untraceable Function Pointers)</H3><H3>
 Call chain for Maximum Stack Depth:</H3>
@@ -2603,6 +2603,17 @@ Local Symbols
 <P><STRONG><a name="[a4]"></a>prvTaskExitError</STRONG> (Thumb, 36 bytes, Stack size 0 bytes, port.o(i.prvTaskExitError))
 <BR>[Address Reference Count : 1]<UL><LI> port.o(i.pxPortInitialiseStack)
 </UL>
+<P><STRONG><a name="[119]"></a>Write_Reg</STRONG> (Thumb, 4 bytes, Stack size 0 bytes, pcmd3180.o(i.Write_Reg))
+<BR><BR>[Stack]<UL><LI>Max Depth = 168<LI>Call Chain = Write_Reg &rArr; PCMD_WriteReg &rArr; osMutexAcquire &rArr; xQueueTakeMutexRecursive &rArr; xQueueSemaphoreTake &rArr; xTaskResumeAll &rArr; xTaskIncrementTick
+</UL>
+<BR>[Calls]<UL><LI><a href="#[11a]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_WriteReg
+</UL>
+<BR>[Called By]<UL><LI><a href="#[111]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_Ctrl_Sleep
+<LI><a href="#[110]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_Ctrl_Reset
+<LI><a href="#[113]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_Config_TDM_Slots
+<LI><a href="#[112]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_Config_ASI_Format
+</UL>
+
 <P><STRONG><a name="[f9]"></a>I2C_Delay_us</STRONG> (Thumb, 34 bytes, Stack size 8 bytes, soft_i2c.o(i.I2C_Delay_us))
 <BR><BR>[Stack]<UL><LI>Max Depth = 8<LI>Call Chain = I2C_Delay_us
 </UL>
@@ -2666,17 +2677,6 @@ Local Symbols
 <BR>[Called By]<UL><LI><a href="#[fb]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;I2C_Scan
 <LI><a href="#[11a]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_WriteReg
 <LI><a href="#[11c]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_ReadReg
-</UL>
-
-<P><STRONG><a name="[119]"></a>Write_Reg</STRONG> (Thumb, 4 bytes, Stack size 0 bytes, pcmd3180.o(i.Write_Reg))
-<BR><BR>[Stack]<UL><LI>Max Depth = 168<LI>Call Chain = Write_Reg &rArr; PCMD_WriteReg &rArr; osMutexAcquire &rArr; xQueueTakeMutexRecursive &rArr; xQueueSemaphoreTake &rArr; xTaskResumeAll &rArr; xTaskIncrementTick
-</UL>
-<BR>[Calls]<UL><LI><a href="#[11a]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_WriteReg
-</UL>
-<BR>[Called By]<UL><LI><a href="#[111]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_Ctrl_Sleep
-<LI><a href="#[110]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_Ctrl_Reset
-<LI><a href="#[113]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_Config_TDM_Slots
-<LI><a href="#[112]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;PCMD_Config_ASI_Format
 </UL>
 
 <P><STRONG><a name="[12b]"></a>_printf_core</STRONG> (Thumb, 984 bytes, Stack size 104 bytes, printf8.o(i._printf_core), UNUSED)
