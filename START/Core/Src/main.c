@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include "pcmd3180.h"
 #include "soft_i2c.h"
+#include "mpu.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -86,6 +87,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  App_MPU_Config();//覆盖默认的 MPU 配置，确保内存区域属性正确
   Soft_I2C_Init();
   /* USER CODE END Init */
 
@@ -186,27 +188,7 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai)
-{
-    // 这里的地址和长度计算必须极其小心
-    // Invalidate: 告诉 CPU "Cache 里的数据脏了，去 RAM 里重新拉一份"
-    //SCB_InvalidateDCache_by_Addr((uint32_t *)Rx_Buff, AUDIO_BUFFER_SIZE * 2);
-    SCB_InvalidateDCache();
-    // 现在可以安全读取 Rx_Buff 了
-    for (uint32_t i = 0; i < AUDIO_BUFFER_SIZE; i += 16) // 每16个点查一次，加快速度
-    {
-        // 只要发现不是 0xFFFF 且不是 0x0000，说明有动静
-        if (Rx_Buff[i] != (int16_t)0xFFFF && Rx_Buff[i] != 0)
-        {
-            // 在此处打断点，不要 printf
-            // 只要停在这里，说明 DMA 数据进来了！
-            found_val = Rx_Buff[i];
-            break;
-        }
-    }
-    
-    
-}
+
 /* USER CODE END 4 */
 
  /* MPU Configuration */

@@ -28,7 +28,7 @@ extern "C" {
 #if defined (__GNUC__)
   #define __SECTION_DMA_BUFFER   __attribute__((section(".dma_buffer"))) __attribute__((aligned(32)))
 #else
-  #define __SECTION_DMA_BUFFER   __attribute__((section("dma_buffer"))) __attribute__((aligned(32)))// Keil/IAR 请自行适配 section 定义
+  #define __SECTION_DMA_BUFFER    __attribute__((section(".dma_buffer")))// Keil/IAR 请自行适配 section 定义
 #endif
 
 /**
@@ -40,7 +40,7 @@ extern "C" {
 #if defined (__GNUC__)
   #define __SECTION_DTCM         __attribute__((section(".dtcm_data"))) __attribute__((aligned(32)))
 #else
-  #define __SECTION_DTCM         __attribute__((section("dtcm_data")))  __attribute__((aligned(32)))// Keil/IAR 请自行适配 section 定义
+  #define __SECTION_DTCM          __attribute__((section(".dtcm_data")))// Keil/IAR 请自行适配 section 定义
 #endif
 
 /**
@@ -48,7 +48,7 @@ extern "C" {
  * @note   默认开启 Cache (Write-Back)。
  * 适用于: 图像处理缓冲(非DMA部分)、大数组、FreeRTOS Heap。
  */
-#define __SECTION_AXI_SRAM     __attribute__((section("axi_sram_data"))) __attribute__((aligned(32)))// 默认就是这里，通常无需特殊修饰
+#define __SECTION_AXI_SRAM     __attribute__((section(".axi_sram_data"))) __attribute__((aligned(32)))// 默认就是这里，通常无需特殊修饰
 
 
 /* ============================================================================== */
@@ -59,7 +59,7 @@ extern "C" {
  * @brief  配置 MPU (Memory Protection Unit)
  * @note   必须在 HAL_Init() 之后，SystemClock_Config() 之后，且在 FreeRTOS 启动前调用。
  */
-void MPU_Config(void);
+void App_MPU_Config(void);
 
 #ifdef __cplusplus
 }

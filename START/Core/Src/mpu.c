@@ -8,7 +8,7 @@
 
 #include "mpu.h"
 
-void MPU_Config(void)
+void App_MPU_Config(void)
 {
     MPU_Region_InitTypeDef MPU_InitStruct = {0};
 

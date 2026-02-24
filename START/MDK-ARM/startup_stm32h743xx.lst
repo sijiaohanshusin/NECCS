@@ -1273,10 +1273,12 @@ iver/Inc/Legacy -I../Middlewares/Third_Party/FreeRTOS/Source/include -I../Middl
 ewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 -I../Middlewares/Third_Party/F
 reeRTOS/Source/portable/RVDS/ARM_CM4F -I../Drivers/CMSIS/Device/ST/STM32H7xx/In
 clude -I../Drivers/CMSIS/Include -I../Drivers/PCMD3180/Inc -I.\RTE\_START -IC:\
-Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\Core\Include --p
-redefine="__MICROLIB SETA 1" --predefine="__UVISION_VERSION SETA 536" --predefi
-ne="_RTE_ SETA 1" --predefine="STM32H743xx SETA 1" --predefine="_RTE_ SETA 1" -
--list=startup_stm32h743xx.lst startup_stm32h743xx.s
+Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\Core\Include -IC
+:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\DSP\Include -I
+C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\DSP\PrivateIn
+clude --predefine="__MICROLIB SETA 1" --predefine="__UVISION_VERSION SETA 536" 
+--predefine="_RTE_ SETA 1" --predefine="STM32H743xx SETA 1" --predefine="_RTE_ 
+SETA 1" --list=startup_stm32h743xx.lst startup_stm32h743xx.s
 
 
 
