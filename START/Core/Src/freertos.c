@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include "pcmd3180.h"
 #include "soft_i2c.h"
+#include "app_data_stream.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -59,11 +60,6 @@ TaskHandle_t MyTask2_Handler;
 TaskHandle_t MyTask3_Handler;
 extern SAI_HandleTypeDef hsai_BlockA1;
 extern volatile int16_t found_val;
-// 缓冲区定义
-// 注意：在 STM32H7 上，为了 DMA 访问安全，建议将此数组放在 D2 域的 SRAM 中
-// 或者使用 __attribute__((section(".RxDecripSection"))) 等方式指定位置
-// 如果不指定，默认在 AXI SRAM，需要处理 Cache (见后文)
-__attribute__((aligned(32))) int16_t Rx_Buff[AUDIO_BUFFER_SIZE];
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -87,7 +83,7 @@ void StartDefaultTask(void *argument);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /**
-  * @brief  FreeRTOS initialization
+  * @brief  Fre咩咩咩咩eRTOS initialization
   * @param  None
   * @retval None
   */
@@ -144,8 +140,9 @@ void StartDefaultTask(void *argument)
   {
     /* USER CODE BEGIN 2 */
     PCMD_Dump_Registers(PCMD3180_ADDR_1);
-    I2C_Scan();
+    //I2C_Scan();
     //printf("Received data sample: %d\n", found_val);
+    printf("Hello from FreeRTOS! DMA Sample Value: %d\n", found_val);
     /* USER CODE END 2 */
     osDelay(1000);
   }
@@ -161,11 +158,12 @@ void PCMD3180InitTask(void *argument)
   // 1. 启动 SAI DMA 接收
     // 此时 STM32 开始输出 BCLK 和 FSYNC，但数据线是空的（全0或噪音）
     // Circular Mode (DMA_CIRCULAR) 确保数据源源不断
-    if (HAL_SAI_Receive_DMA(&hsai_BlockA1, (uint8_t *)Rx_Buff, AUDIO_BUFFER_SIZE) != HAL_OK)
+    if (HAL_SAI_Receive_DMA(&hsai_BlockA1, (uint8_t *)Mic_Rx_Buffer, DMA_BUFFER_SIZE) != HAL_OK)
     {
         Error_Handler(); // 启动失败，卡死检查
     }
     // 2. 延时一小会儿，让 BCLK 稳定
+    App_Stream_Init();
   vTaskDelay(pdMS_TO_TICKS(1000));
   PCMD3180_Init_Device(PCMD3180_ADDR_0, 0); // 初始化芯片 A，起始槽位 0
   PCMD3180_Init_Device(PCMD3180_ADDR_1, 8); // 初始化芯片 B，起始槽位 8

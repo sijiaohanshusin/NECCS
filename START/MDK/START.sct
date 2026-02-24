@@ -13,18 +13,18 @@ LR_IROM1 0x08000000 0x00200000  {    ; Flash 区域
   ; 放置 DSP 缓冲和栈
   RW_IRAM_DTCM 0x20000000 0x00020000  {
    .ANY (+RW +ZI)         ; 让普通变量默认去这里
-   *.o (dtcm_data)        ; 对应 C 代码中的 section("dtcm_data")
+   *.o (.dtcm_data)        ; 对应 C 代码中的 section("dtcm_data")
   }
 
   ; --- AXI SRAM (大容量区) ---
   RW_IRAM_AXI 0x24000000 0x00080000  {
-   *.o (axi_sram_data)
+  *.o (.axi_sram_data)
   }
 
   ; --- SRAM1 (DMA 专用区) ---
   ; 关键：加上 UNINIT，防止启动时清零导致总线错误或启动过慢
   RW_SRAM1 0x30000000 UNINIT 0x00040000  {
-   *.o (dma_buffer)       ; 对应 C 代码中的 section("dma_buffer")
+  *.o (.dma_buffer)       ; 对应 C 代码中的 section("dma_buffer")
   }
   
   ; --- SDRAM (如有) ---
