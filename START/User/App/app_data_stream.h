@@ -26,4 +26,4 @@ extern float32_t Mic_Freq_Buffer[MIC_CHANNELS * FRAME_LEN]; // 注意：RFFT长�
 // 4. FFT 句柄 (CMSIS-DSP)
 extern arm_rfft_fast_instance_f32 S_Rfft;
 
-#endif /* __APP_DATA_STREAM_H */
+#endif /* __APP_DATA_STREAM_H */ 

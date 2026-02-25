@@ -1,4 +1,5 @@
 #include "arm_math.h"
+#include "ai_preprocess.h"
 
 // 假设这些是你的缓冲区 (确保在 DTCM 中以加速访问)
 // src_interleaved_q15: DMA 进来的源数据 (大小 256 * 16)

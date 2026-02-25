@@ -77,3 +77,6 @@ start\freertos.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CM
 start\freertos.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\DSP\Include\dsp/transform_functions.h
 start\freertos.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\DSP\Include\dsp/filtering_functions.h
 start\freertos.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\DSP\Include\dsp/quaternion_math_functions.h
+start\freertos.o: ../User/App/app_main_task.h
+start\freertos.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/queue.h
+start\freertos.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/semphr.h

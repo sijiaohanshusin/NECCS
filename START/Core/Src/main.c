@@ -30,6 +30,7 @@
 #include "pcmd3180.h"
 #include "soft_i2c.h"
 #include "mpu.h"
+#include "app_main_task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -39,7 +40,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,7 +51,7 @@
 
 /* USER CODE BEGIN PV */
 extern int16_t Rx_Buff[AUDIO_BUFFER_SIZE];
-volatile int16_t found_val;
+volatile int16_t found_val = 0; // 用于调试的全局变量，记录 DMA 中断回调中读取到的某个值
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -188,7 +188,19 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    // 向任务发送 PING 标志位 (eSetBits 表示按位置 1)
+    xTaskNotifyFromISR(xAudioPreTaskHandle, AUDIO_FLAG_PING, eSetBits, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
 
+void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    // 向任务发送 PONG 标志位
+    xTaskNotifyFromISR(xAudioPreTaskHandle, AUDIO_FLAG_PONG, eSetBits, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
 /* USER CODE END 4 */
 
  /* MPU Configuration */

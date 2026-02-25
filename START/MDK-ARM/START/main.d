@@ -57,3 +57,6 @@ start\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
 start\main.o: ../User/Hardware/pcmd3180.h
 start\main.o: ../User/Hardware/soft_i2c.h
 start\main.o: ../Core/Inc/mpu.h
+start\main.o: ../User/App/app_main_task.h
+start\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/queue.h
+start\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/semphr.h
