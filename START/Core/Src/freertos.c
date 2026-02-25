@@ -32,6 +32,7 @@
 #include "pcmd3180.h"
 #include "soft_i2c.h"
 #include "app_data_stream.h"
+#include "app_main_task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -153,6 +154,7 @@ void StartDefaultTask(void *argument)
 /* USER CODE BEGIN Application */
 void PCMD3180InitTask(void *argument)
 {
+  App_Task_Init(); // 初始化 FreeRTOS 任务和通信机制
   // PCMD3180 初始化代码
   // 初始化软件 I2C
   // 1. 启动 SAI DMA 接收

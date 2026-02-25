@@ -26,3 +26,4 @@ start\ai_preprocess.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8
 start\ai_preprocess.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\DSP\Include\dsp/transform_functions.h
 start\ai_preprocess.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\DSP\Include\dsp/filtering_functions.h
 start\ai_preprocess.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\DSP\Include\dsp/quaternion_math_functions.h
+start\ai_preprocess.o: ..\User\Algorithm\ai_preprocess.h
