@@ -1,10 +1,8 @@
 #include "ai_preprocess.h"
+#include "ai_beamforming.h"
+#include "app_data_output.h"
 #include "app_data_stream.h"
-#include "app_main_task.h"  // 已包含 FreeRTOS 相关头文件，无需重复包含
-
-#include "ai_preprocess.h"
-#include "app_data_stream.h"
-#include "app_main_task.h"  // 已包含 FreeRTOS 相关头文件，无需重复包含
+#include "app_main_task.h"
 
 
 extern int16_t found_val;  // 保留外部变量声明（若在其他文件定义）
@@ -93,18 +91,64 @@ void Audio_Preprocess_Task(void *pvParameters)
 // ==========================================================
 // 任务 2: 核心声源定位算法
 // ==========================================================
+
+/* -----------------------------------------------------------------------
+ * 调试节流控制
+ *
+ * 音频帧率 = Fs / FRAME_LEN = 48000 / 256 ≈ 187.5 帧/秒
+ * DEBUG_THROTTLE_FRAMES = 20 → 每 20 帧发一次 ≈ 每 107ms 刷新一次 VOFA+
+ *
+ * 切换调试模式（改完重新编译即可）:
+ *   DEBUG_MODE 0 → VOFA_Send_Channel_RMS()          16路能量，快速定位死通道
+ *   DEBUG_MODE 1 → VOFA_Send_FFT_Magnitude(ch)      单路频谱，查看频率分布
+ *
+ * 调试完毕后注释掉 #define DEBUG_ENABLE 即可零开销关闭全部输出。
+ * ----------------------------------------------------------------------- */
+#define DEBUG_ENABLE
+#define DEBUG_THROTTLE_FRAMES   20u
+#define DEBUG_MODE              0       /* 0=RMS能量检测, 1=频谱查看 */
+#define DEBUG_SPECTRUM_CHANNEL  0u      /* 模式1时查看的通道号 [0..15] */
+
 void AI_Algorithm_Task(void *pvParameters)
 {
+    static uint32_t s_frame_cnt = 0;
     Sound_Pos_t current_pos;
     for(;;)
     {
         // 1. 阻塞等待预处理任务发来的信号
         if(xSemaphoreTake(xAudioDataReadySem, portMAX_DELAY) == pdTRUE)
         {
-            // 2. 跑 CMSIS-DSP 的 16路 FFT
-            // 3. 跑 SRP-PHAT 广义互相关与波束成形空间扫描
-            
-            // 假设算出来了方位角 45度，俯仰角 30度
+            s_frame_cnt++;
+
+#ifdef DEBUG_ENABLE
+            /* 模式0: FFT 前发 RMS —— 此时时域数据未被 RFFT 修改 */
+#if (DEBUG_MODE == 0)
+            if (s_frame_cnt % DEBUG_THROTTLE_FRAMES == 0)
+            {
+                VOFA_Send_Channel_RMS();
+            }
+#endif
+#endif /* DEBUG_ENABLE */
+
+            // 2. 16路 FFT: 去直流 -> 汉宁加窗 -> RFFT
+            // 结果写入 Mic_Freq_Buffer (复数交织, 256 float32_t / ch)
+            AI_FFT_Process();
+
+#ifdef DEBUG_ENABLE
+            /* 模式1: FFT 后发频谱 —— 此时频域数据已就绪 */
+#if (DEBUG_MODE == 1)
+            if (s_frame_cnt % DEBUG_THROTTLE_FRAMES == 0)
+            {
+                VOFA_Send_FFT_Magnitude(DEBUG_SPECTRUM_CHANNEL);
+            }
+#endif
+#endif /* DEBUG_ENABLE */
+
+            // 3. TODO: SRP-PHAT 广义互相关与波束成形空间扫描
+            // 输入: Mic_Freq_Buffer
+            // 输出: current_pos
+
+            // 临时占位，等待波束成形实现
             current_pos.x_angle = 45.0f;
             current_pos.y_angle = 30.0f;
             current_pos.energy  = 0.9f;

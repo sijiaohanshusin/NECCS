@@ -26,4 +26,14 @@ extern float32_t Mic_Freq_Buffer[MIC_CHANNELS * FRAME_LEN]; // 注意：RFFT长�
 // 4. FFT 句柄 (CMSIS-DSP)
 extern arm_rfft_fast_instance_f32 S_Rfft;
 
-#endif /* __APP_DATA_STREAM_H */ 
+// 5. 预计算汉宁窗 (用于 FFT 前加窗，抑制频谱泄漏)
+// 物理位置: DTCM
+// 数据格式: float32_t，在 App_Stream_Init() 中一次性计算
+extern float32_t Hanning_Window[FRAME_LEN];
+
+// ==========================================
+// 初始化函数声明
+// ==========================================
+void App_Stream_Init(void);
+
+#endif /* __APP_DATA_STREAM_H */
