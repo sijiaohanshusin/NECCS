@@ -1,4 +1,5 @@
 #include "app_data_stream.h"
+#include "ai_beamforming.h"
 #include "mpu.h" // 必须包含定义了内存段宏的头文件
 #include <math.h>
 
@@ -37,7 +38,18 @@ __SECTION_DTCM __attribute__((aligned(32)))
 float32_t Hanning_Window[FRAME_LEN] = {0.0f};
 
 // ============================================================
-// Area 3: 初始化函数 (供 main 调用)
+// Area 3: SRP-PHAT 算法缓冲区 -> AXI SRAM (0x24000000)
+// ============================================================
+// GCC-PHAT 互功率谱中间结果: 40 pairs × 32 bins × 2 (Re/Im) = 2560 floats = 10KB
+__SECTION_AXI_SRAM __attribute__((aligned(32)))
+float32_t GCC_PHAT_Buffer[SRP_PAIR_COUNT * SRP_FREQ_BINS * 2] = {0.0f};
+
+// SRP 功率图: 124 个扫描点 = 496B
+__SECTION_AXI_SRAM __attribute__((aligned(32)))
+float32_t SRP_Power[SRP_GRID_TOTAL] = {0.0f};
+
+// ============================================================
+// Area 4: 初始化函数 (供 main 调用)
 // ============================================================
 void App_Stream_Init(void)
 {
@@ -52,4 +64,7 @@ void App_Stream_Init(void)
     {
         Hanning_Window[n] = 0.5f * (1.0f - cosf(2.0f * 3.14159265358979f * (float32_t)n / (float32_t)FRAME_LEN));
     }
+
+    // 3. 初始化 SRP-PHAT 算法 (预计算角频率表)
+    AI_SRP_PHAT_Init();
 }

@@ -1,5 +1,6 @@
 --cpu Cortex-M7.fp.dp
 "start\startup_stm32h743xx.o"
+"start\mpu.o"
 "start\main.o"
 "start\gpio.o"
 "start\freertos.o"
@@ -9,7 +10,6 @@
 "start\stm32h7xx_it.o"
 "start\stm32h7xx_hal_msp.o"
 "start\stm32h7xx_hal_timebase_tim.o"
-"start\mpu.o"
 "start\stm32h7xx_hal_tim.o"
 "start\stm32h7xx_hal_tim_ex.o"
 "start\stm32h7xx_hal_cortex.o"
@@ -48,6 +48,7 @@
 "start\app_main_task.o"
 "start\ai_beamforming.o"
 "start\ai_preprocess.o"
+"start\ai_srp_lut.o"
 "start\pcmd3180.o"
 "start\soft_i2c.o"
 "start\basicmathfunctions.o"

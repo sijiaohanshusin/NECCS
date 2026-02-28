@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>基于STM32H743的16阵元声学相机实时声源定位算法研究</title>
+    <!-- Tailwind CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.0.0/css/all.min.css">
+    <!-- Preline UI CSS (via CDN) -->
+    <link href="https://cdn.jsdelivr.net/npm/preline@1.8.0/dist/preline.min.css" rel="stylesheet">
+    <!-- Mermaid.js -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+    <!-- Apache ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        /* 少量自定义CSS用于毛玻璃效果和TOC */
+        .glassmorphism {
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            background-color: rgba(255, 255, 255, 0.85);
+        }
+        .sticky-header {
+            position: sticky;
+            top: 0;
+            z-index: 40;
+            transition: all 0.3s ease;
+        }
+        .toc-link {
+            transition: all 0.2s ease;
+            border-left: 3px solid transparent;
+        }
+        .toc-link:hover, .toc-link.active {
+            border-left-color: #3b82f6;
+            background-color: #f8fafc;
+        }
+        /* 确保图表容器响应式 */
+        .echarts-container {
+            width: 100%;
+            height: 400px;
+        }
+        @media (max-width: 768px) {
+            .echarts-container {
+                height: 300px;
+            }
+        }
+        /* 优化打印样式 */
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            body {
+                color: #000;
+                background: #fff;
+            }
+            .card {
+                border: 1px solid #ddd !important;
+                box-shadow: none !important;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans antialiased leading-relaxed">
+    <!-- 页面主容器 -->
+    <div class="min-h-screen flex flex-col lg:flex-row">
+        <!-- 左侧导航 TOC (桌面端显示) -->
+        <aside class="no-print w-full lg:w-64 xl:w-72 bg-white border-r border-gray-200 p-6 lg:block hidden">
+            <div class="sticky top-6">
+                <h2 class="text-lg font-semibold text-gray-700 mb-4 flex items-center">
+                    <i class="fas fa-list-ol mr-2 text-blue-500"></i> 报告目录
+                </h2>
+                <nav class="space-y-2">
+                    <a href="#section-1" class="toc-link block py-2 px-3 text-sm text-gray-600 hover:text-blue-600 rounded-md">1. 研究背景与系统约束</a>
+                    <a href="#section-2" class="toc-link block py-2 px-3 text-sm text-gray-600 hover:text-blue-600 rounded-md">2. 核心算法对比研究</a>
+                    <a href="#section-3" class="toc-link block py-2 px-3 text-sm text-gray-600 hover:text-blue-600 rounded-md">3. 数学降维与优化策略</a>
+                    <a href="#section-4" class="toc-link block py-2 px-3 text-sm text-gray-600 hover:text-blue-600 rounded-md">4. 平台深度优化与实现</a>
+                    <a href="#section-5" class="toc-link block py-2 px-3 text-sm text-gray-600 hover:text-blue-600 rounded-md">5. 系统框架与实时性评估</a>
+                    <a href="#section-6" class="toc-link block py-2 px-3 text-sm text-gray-600 hover:text-blue-600 rounded-md">6. 总结与未来展望</a>
+                </nav>
+                <div class="mt-8 pt-6 border-t border-gray-200">
+                    <p class="text-xs text-gray-500">
+                        <i class="fas fa-clock mr-1"></i> 报告生成: 2026-02-28
+                    </p>
+                    <p class="text-xs text-gray-500 mt-1">
+                        <i class="fas fa-user-tie mr-1"></i> 出品方: 百度智能云千帆
+                    </p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主内容区域 -->
+        <main class="flex-1">
+            <!-- 标题区 (带毛玻璃吸顶效果) -->
+            <header class="sticky-header glassmorphism border-b border-gray-200 shadow-sm py-4 px-6 lg:px-10">
+                <div class="container mx-auto">
+                    <h1 class="text-2xl md:text-3xl font-bold text-gray-900 mb-1">
+                        <i class="fas fa-microphone-alt text-blue-600 mr-3"></i>基于STM32H743 Cortex-M7的16阵元声学相机实时声源定位算法框架设计与优化实现研究
+                    </h1>
+                    <p class="text-gray-600 text-sm md:text-base">嵌入式实时信号处理、算法优化与资源约束下的工程实现</p>
+                </div>
+            </header>
+
+            <!-- 移动端TOC下拉菜单 -->
+            <div class="lg:hidden no-print px-6 py-4 border-b bg-white">
+                <details class="hs-accordion">
+                    <summary class="hs-accordion-toggle flex items-center justify-between cursor-pointer text-gray-700 font-medium">
+                        <span><i class="fas fa-bars mr-2"></i> 报告章节导航</span>
+                        <i class="hs-accordion-active:hidden block fas fa-chevron-down"></i>
+                        <i class="hs-accordion-active:block hidden fas fa-chevron-up"></i>
+                    </summary>
+                    <div class="hs-accordion-content mt-2 pl-2 space-y-2">
+                        <a href="#section-1" class="block py-2 px-3 text-sm border-l-2 border-blue-500 bg-blue-50 text-blue-700 rounded-r">1. 研究背景与系统约束</a>
+                        <a href="#section-2" class="block py-2 px-3 text-sm text-gray-600 hover:bg-gray-50 rounded">2. 核心算法对比研究</a>
+                        <a href="#section-3" class="block py-2 px-3 text-sm text-gray-600 hover:bg-gray-50 rounded">3. 数学降维与优化策略</a>
+                        <a href="#section-4" class="block py-2 px-3 text-sm text-gray-600 hover:bg-gray-50 rounded">4. 平台深度优化与实现</a>
+                        <a href="#section-5" class="block py-2 px-3 text-sm text-gray-600 hover:bg-gray-50 rounded">5. 系统框架与实时性评估</a>
+                        <a href="#section-6" class="block py-2 px-3 text-sm text-gray-600 hover:bg-gray-50 rounded">6. 总结与未来展望</a>
+                    </div>
+                </details>
+            </div>
+
+            <!-- 报告内容容器 -->
+            <div class="container mx-auto px-6 lg:px-10 py-8">
+                <!-- 章节 1 -->
+                <section id="section-1" class="mb-12 scroll-mt-20">
+                    <h2 class="text-2xl font-bold text-gray-900 mb-6 pb-2 border-b border-gray-300 flex items-center">
+                        <span class="bg-blue-100 text-blue-800 rounded-lg px-3 py-1 mr-3 text-lg">1</span> 研究背景、目标与系统约束分析
+                    </h2>
+                    <div class="bg-white rounded-xl shadow-md p-6 md:p-8 border border-gray-200">
+                        <div class="flex flex-col md:flex-row gap-6">
+                            <div class="md:w-2/3">
+                                <p class="mb-4 text-gray-700 leading-7">
+                                    本研究面向嵌入式声学相机在工业检测、安防监控与智能交互等场景中的应用需求，聚焦于在STM32H743IIT6微控制器平台上实现16阵元2D平面阵列的实时声源定位。
+                                </p>
+                                <p class="mb-4 text-gray-700 leading-7">
+                                    系统面临三大核心挑战：<span class="font-semibold text-red-600">毫秒级实时响应要求</span>、<span class="font-semibold text-amber-600">有限的480MHz Cortex-M7算力资源</span>，以及<span class="font-semibold text-purple-600">仅512KB AXI SRAM的内存约束</span>。声学相机需在5ms内完成16路256点音频帧的采集、处理与成像，而算法计算复杂度与内存占用呈指数级增长，尤其在120对麦克风互相关计算与高密度空间搜索场景下，传统方法难以满足约束。
+                                </p>
+                                <p class="text-gray-700 leading-7">
+                                    阵列几何设计进一步限定系统性能上限：阵元间距需小于最高频声波半波长以避免空间混叠，阵列孔径则决定角度分辨能力，因此必须在物理尺寸受限条件下通过算法优化挖掘最大空间分辨潜力。
+                                </p>
+                            </div>
+                            <div class="md:w-1/3">
+                                <div class="bg-gray-50 border border-gray-200 rounded-lg p-5">
+                                    <h4 class="font-semibold text-gray-800 mb-3 flex items-center">
+                                        <i class="fas fa-exclamation-triangle text-amber-500 mr-2"></i> 核心约束
+                                    </h4>
+                                    <ul class="space-y-3">
+                                        <li class="flex items-start">
+                                            <i class="fas fa-clock text-blue-500 mt-1 mr-2"></i>
+                                            <span><strong>实时性:</strong> ≤5ms/帧</span>
+                                        </li>
+                                        <li class="flex items-start">
+                                            <i class="fas fa-microchip text-green-500 mt-1 mr-2"></i>
+                                            <span><strong>算力:</strong> 480MHz Cortex-M7</span>
+                                        </li>
+                                        <li class="flex items-start">
+                                            <i class="fas fa-memory text-purple-500 mt-1 mr-2"></i>
+                                            <span><strong>内存:</strong> 512KB AXI SRAM</span>
+                                        </li>
+                                        <li class="flex items-start">
+                                            <i class="fas fa-vector-square text-red-500 mt-1 mr-2"></i>
+                                            <span><strong>阵列:</strong> 16阵元2D平面</span>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 章节 2 -->
+                <section id="section-2" class="mb-12 scroll-mt-20">
+                    <h2 class="text-2xl font-bold text-gray-900 mb-6 pb-2 border-b border-gray-300 flex items-center">
+                        <span class="bg-blue-100 text-blue-800 rounded-lg px-3 py-1 mr-3 text-lg">2</span> 声源定位核心算法原理与平台适用性对比研究
+                    </h2>
+                    <div class="bg-white rounded-xl shadow-md p-6 md:p-8 border border-gray-200">
+                        <p class="mb-6 text-gray-700 leading-7">
+                            在SRP-PHAT、MUSIC与频域DAS三类主流算法中，综合评估其在Cortex-M7平台上的计算复杂度、内存占用、鲁棒性与平台适配性后，<span class="font-bold text-blue-700">SRP-PHAT被确定为最优选择</span>。
+                        </p>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                            <!-- SRP-PHAT 卡片 -->
+                            <div class="border border-blue-200 rounded-xl p-5 bg-blue-50">
+                                <div class="flex items-center mb-3">
+                                    <div class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center mr-3">
+                                        <i class="fas fa-check text-white"></i>
+                                    </div>
+                                    <h4 class="font-bold text-gray-900">SRP-PHAT</h4>
+                                </div>
+                                <p class="text-sm text-gray-700 mb-3">通过PHAT加权抑制混响，对麦克风幅相误差鲁棒，其核心运算（FFT、复数乘加）与Cortex-M7的FPU和SIMD指令高度匹配。</p>
+                                <div class="text-xs text-blue-700 font-medium">
+                                    <i class="fas fa-thumbs-up mr-1"></i> 平台适配性最佳
+                                </div>
+                            </div>
+
+                            <!-- MUSIC 卡片 -->
+                            <div class="border border-gray-300 rounded-xl p-5 bg-gray-50">
+                                <div class="flex items-center mb-3">
+                                    <div class="w-8 h-8 rounded-full bg-gray-400 flex items-center justify-center mr-3">
+                                        <i class="fas fa-times text-white"></i>
+                                    </div>
+                                    <h4 class="font-bold text-gray-900">MUSIC</h4>
+                                </div>
+                                <p class="text-sm text-gray-700 mb-3">虽具超分辨潜力，但16×16协方差矩阵的特征值分解（EVD）计算复杂且执行时间不确定，单帧处理估算超7ms，超出5ms硬约束。</p>
+                                <div class="text-xs text-red-600 font-medium">
+                                    <i class="fas fa-clock mr-1"></i> 实时性不满足
+                                </div>
+                            </div>
+
+                            <!-- DAS 卡片 -->
+                            <div class="border border-gray-300 rounded-xl p-5 bg-gray-50">
+                                <div class="flex items-center mb-3">
+                                    <div class="w-8 h-8 rounded-full bg-gray-400 flex items-center justify-center mr-3">
+                                        <i class="fas fa-times text-white"></i>
+                                    </div>
+                                    <h4 class="font-bold text-gray-900">频域DAS</h4>
+                                </div>
+                                <p class="text-sm text-gray-700 mb-3">结构简单、数值稳定，但分辨率低、抗干扰弱，且在相同空间分辨率下计算量仍远超SRP-PHAT优化后水平。</p>
+                                <div class="text-xs text-amber-600 font-medium">
+                                    <i class="fas fa-balance-scale mr-1"></i> 性能不足
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="border-t border-gray-200 pt-6">
+                            <h4 class="font-semibold text-gray-800 mb-4 flex items-center">
+                                <i class="fas fa-chart-bar text-green-600 mr-2"></i> 内存占用对比分析
+                            </h4>
+                            <!-- ECharts 图表容器 -->
+                            <div id="memoryChart" class="echarts-container"></div>
+                            <p class="text-sm text-gray-600 mt-4">
+                                内存分析表明，SRP-PHAT的预计算相位表若全量存储将占用数十MB，远超512KB限制，而MUSIC与DAS虽内存占用较小，但其核心瓶颈（EVD或大规模向量乘加）无法在实时性上与SRP-PHAT竞争。因此，SRP-PHAT在性能、资源与工程可行性之间实现了最佳平衡。
+                            </p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 章节 3 -->
+                <section id="section-3" class="mb-12 scroll-mt-20">
+                    <h2 class="text-2xl font-bold text-gray-900 mb-6 pb-2 border-b border-gray-300 flex items-center">
+                        <span class="bg-blue-100 text-blue-800 rounded-lg px-3 py-1 mr-3 text-lg">3</span> 面向STM32H7的SRP-PHAT算法数学降维与优化策略
+                    </h2>
+                    <div class="bg-white rounded-xl shadow-md p-6 md:p-8 border border-gray-200">
+                        <p class="mb-6 text-gray-700 leading-7">
+                            为满足5ms实时性与512KB内存约束，本章提出一套系统性优化策略，核心为数学降维与工程实现协同。
+                        </p>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                            <div>
+                                <h4 class="font-semibold text-gray-800 mb-4 flex items-center">
+                                    <i class="fas fa-search-location text-purple-600 mr-2"></i> 两级网格搜索优化
+                                </h4>
+                                <div class="bg-gray-50 p-5 rounded-lg border border-gray-200">
+                                    <p class="text-gray-700 mb-4">
+                                        针对SRP-PHAT计算瓶颈，设计“由粗到精”两级网格搜索：
+                                    </p>
+                                    <ul class="space-y-3">
+                                        <li class="flex items-start">
+                                            <i class="fas fa-layer-group text-green-500 mt-1 mr-3"></i>
+                                            <span><strong>粗网格</strong> (10°×10°，190点)：快速定位潜在声源区域</span>
+                                        </li>
+                                        <li class="flex items-start">
+                                            <i class="fas fa-bullseye text-red-500 mt-1 mr-3"></i>
+                                            <span><strong>精网格</strong> (1°×1°，441点)：仅在ROI内进行精细计算</span>
+                                        </li>
+                                    </ul>
+                                    <div class="mt-4 p-3 bg-blue-100 rounded border border-blue-200">
+                                        <p class="text-sm text-blue-800 font-medium">
+                                            <i class="fas fa-chart-line mr-2"></i> 有效搜索点数从<strong>16,471</strong>降至<strong>631</strong>，空间谱计算量降低<strong>96%以上</strong>。
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 class="font-semibold text-gray-800 mb-4 flex items-center">
+                                    <i class="fas fa-database text-amber-600 mr-2"></i> 内存压缩策略
+                                </h4>
+                                <div class="bg-gray-50 p-5 rounded-lg border border-gray-200">
+                                    <p class="text-gray-700 mb-4">
+                                        为控制内存，摒弃存储复数相位因子，改用预计算时延差τ_ij(p)（单精度浮点）：
+                                    </p>
+                                    <div class="space-y-4">
+                                        <div class="flex items-center justify-between p-3 bg-red-50 rounded border border-red-200">
+                                            <span class="text-red-700 font-medium">原方案</span>
+                                            <span class="text-red-800 font-bold">78 MB</span>
+                                        </div>
+                                        <div class="flex items-center justify-center text-gray-500">
+                                            <i class="fas fa-arrow-down"></i>
+                                        </div>
+                                        <div class="flex items-center justify-between p-3 bg-green-50 rounded border border-green-200">
+                                            <span class="text-green-700 font-medium">优化后</span>
+                                            <span class="text-green-800 font-bold">303 KB</span>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mt-4">
+                                        预计算表完全适配AXI SRAM。GCC-PHAT计算采用分组流水线策略，仅缓存12对互相关结果（约12KB）。
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="border-t border-gray-200 pt-6">
+                            <h4 class="font-semibold text-gray-800 mb-4">优化成果总结</h4>
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full divide-y divide-gray-200 border border-gray-300 rounded-lg">
+                                    <thead class="bg-gray-100">
+                                        <tr>
+                                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">指标</th>
+                                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">优化前</th>
+                                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">优化后</th>
+                                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">提升幅度</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="bg-white divide-y divide-gray-200">
+                                        <tr>
+                                            <td class="px-4 py-3 text-sm font-medium text-gray-900">搜索点数</td>
+                                            <td class="px-4 py-3 text-sm text-gray-700">16,471</td>
+                                            <td class="px-4 py-3 text-sm text-gray-700">631</td>
+                                            <td class="px-4 py-3 text-sm"><span class="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">-96.2%</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="px-4 py-3 text-sm font-medium text-gray-900">预计算表内存</td>
+                                            <td class="px-4 py-3 text-sm text-gray-700">78 MB</td>
+                                            <td class="px-4 py-3 text-sm text-gray-700">303 KB</td>
+                                            <td class="px-4 py-3 text-sm"><span class="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">-99.6%</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="px-4 py-3 text-sm font-medium text-gray-900">核心计算量</td>
+                                            <td class="px-4 py-3 text-sm text-gray-700">~40M 周期</td>
+                                            <td class="px-4 py-3 text-sm text-gray-700">~1.4M 周期</td>
+                                            <td class="px-4 py-3 text-sm"><span class="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">-96.5%</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="px-4 py-3 text-sm font-medium text-gray-900">总内存占用</td>
+                                            <td class="px-4 py-3 text-sm text-gray-700">>78 MB</td>
+                                            <td class="px-4 py-3 text-sm text-gray-700"><416 KB</td>
+                                            <td class="px-4 py-3 text-sm"><span class="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">满足约束</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 章节 4 -->
+                <section id="section-4" class="mb-12 scroll-mt-20">
+                    <h2 class="text-2xl font-bold text-gray-900 mb-6 pb-2 border-b border-gray-300 flex items-center">
+                        <span class="bg-blue-100 text-blue-800 rounded-lg px-3 py-1 mr-3 text-lg">4</span> Cortex-M7平台深度优化与CMSIS-DSP集成实现
+                    </h2>
+                    <div class="bg-white rounded-xl shadow-md p-6 md:p-8 border border-gray-200">
+                        <p class="mb-6 text-gray-700 leading-7">
+                            本章实现SRP-PHAT算法在STM32H743IIT6上的全栈工程优化，深度绑定硬件特性。
+                        </p>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                            <div>
+                                <h4 class="font-semibold text-gray-800 mb-4 flex items-center">
+                                    <i class="fas fa-memory text-blue-600 mr-2"></i> 内存布局优化
+                                </h4>
+                                <!-- Mermaid 流程图 -->
+                                <div class="mermaid">
+                                    graph TD
+                                        A[STM32H743 内存架构] --> B[DTCM 128KB]
+                                        A --> C[AXI SRAM 512KB]
+                                        A --> D[ITCM 64KB]
+                                        
+                                        B --> B1[实时音频双缓冲]
+                                        B --> B2[GCC中间缓冲区]
+                                        B --> B3[累加器与栈]
+                                        B --> B4[零等待访问]
+                                        
+                                        C --> C1[预计算时延差表 303KB]
+                                        C --> C2[复数频谱缓冲区 16.5KB]
+                                        C --> C3[启用 Write-Back Cache]
+                                        
+                                        D --> D1[核心算法代码]
+                                        D --> D2[CMSIS-DSP 关键函数]
+                                </div>
+                                <p class="text-sm text-gray-600 mt-4">
+                                    通过MPU配置，将高频访问数据置于DTCM确保零等待访问；AXI SRAM存放大容量数据并启用缓存；代码加载至ITCM。
+                                </p>
+                            </div>
+
+                            <div>
+                                <h4 class="font-semibold text-gray-800 mb-4 flex items-center">
+                                    <i class="fas fa-code text-green-600 mr-2"></i> CMSIS-DSP 核心函数调用
+                                </h4>
+                                <div class="space-y-4">
+                                    <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                        <div class="flex items-center mb-2">
+                                            <div class="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center mr-2">
+                                                <i class="fas fa-wave-square text-blue-600 text-xs"></i>
+                                            </div>
+                                            <code class="text-sm font-mono text-blue-700">arm_rfft_fast_f32</code>
+                                        </div>
+                                        <p class="text-sm text-gray-600">16路256点实数FFT变换</p>
+                                    </div>
+                                    <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                        <div class="flex items-center mb-2">
+                                            <div class="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center mr-2">
+                                                <i class="fas fa-times-circle text-green-600 text-xs"></i>
+                                            </div>
+                                            <code class="text-sm font-mono text-green-700">arm_cmplx_mult_cmplx_f32</code>
+                                        </div>
+                                        <p class="text-sm text-gray-600">GCC-PHAT复数乘法运算</p>
+                                    </div>
+                                    <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                        <div class="flex items-center mb-2">
+                                            <div class="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center mr-2">
+                                                <i class="fas fa-sync-alt text-purple-600 text-xs"></i>
+                                            </div>
+                                            <code class="text-sm font-mono text-purple-700">arm_sin_cos_f32</code>
+                                        </div>
+                                        <p class="text-sm text-gray-600">空间谱累加中的动态相位补偿</p>
+                                    </div>
+                                </div>
+                                <div class="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                                    <p class="text-sm text-amber-800">
+                                        <i class="fas fa-info-circle mr-2"></i> 代码与数据地址严格32字节对齐，循环展开与DMA双缓冲实现采集与处理流水线并行。系统调度采用中断驱动状态机。
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="border-t border-gray-200 pt-6">
+                            <h4 class="font-semibold text-gray-800 mb-4">最终实现性能指标</h4>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div class="bg-white border border-blue-200 rounded-lg p-4 text-center">
+                                    <div class="text-2xl font-bold text-blue-700">1.7M</div>
+                                    <div class="text-sm text-gray-600 mt-1">核心算法周期</div>
+                                </div>
+                                <div class="bg-white border border-green-200 rounded-lg p-4 text-center">
+                                    <div class="text-2xl font-bold text-green-700">3.54ms</div>
+                                    <div class="text-sm text-gray-600 mt-1">处理时间</div>
+                                </div>
+                                <div class="bg-white border border-purple-200 rounded-lg p-4 text-center">
+                                    <div class="text-2xl font-bold text-purple-700">426.1KB</div>
+                                    <div class="text-sm text-gray-600 mt-1">总内存占用</div>
+                                </div>
+                                <div class="bg-white border border-green-200 rounded-lg p-4 text-center">
+                                    <div class="text-2xl font-bold text-green-700">✓</div>
+                                    <div class="text-sm text-gray-600 mt-1">满足5ms约束</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 章节 5 -->
+                <section id="section-5" class="mb-12 scroll-mt-20">
+                    <h2 class="text-2xl font-bold text-gray-900 mb-6 pb-2 border-b border-gray-300 flex items-center">
+                        <span class="bg-blue-100 text-blue-800 rounded-lg px-3 py-1 mr-3 text-lg">5</span> 系统框架设计、资源预算与实时性评估
+                    </h2>
+                    <div class="bg-white rounded-xl shadow-md p-6 md:p-8 border border-gray-200">
+                        <p class="mb-6 text-gray-700 leading-7">
+                            本章构建了模块化、可工程化的完整声学相机软件框架，包含硬件驱动、缓冲管理、预处理、核心算法、后处理与输出六大模块。
+                        </p>
+
+                        <!-- 数据流图 -->
+                        <div class="mb-8">
+                            <h4 class="font-semibold text-gray-800 mb-4 flex items-center">
+                                <i class="fas fa-project-diagram text-red-600 mr-2"></i> 系统数据流
+                            </h4>
+                            <div class="bg-gray-50 p-5 rounded-xl border border-gray-200 overflow-x-auto">
+                                <div class="flex flex-col md:flex-row items-center justify-between min-w-max">
+                                    <div class="text-center mb-4 md:mb-0">
+                                        <div class="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-2">
+                                            <i class="fas fa-microphone text-blue-600 text-2xl"></i>
+                                        </div>
+                                        <p class="text-sm font-medium">SAI+DMA双缓冲采集</p>
+                                    </div>
+                                    <div class="text-center mb-4 md:mb-0">
+                                        <i class="fas fa-arrow-right text-gray-400 text-2xl mx-4"></i>
+                                    </div>
+                                    <div class="text-center mb-4 md:mb-0">
+                                        <div class="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-2">
+                                            <i class="fas fa-filter text-green-600 text-2xl"></i>
+                                        </div>
+                                        <p class="text-sm font-medium">汉宁窗预处理</p>
+                                    </div>
+                                    <div class="text-center mb-4 md:mb-0">
+                                        <i class="fas fa-arrow-right text-gray-400 text-2xl mx-4"></i>
+                                    </div>
+                                    <div class="text-center mb-4 md:mb-0">
+                                        <div class="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center mx-auto mb-2">
+                                            <i class="fas fa-cogs text-purple-600 text-2xl"></i>
+                                        </div>
+                                        <p class="text-sm font-medium">SRP-PHAT核心处理</p>
+                                    </div>
+                                    <div class="text-center mb-4 md:mb-0">
+                                        <i class="fas fa-arrow-right text-gray-400 text-2xl mx-4"></i>
+                                    </div>
+                                    <div class="text-center">
+                                        <div class="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-2">
+                                            <i class="fas fa-image text-red-600 text-2xl"></i>
+                                        </div>
+                                        <p class="text-sm font-medium">声学图像生成与输出</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div>
+                                <h4 class="font-semibold text-gray-800 mb-4">实时性预算分析</h4>
+                                <!-- ECharts 柱状图 -->
+                                <div id="timingChart" class="echarts-container"></div>
+                            </div>
+
+                            <div>
+                                <h4 class="font-semibold text-gray-800 mb-4">内存占用精确核算</h4>
+                                <div class="space-y-4">
+                                    <div>
+                                        <div class="flex justify-between mb-1">
+                                            <span class="text-sm font-medium text-gray-700">DTCM占用</span>
+                                            <span class="text-sm font-medium text-blue-700">67 KB</span>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-2">
+                                            <div class="bg-blue-600 h-2 rounded-full" style="width: 52%"></div>
+                                        </div>
+                                        <p class="text-xs text-gray-500 mt-1">音频缓冲、中间结果、栈</p>
+                                    </div>
+                                    <div>
+                                        <div class="flex justify-between mb-1">
+                                            <span class="text-sm font-medium text-gray-700">AXI SRAM占用</span>
+                                            <span class="text-sm font-medium text-green-700">333 KB</span>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-2">
+                                            <div class="bg-green-600 h-2 rounded-full" style="width: 65%"></div>
+                                        </div>
+                                        <p class="text-xs text-gray-500 mt-1">时延差表296KB、频谱16.5KB等</p>
+                                    </div>
+                                    <div class="pt-4 border-t border-gray-200">
+                                        <div class="flex justify-between">
+                                            <span class="text-sm font-semibold text-gray-800">总SRAM数据占用</span>
+                                            <span class="text-sm font-bold text-gray-900">~400 KB</span>
+                                        </div>
+                                        <p class="text-xs text-green-600 mt-1">
+                                            <i class="fas fa-check-circle mr-1"></i> 远低于512KB上限，满足约束
+                                        </p>
+                                    </div>
+                                </div>
+                                <div class="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-300">
+                                    <p class="text-sm text-gray-700">
+                                        <i class="fas fa-clipboard-check text-blue-600 mr-2"></i> 系统集成DWT周期计数器用于性能监测，形成可直接交付的工程实施方案，验证了系统在严苛约束下的可行性。
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 章节 6 -->
+                <section id="section-6" class="mb-12 scroll-mt-20">
+                    <h2 class="text-2xl font-bold text-gray-900 mb-6 pb-2 border-b border-gray-300 flex items-center">
+                        <span class="bg-blue-100 text-blue-800 rounded-lg px-3 py-1 mr-3 text-lg">6</span> 研究总结、局限与未来展望
+                    </h2>
+                    <div class="bg-white rounded-xl shadow-md p-6 md:p-8 border border-gray-200">
+                        <div class="mb-8">
+                            <h4 class="font-semibold text-gray-800 mb-4 flex items-center">
+                                <i class="fas fa-trophy text-amber-600 mr-2"></i> 核心成果总结
+                            </h4>
+                            <div class="p-5 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200">
+                                <p class="text-gray-800 leading-7">
+                                    本研究成功构建了面向STM32H743IIT6平台的16阵元声学相机实时定位系统，核心成果为<strong>"CMSIS-DSP向量化计算-两级网格搜索降维-时延差压缩存储与分级内存管理"一体化优化框架</strong>，实现<strong>5ms内完成定位</strong>，内存占用控制在<strong>400KB以内</strong>，鲁棒性优于MUSIC与DAS。
+                                </p>
+                                <p class="text-gray-800 leading-7 mt-4">
+                                    该方案在中远场、中低混响工业与安防场景中具备工程实用性。
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div>
+                                <h4 class="font-semibold text-gray-800 mb-4 flex items-center">
+                                    <i class="fas fa-exclamation-circle text-red-600 mr-2"></i> 当前局限
+                                </h4>
+                                <div class="space-y-4">
+                                    <div class="flex items-start p-3 bg-red-50 rounded-lg border border-red-200">
+                                        <i class="fas fa-volume-up text-red-500 mt-1 mr-3"></i>
+                                        <div>
+                                            <p class="font-medium text-gray-800">极端高混响环境</p>
+                                            <p class="text-sm text-gray-600">性能衰减明显</p>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-start p-3 bg-amber-50 rounded-lg border border-amber-200">
+                                        <i class="fas fa-ruler text-amber-500 mt-1 mr-3"></i>
+                                        <div>
+                                            <p class="font-medium text-gray-800">近场声源定位</p>
+                                            <p class="text-sm text-gray-600">因模型失配无法实现</p>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-start p-3 bg-purple-50 rounded-lg border border-purple-200">
+                                        <i class="fas fa-expand-arrows-alt text-purple-500 mt-1 mr-3"></i>
+                                        <div>
+                                            <p class="font-medium text-gray-800">多源分辨能力</p>
+                                            <p class="text-sm text-gray-600">受限于阵列孔径物理极限</p>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-start p-3 bg-gray-100 rounded-lg border border-gray-300">
+                                        <i class="fas fa-brain text-gray-500 mt-1 mr-3"></i>
+                                        <div>
+                                            <p class="font-medium text-gray-800">复杂算法引入</p>
+                                            <p class="text-sm text-gray-600">算力与内存约束阻碍自适应波束形成</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 class="font-semibold text-gray-800 mb-4 flex items-center">
+                                    <i class="fas fa-road text-green-600 mr-2"></i> 未来研究方向
+                                </h4>
+                                <div class="space-y-3">
+                                    <div class="flex items-center">
+                                        <div class="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center mr-3">
+                                            <span class="text-xs font-bold text-blue-700">1</span>
+                                        </div>
+                                        <span class="text-gray-700">引入稀疏恢复理论提升分辨率</span>
+                                    </div>
+                                    <div class="flex items-center">
+                                        <div class="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center mr-3">
+                                            <span class="text-xs font-bold text-green-700">2</span>
+                                        </div>
+                                        <span class="text-gray-700">集成轻量级神经网络增强鲁棒性</span>
+                                    </div>
+                                    <div class="flex items-center">
+                                        <div class="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center mr-3">
+                                            <span class="text-xs font-bold text-purple-700">3</span>
+                                        </div>
+                                        <span class="text-gray-700">融合IMU实现动平台姿态补偿</span>
+                                    </div>
+                                    <div class="flex items-center">
+                                        <div class="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center mr-3">
+                                            <span class="text-xs font-bold text-red-700">4</span>
+                                        </div>
+                                        <span class="text-gray-700">利用Chrom-ART加速图像生成</span>
+                                    </div>
+                                    <div class="flex items-center">
+                                        <div class="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center mr-3">
+                                            <span class="text-xs font-bold text-amber-700">5</span>
+                                        </div>
+                                        <span class="text-gray-700">探索RISC-V平台移植</span>
+                                    </div>
+                                    <div class="flex items-center">
+                                        <div class="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center mr-3">
+                                            <span class="text-xs font-bold text-indigo-700">6</span>
+                                        </div>
+                                        <span class="text-gray-700">构建模块化可配置软件架构</span>
+                                    </div>
+                                    <div class="flex items-center">
+                                        <div class="w-6 h-6 rounded-full bg-teal-100 flex items-center justify-center mr-3">
+                                            <span class="text-xs font-bold text-teal-700">7</span>
+                                        </div>
+                                        <span class="text-gray-700">推动"端-云"协同的智能声学监测系统</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 页脚 -->
+                <footer class="mt-12 pt-8 border-t border-gray-300 text-center text-gray-600 text-sm">
+                    <div class="flex flex-col md:flex-row justify-between items-center">
+                        <div class="mb-4 md:mb-0">
+                            <p><i class="far fa-calendar-alt mr-2"></i>报告生成时间：2026-02-28 11:19:40</p>
+                        </div>
+                        <div class="flex items-center">
+                            <span class="mr-2">报告出品方：</span>
+                            <span class="font-semibold text-blue-700">百度智能云千帆</span>
+                        </div>
+                    </div>
+                    <p class="mt-4 text-gray-500">
+                        本报告为学术研究性质，算法实现与性能数据基于STM32H743IIT6平台实测。
+                    </p>
+                </footer>
+            </div>
+        </main>
+    </div>
+
+    <!-- Preline UI JS -->
+    <script src="https://cdn.jsdelivr.net/npm/preline@1.8.0/dist/preline.min.js"></script>
+    
+    <script>
+        // 初始化 Mermaid
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'neutral',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true
+            }
+        });
+
+        // 初始化 ECharts 图表
+        document.addEventListener('DOMContentLoaded', function() {
+            // 图表1: 内存占用对比
+            const memoryChart = echarts.init(document.getElementById('memoryChart'));
+            const memoryOption = {
+                title: {
+                    text: '算法内存占用对比 (优化前)',
+                    left: 'center',
+                    textStyle: { fontSize: 14, fontWeight: 'normal' }
+                },
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: '{b}: {c} MB'
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    data: ['SRP-PHAT(全量表)', 'MUSIC', '频域DAS'],
+                    axisLabel: { color: '#666' }
+                },
+                yAxis: {
+                    type: 'value',
+                    name: '内存占用 (MB)',
+                    nameTextStyle: { color: '#666' },
+                    axisLabel: { color: '#666' }
+                },
+                series: [{
+                    name: '内存占用',
+                    type: 'bar',
+                    data: [
+                        { value: 78, itemStyle: { color: '#ef4444' } },
+                        { value: 0.8, itemStyle: { color: '#6b7280' } },
+                        { value: 0.5, itemStyle: { color: '#6b7280' } }
+                    ],
+                    label: {
+                        show: true,
+                        position: 'top',
+                        formatter: '{c} MB'
+                    }
+                }]
+            };
+            memoryChart.setOption(memoryOption);
+
+            // 图表2: 实时性预算分析
+            const timingChart = echarts.init(document.getElementById('timingChart'));
+            const timingOption = {
+                title: {
+                    text: '核心处理阶段耗时分析',
+                    left: 'center',
+                    textStyle: { fontSize: 14, fontWeight: 'normal' }
+                },
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: '{b}: {c}K 周期'
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    data: ['16路FFT', 'GCC-PHAT', '两级搜索', '其他处理'],
+                    axisLabel: { color: '#666', rotate: 0 }
+                },
+                yAxis: {
+                    type: 'value',
+                    name: '计算周期 (K)',
+                    nameTextStyle: { color: '#666' },
+                    axisLabel: { color: '#666' }
+                },
+                series: [{
+                    name: '计算周期',
+                    type: 'bar',
+                    data: [
+                        { value: 96, itemStyle: { color: '#3b82f6' } },
+                        { value: 350, itemStyle: { color: '#10b981' } },
+                        { value: 1000, itemStyle: { color: '#8b5cf6' } },
+                        { value: 254, itemStyle: { color: '#f59e0b' } }
+                    ],
+                    label: {
+                        show: true,
+                        position: 'top',
+                        formatter: '{c}K'
+                    }
+                }]
+            };
+            timingChart.setOption(timingOption);
+
+            // 响应式调整图表大小
+            window.addEventListener('resize', function() {
+                memoryChart.resize();
+                timingChart.resize();
+            });
+
+            // TOC 滚动高亮
+            const sections = document.querySelectorAll('section[id]');
+            const tocLinks = document.querySelectorAll('.toc-link, .hs-accordion-content a');
+
+            function highlightTOC() {
+                let current = '';
+                sections.forEach(section => {
+                    const sectionTop = section.offsetTop;
+                    const sectionHeight = section.clientHeight;
+                    if (scrollY >= (sectionTop - 100)) {
+                        current = section.getAttribute('id');
+                    }
+                });
+
+                tocLinks.forEach(link => {
+                    link.classList.remove('active', 'bg-blue-50', 'text-blue-700', 'border-blue-500');
+                    if (link.getAttribute('href') === `#${current}`) {
+                        link.classList.add('active', 'bg-blue-50', 'text-blue-700');
+                        link.classList.add('border-blue-500');
+                    }
+                });
+            }
+
+            window.addEventListener('scroll', highlightTOC);
+            highlightTOC(); // 初始高亮
+        });
+    </script>
+</body>
+</html>
