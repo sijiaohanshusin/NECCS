@@ -5,8 +5,9 @@
  * ====================== 带宽预算 (重要！) ======================
  *  USART1 必须配置为 921600 baud，否则会严重拖慢算法任务！
  *
- *  模式1 (RMS):      16 × 4 + 4 =   68 字节 → 在 921600 下约  0.7ms
- *  模式2 (Spectrum): 128 × 4 + 4 =  516 字节 → 在 921600 下约  5.6ms
+ *  模式1 (RMS AC):   16 × 4 + 4 =   68 字节 → 在 921600 下约  0.7ms
+ *  模式2 (Raw TDM):  16 × 4 + 4 =   68 字节 → 在 921600 下约  0.7ms
+ *  模式3 (Spectrum): 128 × 4 + 4 =  516 字节 → 在 921600 下约  5.6ms
  *
  *  本文件的函数每 DEBUG_THROTTLE_FRAMES 帧调用一次（见 app_main_task.c），
  *  留出足够间隔，不影响算法主流程。
@@ -18,6 +19,7 @@
 #include "ai_config.h"
 #include "usart.h"
 #include <math.h>   /* fabsf() */
+#include <string.h> /* memcpy() */
 
 /* =========================================================================
  * Section 1: JustFloat 协议底层
@@ -139,6 +141,70 @@ void VOFA_Send_Channel_RMS(void)
  *                              → 用 arm_cmplx_mag_f32 批量计算
  *   3. bin 127 (奈奎斯特): mag = |p_freq[1]|
  */
+/* =========================================================================
+ * Section 3: 模式2 - 原始 TDM 槽位诊断（核心排查工具）
+ * =========================================================================
+ *
+ * ---- 工作原理 ----
+ *
+ * DMA 接收到的 Mic_Rx_Buffer 是"交织"(Interleaved)格式：
+ *   内存布局 [帧0_槽0, 帧0_槽1, ..., 帧0_槽15,
+ *             帧1_槽0, 帧1_槽1, ..., 帧1_槽15, ...]
+ *
+ * 本函数直接按槽位（而非按通道）遍历原始 DMA 数据，
+ * 计算每个 TDM 槽位的 AC-RMS（标准差）并发送。
+ *
+ * 这完全绕过了 arm_mat_trans_q15 解交织步骤，
+ * 是判断问题来源的"黄金诊断"手段。
+ *
+ * ---- 如何解读 VOFA+ 中的结果 ----
+ *
+ *   情况 A：槽位 4 和 5 的 AC-RMS 不同  →  说明 PCMD3180 输出正常，
+ *            问题在软件解交织代码
+ *
+ *   情况 B：槽位 4 和 5 的 AC-RMS 相同  →  PCMD3180 输出本身就一样，
+ *            继续做硬件排查（MSEL 引脚、焊点、走线短路）
+ *
+ * @note 直接读 Non-Cacheable 的 Mic_Rx_Buffer，无需 Cache 维护
+ * @note 存在极小的数据竞争风险（DMA 正在写的同时读），
+ *       但对 256 帧累积 RMS 影响可忽略，debug 阶段完全可接受
+ */
+void VOFA_Send_Raw_TDM_Slot_RMS(void)
+{
+    float32_t sum_sq[MIC_CHANNELS] = {0.0f};
+    float32_t sum[MIC_CHANNELS]    = {0.0f};
+
+    /* 遍历 Ping 缓冲区的前 FRAME_LEN 帧
+     * p_raw[frame * MIC_CHANNELS + slot] 就是第 frame 帧、第 slot 槽的原始 int16_t 样本 */
+    const int16_t *p_raw = &Mic_Rx_Buffer[0];
+
+    for (int frame = 0; frame < FRAME_LEN; frame++)
+    {
+        for (int slot = 0; slot < MIC_CHANNELS; slot++)
+        {
+            float32_t s = (float32_t)p_raw[frame * MIC_CHANNELS + slot];
+            sum[slot]    += s;
+            sum_sq[slot] += s * s;
+        }
+    }
+
+    float32_t slot_ac_rms[MIC_CHANNELS];
+    for (int slot = 0; slot < MIC_CHANNELS; slot++)
+    {
+        float32_t mean = sum[slot] / (float32_t)FRAME_LEN;
+        /* var = E[x^2] - mean^2 = AC 能量（与 arm_std_f32 等价）*/
+        float32_t var  = sum_sq[slot] / (float32_t)FRAME_LEN - mean * mean;
+        slot_ac_rms[slot] = (var > 0.0f) ? sqrtf(var) : 0.0f;
+    }
+
+    /* 发送 16 个 float + 帧尾 = 68 字节 */
+    VOFA_JustFloat_Send(slot_ac_rms, MIC_CHANNELS);
+}
+
+
+/* =========================================================================
+ * Section 4: 模式3 - 单通道 FFT 幅度谱
+ * ========================================================================= */
 void VOFA_Send_FFT_Magnitude(uint8_t channel)
 {
     /* 频域缓冲区指针：定位到指定通道的起始位置 */
@@ -173,4 +239,46 @@ void VOFA_Send_FFT_Magnitude(uint8_t channel)
      *   - 横轴 = 通道序号 (0..127)，对应频率 (0..23812.5 Hz)
      *   - 纵轴 = 幅度 (未归一化，单位取决于输入信号幅值) */
     VOFA_JustFloat_Send(mag_buf, FRAME_LEN / 2);
+}
+
+
+/* =========================================================================
+ * Section 5: 模式4 - SRP-PHAT 定位结果 + 粗搜功率图
+ * =========================================================================
+ *
+ * 数据布局 (52 个 float):
+ *   [0]      = x_angle  (水平方位角, 度)
+ *   [1]      = y_angle  (垂直俯仰角, 度)
+ *   [2]      = energy   (归一化能量, 0~1)
+ *   [3..51]  = SRP_Power[0..48]  (粗搜 49 点功率图)
+ *
+ * VOFA+ 中:
+ *   - 前 3 条线: 方位角跟踪 + 能量包络
+ *   - 后 49 条线: 功率热力图 (敲阵列前方应看到明显峰值)
+ *
+ * 带宽: 52 × 4 + 4 = 212 字节 → 在 921600 下约 2.3ms
+ */
+void VOFA_Send_SRP_Result(const Sound_Pos_t *pos)
+{
+    float32_t send_buf[3 + COARSE_TOTAL]; /* 3 + 49 = 52 floats, 208B 栈 */
+
+    send_buf[0] = pos->x_angle;
+    send_buf[1] = pos->y_angle;
+    send_buf[2] = pos->energy;
+
+    /* 复制粗搜功率图 (SRP_Power 的前 49 个元素) */
+    memcpy(&send_buf[3], SRP_Power, COARSE_TOTAL * sizeof(float32_t));
+
+    /* 数据完整性检查：扫描所有 52 个 float，将 NAN/Inf 替换为 0
+     * 关键：如果 SRP_Power 中某个值恰好是 +Infinity (0x7F800000)，
+     * VOFA+ 会误认为是帧尾，导致帧解析错位 → 出现 NAN 交替现象 */
+    for (int i = 0; i < 3 + COARSE_TOTAL; i++)
+    {
+        if (!isfinite(send_buf[i]))
+        {
+            send_buf[i] = 0.0f;
+        }
+    }
+
+    VOFA_JustFloat_Send(send_buf, 3 + COARSE_TOTAL);
 }

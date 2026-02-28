@@ -27,9 +27,8 @@ start\app_main_task.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8
 start\app_main_task.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\DSP\Include\dsp/transform_functions.h
 start\app_main_task.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\DSP\Include\dsp/filtering_functions.h
 start\app_main_task.o: C:\Users\xiazhiyuan\AppData\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\DSP\Include\dsp/quaternion_math_functions.h
-start\app_main_task.o: ..\User\App\app_data_stream.h
-start\app_main_task.o: ../User/Algorithm/ai_config.h
-start\app_main_task.o: ..\User\App\app_main_task.h
+start\app_main_task.o: ../User/Algorithm/ai_beamforming.h
+start\app_main_task.o: ../User/App/app_main_task.h
 start\app_main_task.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h
 start\app_main_task.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stddef.h
 start\app_main_task.o: ../Core/Inc/FreeRTOSConfig.h
@@ -42,3 +41,6 @@ start\app_main_task.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h
 start\app_main_task.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/list.h
 start\app_main_task.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/queue.h
 start\app_main_task.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/semphr.h
+start\app_main_task.o: ..\User\App\app_data_output.h
+start\app_main_task.o: ..\User\App\app_data_stream.h
+start\app_main_task.o: ../User/Algorithm/ai_config.h

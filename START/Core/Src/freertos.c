@@ -84,7 +84,7 @@ void StartDefaultTask(void *argument);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /**
-  * @brief  Fre咩咩咩咩eRTOS initialization
+  * @brief  FreeRTOS initialization
   * @param  None
   * @retval None
   */
@@ -140,10 +140,10 @@ void StartDefaultTask(void *argument)
   for(;;)
   {
     /* USER CODE BEGIN 2 */
-    PCMD_Dump_Registers(PCMD3180_ADDR_1);
+    //PCMD_Dump_Registers(PCMD3180_ADDR_1);
     //I2C_Scan();
     //printf("Received data sample: %d\n", found_val);
-    printf("Hello from FreeRTOS! DMA Sample Value: %d\n", found_val);
+    //printf("Hello from FreeRTOS! DMA Sample Value: %d\n", found_val);
     /* USER CODE END 2 */
     osDelay(1000);
   }
