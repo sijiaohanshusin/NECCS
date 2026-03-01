@@ -30,6 +30,7 @@
 #include "pcmd3180.h"
 #include "soft_i2c.h"
 #include "mpu.h"
+#include "sdram.h"
 #include "app_main_task.h"
 /* USER CODE END Includes */
 
@@ -65,6 +66,35 @@ void MX_FREERTOS_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+/**
+ * @brief  SDRAM 读写验证测试
+ * @note   每隔 16KB 写入一个递增值，读回比较，覆盖全部 32MB
+ * @retval 0=PASS, 其他=失败地址偏移
+ */
+static uint32_t sdram_test(void)
+{
+    volatile uint32_t *pSdram = (volatile uint32_t *)BANK5_SDRAM_ADDR;
+    uint32_t i;
+    const uint32_t test_size = 32 * 1024 * 1024 / 4; /* 32MB, 以 uint32 计 */
+
+    /* 写入: 每个 uint32 位置写入其索引值 (仅测试间隔采样点) */
+    for (i = 0; i < test_size; i += 1024)  /* 每隔 4KB 采样一个点 */
+    {
+        pSdram[i] = i;
+    }
+
+    /* 读回比较 */
+    for (i = 0; i < test_size; i += 1024)
+    {
+        if (pSdram[i] != i)
+        {
+            return i * 4;  /* 返回失败的字节偏移 */
+        }
+    }
+
+    return 0;  /* PASS */
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -95,7 +125,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+  sdram_init();
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -104,7 +134,13 @@ int main(void)
   MX_USART1_UART_Init();
   MX_SAI1_Init();
   /* USER CODE BEGIN 2 */
-
+  {
+      uint32_t sdram_err = sdram_test();
+      if (sdram_err == 0)
+          printf("SDRAM Test PASS (32MB @ 0xC0000000)\r\n");
+      else
+          printf("SDRAM Test FAIL at offset 0x%08lX\r\n", sdram_err);
+  }
 
   /* USER CODE END 2 */
 
