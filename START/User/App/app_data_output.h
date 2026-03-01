@@ -19,7 +19,6 @@
 #define APP_DATA_OUTPUT_H
 
 #include "arm_math.h"
-#include "app_main_task.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -38,26 +37,7 @@ extern "C" {
 void VOFA_Send_Channel_RMS(void);
 
 /**
- * @brief 【模式2 - 原始TDM诊断】直接从 DMA 缓冲区计算各槽位 AC-RMS，完全绕过解交织
- *
- * 每次发送 16 个 float32_t + 4字节帧尾，共 68 字节。
- * VOFA+ 设置 16 个通道。
- *
- * 用途：确定"ch4/ch5相同"是软件解交织的问题，还是 PCMD3180 输出的问题。
- *
- *   结果 A: TDM 槽位 4 和 5 的值不同，但软件通道 4 和 5 相同
- *            → 软件解交织存在 Bug（可以继续排查代码）
- *
- *   结果 B: TDM 槽位 4 和 5 的值本身就相同
- *            → 问题在 PCMD3180 配置或硬件（进行硬件排查）
- *
- * @note 直接读 Mic_Rx_Buffer (SRAM1, Non-Cacheable)，在预处理任务之外调用安全
- * @note 必须在 Audio_Preprocess_Task 触发后的任意时刻调用（数据已被 DMA 写入）
- */
-void VOFA_Send_Raw_TDM_Slot_RMS(void);
-
-/**
- * @brief 【模式3 - 频谱查看】发送指定通道的 FFT 幅度谱
+ * @brief 【模式2 - 频谱查看】发送指定通道的 FFT 幅度谱
  *
  * 每次发送 128 个 float32_t + 4字节帧尾，共 516 字节。
  * 频率分辨率: 48000Hz / 256 = 187.5 Hz/bin
@@ -69,22 +49,6 @@ void VOFA_Send_Raw_TDM_Slot_RMS(void);
  *          因为需要频域数据 Mic_Freq_Buffer。
  */
 void VOFA_Send_FFT_Magnitude(uint8_t channel);
-
-/**
- * @brief 【模式4 - SRP结果】发送声源定位结果 + 粗搜功率图
- *
- * 每次发送 [θh, θv, energy, SRP_Power[0..48]] = 52 个 float + 4字节帧尾，共 212 字节。
- * VOFA+ 设置 52 个通道:
- *   - 通道 0: 水平方位角 (度)
- *   - 通道 1: 垂直俯仰角 (度)
- *   - 通道 2: 归一化能量 [0, 1]
- *   - 通道 3~51: 粗搜 49 点功率图 (可用于可视化 SRP 功率分布)
- *
- * @param pos  声源定位结果指针
- *
- * @warning 必须在 AI_SRP_PHAT_Process() 调用"之后"调用！
- */
-void VOFA_Send_SRP_Result(const Sound_Pos_t *pos);
 
 #ifdef __cplusplus
 }

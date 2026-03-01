@@ -31,15 +31,6 @@ extern arm_rfft_fast_instance_f32 S_Rfft;
 // 数据格式: float32_t，在 App_Stream_Init() 中一次性计算
 extern float32_t Hanning_Window[FRAME_LEN];
 
-// 6. GCC-PHAT 互功率谱缓冲区 (SRP-PHAT 中间结果)
-// 物理位置: AXI SRAM
-// 数据格式: Complex Float [Real, Imag] per pair per bin
-extern float32_t GCC_PHAT_Buffer[SRP_PAIR_COUNT * SRP_FREQ_BINS * 2];
-
-// 7. SRP 功率图 (粗搜 + 精搜共 124 个扫描点)
-// 物理位置: AXI SRAM
-extern float32_t SRP_Power[SRP_GRID_TOTAL];
-
 // ==========================================
 // 初始化函数声明
 // ==========================================
