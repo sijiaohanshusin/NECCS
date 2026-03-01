@@ -106,12 +106,7 @@ void Audio_Preprocess_Task(void *pvParameters)
  * ----------------------------------------------------------------------- */
 #define DEBUG_ENABLE
 #define DEBUG_THROTTLE_FRAMES   20u
-/* DEBUG_MODE 说明:
- *   0 = AC-RMS 能量检测  (FFT前, 16路标准差)
- *   1 = 单路频谱查看     (FFT后, 128-bin幅度)
- *   2 = 原始TDM槽位诊断  (完全绕过解交织，判断问题来自软件还是PCMD3180)
- *   3 = SRP-PHAT 定位结果 (方位角+能量+粗搜功率图) */
-#define DEBUG_MODE              3
+#define DEBUG_MODE              0       /* 0=RMS能量检测, 1=频谱查看 */
 #define DEBUG_SPECTRUM_CHANNEL  0u      /* 模式1时查看的通道号 [0..15] */
 
 void AI_Algorithm_Task(void *pvParameters)
@@ -126,19 +121,11 @@ void AI_Algorithm_Task(void *pvParameters)
             s_frame_cnt++;
 
 #ifdef DEBUG_ENABLE
-            /* 模式0: FFT 前发 AC-RMS */
+            /* 模式0: FFT 前发 RMS —— 此时时域数据未被 RFFT 修改 */
 #if (DEBUG_MODE == 0)
             if (s_frame_cnt % DEBUG_THROTTLE_FRAMES == 0)
             {
                 VOFA_Send_Channel_RMS();
-            }
-#endif
-            /* 模式2: 原始TDM槽位诊断，完全绕过解交织
-             * 直接读 Non-Cacheable DMA 缓冲区，FFT 前后均可调用 */
-#if (DEBUG_MODE == 2)
-            if (s_frame_cnt % DEBUG_THROTTLE_FRAMES == 0)
-            {
-                VOFA_Send_Raw_TDM_Slot_RMS();
             }
 #endif
 #endif /* DEBUG_ENABLE */
@@ -148,7 +135,7 @@ void AI_Algorithm_Task(void *pvParameters)
             AI_FFT_Process();
 
 #ifdef DEBUG_ENABLE
-            /* 模式1: FFT 后发频谱 */
+            /* 模式1: FFT 后发频谱 —— 此时频域数据已就绪 */
 #if (DEBUG_MODE == 1)
             if (s_frame_cnt % DEBUG_THROTTLE_FRAMES == 0)
             {
@@ -157,20 +144,14 @@ void AI_Algorithm_Task(void *pvParameters)
 #endif
 #endif /* DEBUG_ENABLE */
 
-            // 3. SRP-PHAT 声源定位
-            // 输入: Mic_Freq_Buffer (16路复数频谱)
-            // 输出: current_pos {x_angle, y_angle, energy}
-            AI_SRP_PHAT_Process(&current_pos);
+            // 3. TODO: SRP-PHAT 广义互相关与波束成形空间扫描
+            // 输入: Mic_Freq_Buffer
+            // 输出: current_pos
 
-#ifdef DEBUG_ENABLE
-            /* 模式3: SRP-PHAT 定位结果 + 粗搜功率图 */
-#if (DEBUG_MODE == 3)
-            if (s_frame_cnt % DEBUG_THROTTLE_FRAMES == 0)
-            {
-                VOFA_Send_SRP_Result(&current_pos);
-            }
-#endif
-#endif /* DEBUG_ENABLE */
+            // 临时占位，等待波束成形实现
+            current_pos.x_angle = 45.0f;
+            current_pos.y_angle = 30.0f;
+            current_pos.energy  = 0.9f;
 
             // 4. 把结果扔进队列，甩手掌柜交给 UI 去画图
             xQueueOverwrite(xPositionQueue, &current_pos);
