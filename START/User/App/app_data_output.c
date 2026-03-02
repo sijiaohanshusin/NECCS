@@ -9,7 +9,7 @@
 #include <string.h>
 
 #define VOFA_MAX_FLOATS        (FRAME_LEN / 2u)
-#define VOFA_DIAG_FLOATS       5u
+#define VOFA_DIAG_FLOATS       8u
 #define VOFA_SRP_FLOATS        (3u + COARSE_TOTAL + VOFA_DIAG_FLOATS)
 #define VOFA_FRAME_MAX_BYTES   ((VOFA_MAX_FLOATS * sizeof(float32_t)) + 4u)
 #define VOFA_UART_TX_TIMEOUT   5u
@@ -74,11 +74,7 @@ void VOFA_Send_FFT_Magnitude(uint8_t channel)
     float32_t mag_buf[FRAME_LEN / 2u];
 
     mag_buf[0] = fabsf(p_freq[0]);
-
-    arm_cmplx_mag_f32(&p_freq[2],
-                      &mag_buf[1],
-                      (FRAME_LEN / 2u) - 2u);
-
+    arm_cmplx_mag_f32(&p_freq[2], &mag_buf[1], (FRAME_LEN / 2u) - 2u);
     mag_buf[(FRAME_LEN / 2u) - 1u] = fabsf(p_freq[1]);
 
     VOFA_JustFloat_Send(mag_buf, FRAME_LEN / 2u);
@@ -132,11 +128,15 @@ void VOFA_Send_SRP_Result(const Sound_Pos_t *pos)
         s_coarse_bad_streak = 0u;
     }
 
-    send_buf[3 + COARSE_TOTAL + 0] = (float32_t)g_audio_both_flags_count;
-    send_buf[3 + COARSE_TOTAL + 1] = (float32_t)s_vofa_tx_drop_count;
-    send_buf[3 + COARSE_TOTAL + 2] = (float32_t)g_srp_invalid_count;
-    send_buf[3 + COARSE_TOTAL + 3] = (float32_t)s_coarse_hold_count;
-    send_buf[3 + COARSE_TOTAL + 4] = (float32_t)(++s_vofa_frame_seq);
+    uint32_t base = 3u + COARSE_TOTAL;
+    send_buf[base + 0u] = (float32_t)g_audio_both_flags_count;
+    send_buf[base + 1u] = (float32_t)s_vofa_tx_drop_count;
+    send_buf[base + 2u] = (float32_t)g_srp_invalid_count;
+    send_buf[base + 3u] = (float32_t)s_coarse_hold_count;
+    send_buf[base + 4u] = (float32_t)g_srp_low_contrast_count;
+    send_buf[base + 5u] = g_srp_last_contrast;
+    send_buf[base + 6u] = g_srp_last_quality;
+    send_buf[base + 7u] = (float32_t)(++s_vofa_frame_seq);
 
     for (uint32_t i = 0u; i < VOFA_SRP_FLOATS; i++)
     {
@@ -148,4 +148,3 @@ void VOFA_Send_SRP_Result(const Sound_Pos_t *pos)
 
     VOFA_JustFloat_Send(send_buf, VOFA_SRP_FLOATS);
 }
-

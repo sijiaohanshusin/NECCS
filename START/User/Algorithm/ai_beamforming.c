@@ -1,4 +1,5 @@
 #include "ai_beamforming.h"
+
 #include "ai_config.h"
 #include "ai_srp_lut.h"
 #include "app_data_stream.h"
@@ -7,15 +8,198 @@
 
 volatile uint32_t g_srp_invalid_count = 0u;
 volatile uint32_t g_srp_low_contrast_count = 0u;
+volatile float32_t g_srp_last_contrast = 0.0f;
+volatile float32_t g_srp_last_quality = 0.0f;
 
 static uint8_t s_has_last_valid = 0u;
 static Sound_Pos_t s_last_valid = {0.0f, 0.0f, 0.0f};
+static uint32_t s_low_conf_streak = 0u;
 
 static float32_t s_fine_theta_table[FINE_TOTAL];
 static float32_t s_fine_phi_table[FINE_TOTAL];
 
-#define SRP_CONTRAST_MIN_RATIO    (0.03f)
-#define SRP_AMBIGUOUS_ENERGY_MAX  (0.30f)
+#if (SRP_LOWCONF_POLICY != SRP_LOWCONF_REPORT_NEW) && \
+    (SRP_LOWCONF_POLICY != SRP_LOWCONF_HOLD_LAST) && \
+    (SRP_LOWCONF_POLICY != SRP_LOWCONF_MIXED)
+#error "Invalid SRP_LOWCONF_POLICY"
+#endif
+
+static uint8_t coarse_idx_is_neighbor(uint32_t a, uint32_t b)
+{
+    uint32_t ai = a / COARSE_GRID_SIZE;
+    uint32_t ap = a % COARSE_GRID_SIZE;
+    uint32_t bi = b / COARSE_GRID_SIZE;
+    uint32_t bp = b % COARSE_GRID_SIZE;
+
+    uint32_t dti = (ai > bi) ? (ai - bi) : (bi - ai);
+    uint32_t dpi = (ap > bp) ? (ap - bp) : (bp - ap);
+
+    return (uint8_t)((dti <= SRP_TOPK_NMS_RADIUS) && (dpi <= SRP_TOPK_NMS_RADIUS));
+}
+
+static void find_top_k_indices_nms(const float32_t *arr, uint32_t *top_idx, uint32_t k)
+{
+    uint8_t used[COARSE_TOTAL] = {0};
+    uint32_t chosen = 0u;
+
+    for (uint32_t s = 0u; s < k; s++)
+    {
+        float32_t best_val = -1.0e30f;
+        uint32_t best_idx = 0u;
+        uint8_t found = 0u;
+
+        for (uint32_t n = 0u; n < COARSE_TOTAL; n++)
+        {
+            if (used[n] != 0u)
+            {
+                continue;
+            }
+
+            uint8_t allow = 1u;
+            for (uint32_t c = 0u; c < chosen; c++)
+            {
+                if (coarse_idx_is_neighbor(n, top_idx[c]) != 0u)
+                {
+                    allow = 0u;
+                    break;
+                }
+            }
+            if ((allow == 0u) || (arr[n] <= best_val))
+            {
+                continue;
+            }
+
+            best_val = arr[n];
+            best_idx = n;
+            found = 1u;
+        }
+
+        if (found == 0u)
+        {
+            for (uint32_t n = 0u; n < COARSE_TOTAL; n++)
+            {
+                if ((used[n] == 0u) && (arr[n] > best_val))
+                {
+                    best_val = arr[n];
+                    best_idx = n;
+                    found = 1u;
+                }
+            }
+        }
+
+        top_idx[s] = best_idx;
+        if (found != 0u)
+        {
+            used[best_idx] = 1u;
+            chosen++;
+        }
+    }
+}
+
+static void get_grid_angle(uint32_t idx, float32_t *theta_deg, float32_t *phi_deg)
+{
+    if (idx < COARSE_TOTAL)
+    {
+        uint32_t ti = idx / COARSE_GRID_SIZE;
+        uint32_t pi = idx % COARSE_GRID_SIZE;
+        *theta_deg = coarse_theta_deg[ti];
+        *phi_deg = coarse_phi_deg[pi];
+        return;
+    }
+
+    idx -= COARSE_TOTAL;
+    if (idx < FINE_TOTAL)
+    {
+        *theta_deg = s_fine_theta_table[idx];
+        *phi_deg = s_fine_phi_table[idx];
+        return;
+    }
+
+    *theta_deg = 0.0f;
+    *phi_deg = 0.0f;
+}
+
+static float32_t compute_second_max_all(uint32_t max_idx)
+{
+    float32_t second_max = -1.0e30f;
+
+    for (uint32_t i = 0u; i < SRP_GRID_TOTAL; i++)
+    {
+        if ((i != max_idx) && (SRP_Power[i] > second_max))
+        {
+            second_max = SRP_Power[i];
+        }
+    }
+
+    return second_max;
+}
+
+static float32_t compute_second_max_excluding_neighbor(uint32_t max_idx)
+{
+    float32_t max_theta, max_phi;
+    float32_t second_max = -1.0e30f;
+    uint8_t found = 0u;
+
+    get_grid_angle(max_idx, &max_theta, &max_phi);
+
+    for (uint32_t i = 0u; i < SRP_GRID_TOTAL; i++)
+    {
+        if (i == max_idx)
+        {
+            continue;
+        }
+
+        float32_t theta, phi;
+        get_grid_angle(i, &theta, &phi);
+
+        if ((fabsf(theta - max_theta) <= SRP_CONTRAST_NEIGHBOR_EXCLUDE_DEG) &&
+            (fabsf(phi - max_phi) <= SRP_CONTRAST_NEIGHBOR_EXCLUDE_DEG))
+        {
+            continue;
+        }
+
+        if (SRP_Power[i] > second_max)
+        {
+            second_max = SRP_Power[i];
+            found = 1u;
+        }
+    }
+
+    if (found == 0u)
+    {
+        return compute_second_max_all(max_idx);
+    }
+
+    return second_max;
+}
+
+static float32_t apply_lowconf_energy(float32_t energy)
+{
+#if (SRP_ENABLE_ENERGY_SOFTCAP != 0u)
+    if (energy > SRP_AMBIGUOUS_ENERGY_MAX)
+    {
+        return SRP_AMBIGUOUS_ENERGY_MAX;
+    }
+#endif
+    return energy;
+}
+
+static void remap_output_angles(float32_t *x_angle, float32_t *y_angle)
+{
+#if (SRP_OUTPUT_SWAP_XY != 0u)
+    float32_t tmp = *x_angle;
+    *x_angle = *y_angle;
+    *y_angle = tmp;
+#endif
+
+#if (SRP_OUTPUT_INVERT_X != 0u)
+    *x_angle = -*x_angle;
+#endif
+
+#if (SRP_OUTPUT_INVERT_Y != 0u)
+    *y_angle = -*y_angle;
+#endif
+}
 
 void AI_FFT_Process(void)
 {
@@ -28,9 +212,7 @@ void AI_FFT_Process(void)
 
         arm_mean_f32(p_time, FRAME_LEN, &mean_val);
         arm_offset_f32(p_time, -mean_val, p_time, FRAME_LEN);
-
         arm_mult_f32(p_time, Hanning_Window, p_time, FRAME_LEN);
-
         arm_rfft_fast_f32(&S_Rfft, p_time, p_freq, 0);
     }
 }
@@ -95,46 +277,18 @@ static float32_t SRP_Accumulate_Point(const float32_t *tau)
     return power;
 }
 
-static void find_top_k_indices(const float32_t *arr, uint32_t len, uint32_t *top_idx, uint32_t k)
-{
-    float32_t top_val[FINE_TOP_K];
-
-    for (uint32_t i = 0u; i < k; i++)
-    {
-        top_val[i] = -1.0e30f;
-        top_idx[i] = 0u;
-    }
-
-    for (uint32_t n = 0u; n < len; n++)
-    {
-        uint32_t min_slot = 0u;
-        float32_t min_val = top_val[0];
-
-        for (uint32_t i = 1u; i < k; i++)
-        {
-            if (top_val[i] < min_val)
-            {
-                min_val = top_val[i];
-                min_slot = i;
-            }
-        }
-
-        if (arr[n] > min_val)
-        {
-            top_val[min_slot] = arr[n];
-            top_idx[min_slot] = n;
-        }
-    }
-}
-
 void AI_SRP_PHAT_Init(void)
 {
     g_srp_invalid_count = 0u;
     g_srp_low_contrast_count = 0u;
+    g_srp_last_contrast = 0.0f;
+    g_srp_last_quality = 0.0f;
+
     s_has_last_valid = 0u;
     s_last_valid.x_angle = 0.0f;
     s_last_valid.y_angle = 0.0f;
     s_last_valid.energy = 0.0f;
+    s_low_conf_streak = 0u;
 }
 
 void AI_SRP_PHAT_Process(Sound_Pos_t *result)
@@ -156,7 +310,7 @@ void AI_SRP_PHAT_Process(Sound_Pos_t *result)
     }
 
     uint32_t top_idx[FINE_TOP_K];
-    find_top_k_indices(SRP_Power, COARSE_TOTAL, top_idx, FINE_TOP_K);
+    find_top_k_indices_nms(SRP_Power, top_idx, FINE_TOP_K);
 
     for (uint32_t t = 0u; t < FINE_TOP_K; t++)
     {
@@ -186,7 +340,6 @@ void AI_SRP_PHAT_Process(Sound_Pos_t *result)
                 s_fine_phi_table[global_idx] = theta_v;
 
                 float32_t sin_th_cos_tv = sin_th * cos_tv;
-
                 for (uint32_t p = 0u; p < SRP_PAIR_COUNT; p++)
                 {
                     tau_buf[p] = (srp_pair_dx[p] * sin_th_cos_tv + srp_pair_dy[p] * sin_tv) * inv_c;
@@ -204,10 +357,14 @@ void AI_SRP_PHAT_Process(Sound_Pos_t *result)
     if ((!isfinite(max_val)) || (max_idx >= SRP_GRID_TOTAL))
     {
         g_srp_invalid_count++;
+        g_srp_last_contrast = 0.0f;
+        g_srp_last_quality = 0.0f;
+
         if (s_has_last_valid != 0u)
         {
             *result = s_last_valid;
             result->energy *= 0.90f;
+            remap_output_angles(&result->x_angle, &result->y_angle);
         }
         else
         {
@@ -218,21 +375,9 @@ void AI_SRP_PHAT_Process(Sound_Pos_t *result)
         return;
     }
 
-    float32_t second_max = -1.0e30f;
-    for (uint32_t i = 0u; i < SRP_GRID_TOTAL; i++)
-    {
-        if (i == max_idx)
-        {
-            continue;
-        }
-        if (SRP_Power[i] > second_max)
-        {
-            second_max = SRP_Power[i];
-        }
-    }
-
     float32_t cand_x;
     float32_t cand_y;
+
     if (max_idx < COARSE_TOTAL)
     {
         uint32_t ti = max_idx / COARSE_GRID_SIZE;
@@ -257,21 +402,49 @@ void AI_SRP_PHAT_Process(Sound_Pos_t *result)
         norm = 0.0f;
     }
 
-    float32_t contrast = (max_val - second_max) / (fabsf(max_val) + 1.0e-6f);
-    if ((s_has_last_valid != 0u) && (contrast < SRP_CONTRAST_MIN_RATIO))
+    float32_t second_max_raw = compute_second_max_all(max_idx);
+    float32_t second_max_quality = compute_second_max_excluding_neighbor(max_idx);
+
+    float32_t contrast_raw = (max_val - second_max_raw) / (fabsf(max_val) + 1.0e-6f);
+    float32_t quality = (max_val - second_max_quality) / (fabsf(max_val) + 1.0e-6f);
+
+    g_srp_last_contrast = contrast_raw;
+    g_srp_last_quality = quality;
+
+    uint8_t low_conf = (uint8_t)(quality < SRP_CONTRAST_MIN_RATIO);
+    if (low_conf != 0u)
     {
         g_srp_low_contrast_count++;
-        result->x_angle = s_last_valid.x_angle;
-        result->y_angle = s_last_valid.y_angle;
-        result->energy = (norm < SRP_AMBIGUOUS_ENERGY_MAX) ? norm : SRP_AMBIGUOUS_ENERGY_MAX;
-        return;
+        s_low_conf_streak++;
+    }
+    else
+    {
+        s_low_conf_streak = 0u;
     }
 
-    result->x_angle = cand_x;
-    result->y_angle = cand_y;
-    result->energy = norm;
+    uint8_t hold_last = 0u;
+#if (SRP_LOWCONF_POLICY == SRP_LOWCONF_HOLD_LAST)
+    hold_last = (uint8_t)(s_has_last_valid != 0u);
+#elif (SRP_LOWCONF_POLICY == SRP_LOWCONF_MIXED)
+    hold_last = (uint8_t)((s_has_last_valid != 0u) && (s_low_conf_streak <= SRP_LOWCONF_MIXED_HOLD_FRAMES));
+#endif
 
-    s_last_valid = *result;
-    s_has_last_valid = 1u;
+    float32_t base_x = ((low_conf != 0u) && (hold_last != 0u)) ? s_last_valid.x_angle : cand_x;
+    float32_t base_y = ((low_conf != 0u) && (hold_last != 0u)) ? s_last_valid.y_angle : cand_y;
+    remap_output_angles(&base_x, &base_y);
+
+    result->x_angle = base_x;
+    result->y_angle = base_y;
+    result->energy = (low_conf != 0u) ? apply_lowconf_energy(norm) : norm;
+
+    if ((low_conf == 0u) &&
+        (result->energy >= SRP_VALID_MIN_ENERGY) &&
+        (quality >= SRP_VALID_MIN_QUALITY))
+    {
+        /* Cache canonical angle before output remap. */
+        s_last_valid.x_angle = cand_x;
+        s_last_valid.y_angle = cand_y;
+        s_last_valid.energy = result->energy;
+        s_has_last_valid = 1u;
+    }
 }
-
