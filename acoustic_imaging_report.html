@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>声源定位与声学成像算法框架设计报告</title>
+    <!-- 引入 MathJax 用于渲染 LaTeX 数学公式 -->
+    <script>
+        MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']],
+                processEscapes: true
+            }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    
+    <style>
+        :root {
+            --primary-color: #1a5276;
+            --secondary-color: #2980b9;
+            --accent-color: #e74c3c;
+            --text-color: #333;
+            --bg-color: #f5f7fa;
+            --box-bg: #fff;
+            --border-color: #ddd;
+        }
+        
+        body {
+            font-family: 'Segoe UI', 'Microsoft YaHei', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 20px;
+        }
+
+        .report-container {
+            max-width: 960px;
+            margin: 0 auto;
+            background: var(--box-bg);
+            padding: 40px 60px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            border-radius: 8px;
+        }
+
+        .page {
+            margin-bottom: 50px;
+            padding-bottom: 50px;
+            border-bottom: 2px dashed var(--border-color);
+        }
+        
+        .page:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .page-header {
+            font-size: 0.85em;
+            color: #888;
+            text-align: right;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 20px;
+            padding-bottom: 5px;
+        }
+
+        h1 {
+            color: var(--primary-color);
+            font-size: 2.5em;
+            text-align: center;
+            margin-bottom: 5px;
+        }
+
+        h1 small {
+            display: block;
+            font-size: 0.6em;
+            font-weight: normal;
+            color: #666;
+            margin-top: 10px;
+        }
+
+        h2 {
+            color: var(--secondary-color);
+            border-left: 5px solid var(--secondary-color);
+            padding-left: 15px;
+            margin-top: 40px;
+            font-size: 1.5em;
+        }
+
+        h3 {
+            color: var(--primary-color);
+            font-size: 1.2em;
+            margin-top: 30px;
+        }
+
+        /* 封面样式 */
+        .cover {
+            text-align: center;
+            padding: 100px 0;
+        }
+        
+        .cover h2.subtitle {
+            border: none;
+            padding: 0;
+            color: #7f8c8d;
+            font-size: 1.2em;
+            letter-spacing: 2px;
+            margin-bottom: 60px;
+        }
+
+        .cover-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            max-width: 700px;
+            margin: 0 auto;
+            text-align: left;
+        }
+
+        .cover-item {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid var(--secondary-color);
+        }
+
+        .cover-item h4 {
+            margin: 0 0 10px 0;
+            color: var(--primary-color);
+        }
+
+        .cover-item p {
+            margin: 0;
+            font-size: 1.1em;
+            font-weight: bold;
+        }
+
+        /* 表格样式 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 25px 0;
+            font-size: 0.95em;
+        }
+
+        th, td {
+            border: 1px solid var(--border-color);
+            padding: 12px 15px;
+            text-align: left;
+        }
+
+        th {
+            background-color: var(--primary-color);
+            color: white;
+            font-weight: 600;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        /* 代码块样式 */
+        pre {
+            background: #282c34;
+            color: #abb2bf;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+
+        code {
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+
+        /* 强调与高亮框 */
+        .highlight-box {
+            background: #eaf2f8;
+            border-left: 4px solid var(--secondary-color);
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .conclusion-box {
+            background: #fdf2e9;
+            border-left: 4px solid #e67e22;
+            padding: 15px 20px;
+            margin: 20px 0;
+        }
+
+        .image-placeholder {
+            background: #eee;
+            border: 2px dashed #aaa;
+            color: #555;
+            padding: 60px 20px;
+            text-align: center;
+            border-radius: 8px;
+            margin: 30px 0;
+            font-style: italic;
+        }
+
+        .equation {
+            overflow-x: auto;
+            margin: 15px 0;
+        }
+        
+        ul.pipeline-list {
+            list-style: none;
+            padding: 0;
+        }
+        ul.pipeline-list li {
+            position: relative;
+            padding-left: 40px;
+            margin-bottom: 20px;
+        }
+        ul.pipeline-list li::before {
+            content: counter(li);
+            counter-increment: li;
+            position: absolute;
+            left: 0;
+            top: 0;
+            background: var(--primary-color);
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 28px;
+            font-weight: bold;
+        }
+        ul.pipeline-list {
+            counter-reset: li;
+        }
+    </style>
+</head>
+<body>
+
+<div class="report-container">
+
+    <!-- PAGE 1 -->
+    <div class="page cover" id="page1">
+        <h1>声源定位与声学成像<br><small>算法框架设计报告</small></h1>
+        <h2 class="subtitle">ACOUSTIC IMAGING ALGORITHM FRAMEWORK</h2>
+        
+        <div class="cover-grid" style="margin-top: 80px;">
+            <div class="cover-item">
+                <h4>目标平台</h4>
+                <p>STM32H743IIT6</p>
+            </div>
+            <div class="cover-item">
+                <h4>阵列规模</h4>
+                <p>16路/2D平面阵列</p>
+            </div>
+            <div class="cover-item">
+                <h4>主频</h4>
+                <p>Cortex-M7 @ 480MHz</p>
+            </div>
+            <div class="cover-item">
+                <h4>实时约束</h4>
+                <p>5ms/帧 ($\ge30FPS$)</p>
+            </div>
+            <div class="cover-item">
+                <h4>采样率/FFT</h4>
+                <p>48kHz/256点 RFFT</p>
+            </div>
+            <div class="cover-item">
+                <h4>核心算法</h4>
+                <p>SRP-PHAT 优化版</p>
+            </div>
+        </div>
+        
+        <div style="margin-top: 80px; color: #7f8c8d;">
+            <p><strong>关键词：</strong> SRP-PHAT | GCC-PHAT | CMSIS-DSP | Coarse-to-Fine | TDOA LUT</p>
+        </div>
+    </div>
+
+    <!-- PAGE 2 -->
+    <div class="page" id="page2">
+        <div class="page-header">声源定位与声学成像算法框架 - 2/10</div>
+        
+        <h2>目录与项目概述</h2>
+        
+        <h3>报告目录</h3>
+        <table style="width: 50%;">
+            <tr><td>1. 目录与项目概述</td><td>P2</td></tr>
+            <tr><td>2. 算法路线选型分析(问题A)</td><td>P3-P4</td></tr>
+            <tr><td>3. SRP-PHAT 高效数学降维(问题B)</td><td>P5-P6</td></tr>
+            <tr><td>4. 空间流形矩阵预计算(问题C)</td><td>P7-P8</td></tr>
+            <tr><td>5. CMSIS-DSP 巧妙运用(问题D)</td><td>P9</td></tr>
+            <tr><td>6. 系统流水线与性能总结</td><td>P10</td></tr>
+        </table>
+
+        <h3>阵列物理拓扑</h3>
+        <div class="image-placeholder">
+                    </div>
+
+        <h3>关键系统参数</h3>
+        <table>
+            <tr>
+                <th>参数</th>
+                <th>值</th>
+                <th>说明</th>
+            </tr>
+            <tr>
+                <td>MCU</td>
+                <td>STM32H743IIT6</td>
+                <td>Cortex-M7,单精度 FPU</td>
+            </tr>
+            <tr>
+                <td>主频</td>
+                <td>480 MHz</td>
+                <td>峰值~240 MFLOPS (SP)</td>
+            </tr>
+            <tr>
+                <td>麦克风数</td>
+                <td>16</td>
+                <td>麦克风对数 C(16,2) = 120</td>
+            </tr>
+            <tr>
+                <td>采样率</td>
+                <td>48 kHz</td>
+                <td>奈奎斯特频率 24 kHz</td>
+            </tr>
+            <tr>
+                <td>FFT 长度</td>
+                <td>256 点</td>
+                <td>频率分辨率 187.5 Hz</td>
+            </tr>
+            <tr>
+                <td>帧时长</td>
+                <td>5.33 ms</td>
+                <td>256/48000</td>
+            </tr>
+            <tr>
+                <td>有效频点</td>
+                <td>128 bins</td>
+                <td>RFFT 输出 N/2 个复数</td>
+            </tr>
+            <tr>
+                <td>声速</td>
+                <td>343 m/s</td>
+                <td>标准条件(20°C)</td>
+            </tr>
+            <tr>
+                <td>阵列孔径</td>
+                <td>~75 mm</td>
+                <td>最大对角距离</td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- PAGE 3 -->
+    <div class="page" id="page3">
+        <div class="page-header">声源定位与声学成像算法框架 - 3/10</div>
+        
+        <h2>问题A: 算法路线选型分析</h2>
+        <p>本节对三种主流声源定位算法SRP-PHAT、MUSIC 和频域 DAS 在16阵元+STM32H7 嵌入式平台上的适用性进行深度对比。</p>
+
+        <h3>三大算法核心原理概述</h3>
+        
+        <p><strong>① 频域 DAS (Delay-and-Sum Beamforming):</strong> 最经典的波束形成方法。对每个候选方向,将各通道信号按预计算的时延进行对齐后求和,输出功率最大的方向即为声源方向。数学表达:</p>
+        <div class="equation">
+            $$P_{DAS}(q)=\left|\sum_{m=1}^{M}w_{m}\cdot X_{m}(f)\cdot e^{j2\pi f\tau_{m}(q)}\right|^{2}$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(1): DAS 波束形成输出功率</div>
+        </div>
+
+        <p><strong>② MUSIC (Multiple Signal Classification):</strong> 基于协方差矩阵特征分解的超分辨算法。将信号空间分解为信号子空间和噪声子空间,通过搜索与噪声子空间正交的指向矢量来定位声源:</p>
+        <div class="equation">
+            $$P_{MUSIC}(q)=\frac{1}{a^{H}(q)E_{n}E_{n}^{H}a(q)}$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(2): MUSIC空间谱，$E_n$ 为噪声子空间</div>
+        </div>
+
+        <p><strong>③ SRP-PHAT (Steered Response Power Phase Transform):</strong> 将GCC-PHAT互相关结果在空间网格上进行累积。PHAT 加权通过谱白化消除幅度影响,仅保留相位信息,使得在混响环境下仍能保持尖锐的相关峰:</p>
+        <div class="equation">
+            $$P_{SRP}(q)=\sum_{k=1}^{M}\sum_{l=k+1}^{M}\sum_{f}Re\left[\frac{X_{k}(f)X_{l}^{*}(f)}{|X_{k}(f)X_{l}^{*}(f)|}\cdot e^{j2\pi f\Delta\tau_{kl}(q)}\right]$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(3): 频域 SRP-PHAT 功率谱 (核心公式)</div>
+        </div>
+
+        <h3>三维对比分析</h3>
+        <table>
+            <tr>
+                <th>评估维度</th>
+                <th>频域 DAS</th>
+                <th>MUSIC</th>
+                <th>SRP-PHAT</th>
+            </tr>
+            <tr>
+                <td>空间分辨率</td>
+                <td>低<br><small>受阵列孔径限制,主瓣宽</small></td>
+                <td>高<br><small>超分辨,可突破瑞利极限</small></td>
+                <td>中高<br><small>优于DAS,接近MUSIC</small></td>
+            </tr>
+            <tr>
+                <td>混响鲁棒性</td>
+                <td>差<br><small>旁瓣抬升严重</small></td>
+                <td>差<br><small>协方差矩阵被混响污染</small></td>
+                <td>优秀<br><small>PHAT 白化抑制混响</small></td>
+            </tr>
+            <tr>
+                <td>计算复杂度</td>
+                <td>$O(MFN)$<br><small>最低,适合实时</small></td>
+                <td>$O(M^3+M^2N)$<br><small>特征分解极耗算力</small></td>
+                <td>$O(QFN)$<br><small>Q=120对,可优化</small></td>
+            </tr>
+            <tr>
+                <td>多声源能力</td>
+                <td>弱<br><small>旁瓣干扰严重</small></td>
+                <td>强<br><small>需准确估计声源数</small></td>
+                <td>中等<br><small>可分辨空间上分离的源</small></td>
+            </tr>
+            <tr>
+                <td>STM32H7 可行性</td>
+                <td>完全可行</td>
+                <td>极困难<br><small>16×16特征分解~2ms</small></td>
+                <td>可行(优化后)</td>
+            </tr>
+        </table>
+
+        <div class="conclusion-box">
+            <strong>★ 选型结论</strong><br>
+            综合考虑国赛室内混响环境、STM32H7算力约束和成像质量需求,强烈推荐采用频域 SRP-PHAT的优化版本。它在混响鲁棒性上远超 DAS 和 MUSIC,且通过粗细结合搜索+预计算TDOA表的方案,可在单帧5ms内完成。
+        </div>
+    </div>
+
+    <!-- PAGE 4 -->
+    <div class="page" id="page4">
+        <div class="page-header">声源定位与声学成像算法框架 - 4/10</div>
+        
+        <h3>MUSIC 在 STM32H7上的不可行性分析</h3>
+        <p>MUSIC 算法的核心瓶颈在于协方差矩阵的特征分解。对于16路麦克风,需要对16×16的复数协方差矩阵执行特征值分解(EVD)。即使使用优化的Jacobi 迭代法:</p>
+        <div class="equation">
+            $$R_{xx}=\frac{1}{L}\sum_{l=1}^{L}X(f_{l})X^{H}(f_{l})=E_{s}\Lambda_{s}E_{s}^{H}+\sigma^{2}E_{n}E_{n}^{H}$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(4): 协方差矩阵特征分解</div>
+        </div>
+
+        <table>
+            <tr>
+                <th>MUSIC 计算步骤</th>
+                <th>运算量</th>
+                <th>M=16 实际值</th>
+                <th>耗时估算 @480MHz</th>
+            </tr>
+            <tr>
+                <td>协方差矩阵估计</td>
+                <td>$O(M^2\cdot F)$</td>
+                <td>256x256=32.8K 复数MAC</td>
+                <td>~0.3 ms</td>
+            </tr>
+            <tr>
+                <td>特征值分解(EVD)</td>
+                <td>$O(M^3)$ 迭代</td>
+                <td>~50次 Jacobi旋转×4096</td>
+                <td>~1.5-2.0 ms</td>
+            </tr>
+            <tr>
+                <td>空间谱搜索(每网格点)</td>
+                <td>$O(M^2)$ 矩阵乘</td>
+                <td>256 × N网格点</td>
+                <td>~0.5ms (8×8网格)</td>
+            </tr>
+            <tr style="font-weight: bold; background: #fff3e0;">
+                <td colspan="3">总计</td>
+                <td>~2.3-2.8 ms</td>
+            </tr>
+        </table>
+        <p><strong>▲ 关键问题:</strong> MUSIC的EVD单步就消耗近2ms,且在混响环境下协方差矩阵估计需要更多帧累积(≥10帧)才能稳定,这直接导致成像延迟≥50ms,无法满足30FPS实时要求。此外,MUSIC 需要预知声源数目,在竞赛场景下不实际。</p>
+
+        <h3>频域 DAS 的局限性</h3>
+        <p>频域 DAS 虽然计算量最小,但其空间分辨率受到阵列孔径的物理限制。对于本阵列(~75mm孔径),在1kHz频率下的3dB 波束宽度约为:</p>
+        <div class="equation">
+            $$\theta_{3dB}\approx\frac{\lambda}{D}=\frac{343/1000}{0.075}\approx4.57\text{ rad}\approx262^{\circ}$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(5): 低频波束宽度(1kHz) 分辨率极差</div>
+        </div>
+        <p>即使在4kHz下,波束宽度仍约65°,这意味着DAS 在中低频段几乎无法区分不同方向的声源。在国赛的室内环境中,混响会进一步模糊 DAS 的成像结果。</p>
+
+        <h3>SRP-PHAT 的决定性优势</h3>
+        <div class="highlight-box">
+            <strong>为什么 SRP-PHAT 是最优选择?</strong>
+            <ul>
+                <li><strong>PHAT 白化:</strong> 通过 $1/|X_{k}X_{l}^{*}|$ 归一化,消除频谱幅度的影响,等效地对所有频率分量赋予相同权重。这使得在混响环境下,直达声路径的相位信息被最大化保留。</li>
+                <li><strong>120对冗余:</strong> 16路麦克风产生C(16,2)=120个互相关对,远多于最少所需的2对。大量冗余通过空间累积有效抑制了虚假峰值。</li>
+                <li><strong>频域直接累积(关键优化):</strong> 无需执行120次IFFT。直接在频域用预计算的相位矢量进行旋转累积,大幅降低计算量。</li>
+                <li><strong>粗细结合搜索:</strong> 通过两级网格搜索将空间扫描点从3600+降至~112,使得在H7上实现≥30FPS 完全可行。</li>
+                <li><strong>无需先验信息:</strong> 不需要预知声源数目,不需要长时间的协方差矩阵累积,单帧即可成像。</li>
+            </ul>
+        </div>
+
+        <h3>算力对比总结</h3>
+        <table>
+            <tr>
+                <th>算法</th>
+                <th>单帧算力(MFLOPS)</th>
+                <th>@480MHz 耗时</th>
+                <th>混响鲁棒性</th>
+                <th>结论</th>
+            </tr>
+            <tr>
+                <td>频域 DAS</td>
+                <td>~2.1</td>
+                <td>~0.5 ms</td>
+                <td>差</td>
+                <td>快但无用</td>
+            </tr>
+            <tr>
+                <td>MUSIC</td>
+                <td>~12.5</td>
+                <td>~2.8 ms</td>
+                <td>差(需累积)</td>
+                <td>不可行</td>
+            </tr>
+            <tr>
+                <td>SRP-PHAT (朴素)</td>
+                <td>~450 (60×60网格)</td>
+                <td>~95 ms</td>
+                <td>优秀</td>
+                <td>太慢</td>
+            </tr>
+            <tr style="background: #e8f5e9;">
+                <td><strong>SRP-PHAT (优化版)</strong></td>
+                <td><strong>~14.5</strong></td>
+                <td><strong>~3.0 ms</strong></td>
+                <td><strong>优秀</strong></td>
+                <td><strong>√ 推荐</strong></td>
+            </tr>
+        </table>
+        <p style="font-size: 0.85em; color: #666;">注:优化版SRP-PHAT 采用8×8粗搜索+3×(4×4)细搜索=112网格点,频域直接累积(跳过IFFT),预计算TDOA LUT。详见问题B的完整方案。</p>
+    </div>
+
+    <!-- PAGE 5 -->
+    <div class="page" id="page5">
+        <div class="page-header">声源定位与声学成像算法框架 - 5/10</div>
+        
+        <h2>问题B: SRP-PHAT 高效数学降维</h2>
+        <p>本节详细推导频域 SRP-PHAT的GCC-PHAT计算公式,并提供跳过IFFT的频域直接累积方案与粗细结合搜索策略。</p>
+
+        <h3>B.1 GCC-PHAT 交叉功率谱公式推导</h3>
+        <p>对于麦克风对(i,j),设其频域信号为 $X_{i}(f_{k})$ 和 $X_{j}(f_{k})$ (由256点RFFT得到, $k=0,1,...,127$), GCC-PHAT 的计算分为以下几步：</p>
+
+        <p><strong>① 交叉功率谱 (Cross-Power Spectrum)</strong></p>
+        <div class="equation">
+            $$G_{ij}(f_{k})=X_{i}(f_{k})\cdot X_{j}^{*}(f_{k})$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(6): 复数共轭乘法,输出为复数</div>
+        </div>
+        <p>其中 $X_{j}^{*}(f_{k})$ 为 $X_{j}(f_{k})$ 的复共轭。在CMSIS-DSP中,频域数据以交织格式 $[Re_{0},Im_{0},Re_{1},Im_{1},...]$ 存储。</p>
+
+        <p><strong>② PHAT 相位加权 (Phase Transform)</strong></p>
+        <div class="equation">
+            $$\tilde{G}_{ij}(f_{k})=\frac{G_{ij}(f_{k})}{|G_{ij}(f_{k})|+\epsilon}=\frac{X_{i}(f_{k})\cdot X_{j}^{*}(f_{k})}{|X_{i}(f_{k})\cdot X_{j}^{*}(f_{k})|+\epsilon}$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(7): PHAT 白化——仅保留相位信息, $\epsilon=10^{-16}$ 防除零</div>
+        </div>
+        <p>白化后 $|\tilde{G}_{ij}(f_{k})| \approx 1$,即所有频率分量权重相等。这是SRP-PHAT 抗混响的核心机制。</p>
+
+        <p><strong>③ 频域 SRP 累积 (跳过IFFT的关键优化)</strong></p>
+        <div class="equation">
+            $$P(q)=\sum_{i=1}^{M}\sum_{j=i+1}^{M}\sum_{k=0}^{K-1}Re\left[\tilde{G}_{ij}(f_{k})\cdot e^{j2\pi f_{k}\cdot\Delta\tau_{ij}(q)}\right]$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(8): 频域直接累积SRP功率 无需IFFT</div>
+        </div>
+        <ul style="color: #555;">
+            <li>$K = 128$ 为有效频点数(RFFT 正频部分)</li>
+            <li>$f_{k}=k\cdot\Delta f=k\times187.5$ Hz 为第k个频率 bin</li>
+            <li>$\Delta\tau_{ij}(q)$ 为候选声源位置q到麦克风对(i,j)的时延差(TDOA)</li>
+            <li>$e^{j2\pi f_{k}\Delta\tau_{ij}(q)}$ 为预计算的相位旋转因子(Steering Phase)</li>
+        </ul>
+        <div class="highlight-box">
+            <strong>核心优化:</strong> 传统方法需要对120对麦克风分别做IFFT (120×256点IFFT=巨大开销)。而式(8)直接在频域用预计算的相位因子旋转后实部累加,将120次IFFT 替换为120×128次复数乘法+实部取出,计算量降低约10倍。
+        </div>
+
+        <h3>B.2 展开式(8)的实数运算细节</h3>
+        <p>将复数乘法展开为实数运算,令 $\tilde{G}_{ij}(f_{k})=a+jb$，预计算相位 $e^{j\phi}=\cos\phi+j\sin\phi$</p>
+        <div class="equation">
+            $$Re[(a+jb)(\cos\phi+j\sin\phi)]=a\cos\phi-b\sin\phi$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(9): 每个(对,频点,网格点)仅需2次乘法+1次减法</div>
+        </div>
+        <p>因此,对于单个网格点的SRP功率累积:</p>
+        <div class="equation">
+            $$P(q)=\sum_{(i,j)\in\mathcal{P}}\sum_{k=0}^{127}[a_{ij,k}\cos(\phi_{ij,k}(q))-b_{ij,k}\sin(\phi_{ij,k}(q))]$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(10): 完全展开的实数运算形式，$\mathcal{P}$为120个麦克风对集合</div>
+        </div>
+    </div>
+
+    <!-- PAGE 6 -->
+    <div class="page" id="page6">
+        <div class="page-header">声源定位与声学成像算法框架 - 6/10</div>
+        
+        <h3>B.3 粗细结合搜索策略 (Coarse-to-Fine)</h3>
+        <p>朴素 SRP-PHAT在60×60=3600个网格点上搜索,对H7来说计算量过大。粗细结合策略将搜索分为两级:</p>
+        <ul>
+            <li><strong>第一级：粗搜索。</strong> 8×8 = 64个网格点。提取 Top-3 峰值区域。</li>
+            <li><strong>第二级：细搜索。</strong> 在Top-3峰值周围，每块4×4个网格点进行细化。</li>
+        </ul>
+
+        <h4>搜索空间设计</h4>
+        <p>假设声源在阵列前方0.3m~3.0m范围,扫描平面的角度范围为 $\pm60^{\circ}$(方位角和俯仰角),采用球坐标$(\theta,\varphi)$参数化:</p>
+        <ul>
+            <li><strong>粗搜索:</strong> $\theta\in[-60^{\circ},60^{\circ}]$, 步长15° ; $\varphi\in[-60^{\circ},60^{\circ}]$ 步长15°。共 $9\times9=81$ 点(或简化为8×8=64点)。</li>
+            <li><strong>细搜索:</strong> 在Top-3粗峰值周围 $\pm7.5^{\circ}$ 范围内,步长3.75°。每个峰值区域4×4=16点,共48点。</li>
+            <li><strong>总计:</strong> $64+48=112$ 个网格点(相比 $60\times60=3600$ 减少97%)。</li>
+        </ul>
+
+        <h4>伪代码实现</h4>
+<pre><code class="language-c">// 粗细结合 SRP-PHAT
+// 输入: GCC_PHAT [120][128] - 120对的白化交叉功率谱(复数)
+// 输入: Steer_cos/sin [64][120][128] - 粗网格预计算相位
+// 输入: FineCos/Sin [48][120][128] - 细网格预计算相位
+
+float SRP_Coarse[64];
+// ============ 粗搜索 (8×8=64点) ============
+for (n = 0; n < 64; n++) {
+    SRP_Coarse[n] = 0.0f;
+    for (p = 0; p < 120; p++) {        // 遍历 120对
+        float acc = 0.0f;
+        for (k = 0; k < 128; k++) {    // 遍历 128 点
+            float a = GCC_re[p][k];
+            float b = GCC_im[p][k];
+            float c = Steer_cos[n][p][k]; 
+            float s = Steer_sin[n][p][k]; 
+            acc += a*c - b*s;          // Re[G * exp(j_phi)]
+        }
+        SRP_Coarse[n] += acc;
+    }
+}
+top3_idx = find_top3(SRP_Coarse, 64); // 提取 Top-3 峰值
+
+// ============ 细搜索 (3*4*4=48点) ============
+float SRP_Fine[48];
+for (n = 0; n < 48; n++) {
+    SRP_Fine[n] = 0.0f;
+    for (p = 0; p < 120; p++) {
+        float acc = 0.0f;
+        for (k = 0; k < 128; k++) {
+            acc += GCC_re[p][k] * FineCos[n][p][k] 
+                 - GCC_im[p][k] * FineSin[n][p][k];
+        }
+        SRP_Fine[n] += acc;
+    }
+}
+best_fine_idx = argmax(SRP_Fine, 48);
+best_pos = FineGrid[best_fine_idx]; // 输出最佳声源方向</code></pre>
+
+        <h3>B.4 算力估算</h3>
+        <table>
+            <tr>
+                <th>阶段</th>
+                <th>网格点</th>
+                <th>MAC 运算量</th>
+                <th>@480MHz 耗时</th>
+            </tr>
+            <tr>
+                <td>GCC-PHAT 计算(120对)</td>
+                <td>-</td>
+                <td>$120\times128\times6=92.2K$</td>
+                <td>~0.2 ms</td>
+            </tr>
+            <tr>
+                <td>粗搜索 $(8\times8)$</td>
+                <td>64</td>
+                <td>$64\times120\times128\times3=2.95M$</td>
+                <td>~1.2 ms</td>
+            </tr>
+            <tr>
+                <td>细搜索 (3×4×4)</td>
+                <td>48</td>
+                <td>$48\times120\times128\times3=2.21M$</td>
+                <td>~0.9 ms</td>
+            </tr>
+            <tr>
+                <td>Top-3提取+最终 argmax</td>
+                <td>-</td>
+                <td>微量</td>
+                <td>&lt;0.01 ms</td>
+            </tr>
+            <tr style="font-weight: bold; background: #fff3e0;">
+                <td>总计</td>
+                <td>112</td>
+                <td>~5.25M MAC</td>
+                <td>~2.3 ms</td>
+            </tr>
+        </table>
+        <p><strong>结论:</strong> 粗细结合的频域 SRP-PHAT 总耗时约2.3ms,远小于5ms的帧周期限制。剩余约2.7ms可用于数据搬运、热力图渲染等后处理任务。成像帧率可稳定在≥60FPS(远超30FPS要求)。</p>
+
+        <h3>B.5 进一步优化空间</h3>
+        <ul>
+            <li><strong>频率子带裁剪:</strong> 仅使用500Hz-8kHz范围的频点(约 bin 3~43),将频点数从128降至~40,粗搜索降至~0.4ms。</li>
+            <li><strong>内循环向量化:</strong> 将128个频点的 $a\cdot c-b\cdot s$ 用 <code>arm_dot_prod_f32</code> 展开为两次点积之差,充分利用FPU流水线。</li>
+            <li><strong>动态 Top-N:</strong> 根据粗搜索峰值分布自适应调整细搜索区域数量(1~5个)。</li>
+            <li><strong>帧间预测:</strong> 利用前一帧的定位结果缩小当前帧的粗搜索范围,在跟踪模式下可跳过粗搜索。</li>
+        </ul>
+    </div>
+
+    <!-- PAGE 7 -->
+    <div class="page" id="page7">
+        <div class="page-header">声源定位与声学成像算法框架 - 7/10</div>
+        
+        <h2>问题C: 空间流形矩阵预计算</h2>
+        <p>利用麦克风坐标固定的特性,预先计算所有网格点的TDOA延迟表和指向相位矢量,固化到 Flash/SDRAM中,运行时零延迟查表。</p>
+
+        <h3>C.1 TDOA 延迟公式推导</h3>
+        <p>设麦克风的位置为 $r_{i}=(x_{i},y_{i},0)$(阵列在 $z=0$ 平面),候选声源位置为 $q=(q_{x},q_{y},q_{z})$。声源到麦克风的传播距离为:</p>
+        <div class="equation">
+            $$d_{i}(q)=||q-r_{i}||=\sqrt{(q_{x}-x_{i})^{2}+(q_{y}-y_{i})^{2}+q_{z}^{2}}$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(11): 声源到麦克风的欧氏距离</div>
+        </div>
+        <p>麦克风对(i,j)的TDOA(到达时间差)为:</p>
+        <div class="equation">
+            $$\Delta\tau_{ij}(q)=\frac{d_{i}(q)-d_{j}(q)}{c}=\frac{||q-r_{i}||-||q-r_{j}||}{c}$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(12): TDOA核心公式, c=343 m/s</div>
+        </div>
+
+        <h4>远场近似 (Far-field Approximation)</h4>
+        <p>当声源距离 $\gg$ 阵列孔径时(如 $d>0.5m$ vs 孔径75mm),可采用平面波近似。设声源方向为单位向量 $\hat{u}=(\sin\theta\cos\varphi, \sin\theta\sin\varphi, \cos\theta)$, 则:</p>
+        <div class="equation">
+            $$\Delta\tau_{ij}(\hat{u})\approx\frac{(r_{i}-r_{j})\cdot\hat{u}}{c}=\frac{(x_{i}-x_{j})\sin\theta\cos\varphi+(y_{i}-y_{j})\sin\theta\sin\varphi}{c}$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(13): 远场平面波TDOA近似 仅依赖方向角,计算更简单</div>
+        </div>
+        <div class="highlight-box">
+            <strong>建议:</strong> 国赛场景声源距离通常 0.5m-3m,远场近似的误差在±0.1 μs以内,推荐使用远场模型以简化预计算。若需近场精度,使用式(12)的球面波模型。
+        </div>
+
+        <h3>C.2 指向相位矢量 (Steering Phase Vector) 预计算</h3>
+        <p>对于频域 SRP-PHAT的式(8),每个(网格点n,麦克风对p,频点k)需要的相位旋转因子为:</p>
+        <div class="equation">
+            $$\phi_{p,k}^{(n)}=2\pi\cdot f_{k}\cdot\Delta\tau_{p}^{(n)}=2\pi\cdot(k\cdot187.5)\cdot\Delta\tau_{p}^{(n)}$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(14): 相位角 $f_{k}=k\times\Delta f$, $\Delta f=48000/256=187.5$ Hz</div>
+        </div>
+        <p>预计算并存储其cos 和 sin值:</p>
+        <div class="equation">
+            $$SteerCos[n][p][k]=\cos(\phi_{p,k}^{(n)}), \quad SteerSin[n][p][k]=\sin(\phi_{p,k}^{(n)})$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(15): 预计算cos/sin 查找表</div>
+        </div>
+
+        <h3>C.3 内存需求分析</h3>
+        <table>
+            <tr>
+                <th>数据结构</th>
+                <th>维度</th>
+                <th>元素数</th>
+                <th>float32 大小</th>
+                <th>存储位置</th>
+            </tr>
+            <tr>
+                <td>SteerCos(粗)</td>
+                <td>[64] [120] [128]</td>
+                <td>983,040</td>
+                <td>3.75 MB</td>
+                <td>SDRAM</td>
+            </tr>
+            <tr>
+                <td>SteerSin (粗)</td>
+                <td>[64] [120] [128]</td>
+                <td>983,040</td>
+                <td>3.75 MB</td>
+                <td>SDRAM</td>
+            </tr>
+            <tr>
+                <td>SteerCos (细)</td>
+                <td>[48] [120] [128]</td>
+                <td>737,280</td>
+                <td>2.81 MB</td>
+                <td>SDRAM</td>
+            </tr>
+            <tr>
+                <td>SteerSin (细)</td>
+                <td>[48] [120] [128]</td>
+                <td>737,280</td>
+                <td>2.81 MB</td>
+                <td>SDRAM</td>
+            </tr>
+            <tr style="font-weight: bold; background: #fff3e0;">
+                <td>总计</td>
+                <td></td>
+                <td>3,440,640</td>
+                <td>13.1 MB</td>
+                <td>SDRAM</td>
+            </tr>
+        </table>
+        <p><strong>内存策略:</strong> 13.1MB 超出512KB AXI SRAM,必须使用外部SDRAM。但SDRAM 的读带宽在H7上约100~200MB/s,读取13.1MB 需要~70ms,远超帧周期。因此需要分块DMA预取策略或<strong>下一节给出优化方案</strong>。</p>
+    </div>
+
+    <!-- PAGE 8 -->
+    <div class="page" id="page8">
+        <div class="page-header">声源定位与声学成像算法框架 - 8/10</div>
+        
+        <h3>C.4 内存优化: TDOA 索引法(推荐方案)</h3>
+        <p>直接存储 cos/sin 表需要13.1MB,不可接受。核心优化思路:只存储TDOA延迟值,运行时实时计算 cos/sin。</p>
+        <div class="equation">
+            $$TDOA\_LUT[n][p]=\Delta\tau_{p}^{(n)} \quad (\text{float32, 单位:秒})$$
+            <div style="text-align: right; color: #777; font-size: 0.9em;">式(16): 仅存储 TDOA值,维度[网格点数][麦克风对数]</div>
+        </div>
+
+        <table>
+            <tr>
+                <th>方案</th>
+                <th>维度</th>
+                <th>存储大小</th>
+                <th>存储位置</th>
+                <th>运行时开销</th>
+            </tr>
+            <tr>
+                <td>方案A:全量cos/sin</td>
+                <td>[112] [120] [128]×2</td>
+                <td>13.1 MB</td>
+                <td>SDRAM (慢)</td>
+                <td>零(纯查表)</td>
+            </tr>
+            <tr style="background: #e8f5e9; font-weight: bold;">
+                <td>方案B:TDOA 索引法 √</td>
+                <td>[112] [120]</td>
+                <td>52.5 KB</td>
+                <td>AXI SRAM</td>
+                <td>实时计算 cos/sin</td>
+            </tr>
+            <tr>
+                <td>方案C:量化int16</td>
+                <td>[112] [120] [128]×2</td>
+                <td>6.6 MB</td>
+                <td>SDRAM</td>
+                <td>反量化</td>
+            </tr>
+        </table>
+        <p><strong>推荐方案B:</strong> TDOA索引法仅需52.5KB,完全放入AXI SRAM(零等待访问)。运行时在内循环中对每个频点k,计算 $\phi = 2\pi k\Delta f \cdot TDOA[n][p]$，然后用快速 <code>sin/cos</code> 查表或CORDIC 求值。Cortex-M7的FPU执行 <code>sinf()/cosf()</code> 约需20~30周期,128频点的额外开销约 $120\times128\times30 \approx 460K$ 周期 $\approx 1ms$, 总耗时仍在5ms以内。</p>
+
+        <h3>C.5 PC 端预计算 Python 脚本</h3>
+<pre><code class="language-python">#!/usr/bin/env python3
+# TDOA LUT 导出为C头文件
+
+import numpy as np
+from itertools import combinations
+
+# 16路麦克风坐标 (单位: mm)
+mic_pos = np.array([
+    [65.00, 50.00], [36.45, 62.41], [51.85, 28.87], [64.43, 68.82],
+    [24.42, 45.47], [73.68, 34.94], [42.21, 78.97], [35.35, 21.76],
+    [81.51, 61.51], [17.48, 63.42], [65.57, 16.72], [61.44, 86.49],
+    [15.66, 30.18], [90.12, 41.18], [25.66, 84.71], [44.38, 6.63]
+]) / 1000.0  # 转换为米
+
+c = 343.0  # 声速
+pairs = list(combinations(range(16), 2)) # 120 对
+
+# 构建粗搜索网格(8x8)
+theta_coarse = np.linspace(-60, 60, 8) # 方位角(度)
+phi_coarse = np.linspace(-60, 60, 8)   # 俯仰角(度)
+
+def compute_tdoa_farfield(theta_deg, phi_deg, pair):
+    # 远场TDOA = (r_i - r_j) · u_hat / c
+    th = np.radians(theta_deg)
+    ph = np.radians(phi_deg)
+    u_hat = np.array([np.sin(th)*np.cos(ph), np.sin(th)*np.sin(ph)])
+    i, j = pair
+    dr = mic_pos[i] - mic_pos[j]
+    return np.dot(dr, u_hat) / c
+
+# 计算粗网格 TDOA LUT
+N_coarse = len(theta_coarse) * len(phi_coarse) # 64
+tdoa_lut = np.zeros((N_coarse, 120), dtype=np.float32)
+
+grid_idx = 0
+for th in theta_coarse:
+    for ph in phi_coarse:
+        for p, pair in enumerate(pairs):
+            tdoa_lut[grid_idx, p] = compute_tdoa_farfield(th, ph, pair)
+        grid_idx += 1
+
+# 写入C头文件
+with open("tdoa_lut_coarse.h", "w") as f:
+    f.write("// 自动生成粗搜索 TDOA LUT [64][120]\n")
+    f.write("const float TDOA_Coarse[64][120] = {\n")
+    for n in range(N_coarse):
+        vals = ", ".join(f"{v:.9e}f" for v in tdoa_lut[n])
+        f.write(f"    {{{vals}}},\n")
+    f.write("};\n")
+</code></pre>
+
+        <h3>C.6 Flash 固化策略</h3>
+        <ul>
+            <li><strong>粗网格 TDOA LUT:</strong> $64\times120\times4B = 30\text{ KB} \rightarrow$ 存放 STM32H7 内部 Flash (2MB容量)。</li>
+            <li><strong>细网格 TDOA LUT:</strong> 需要在粗搜索后动态确定位置,有两种策略:
+                <ul>
+                    <li><strong>策略A(预计算全量):</strong> 预计算所有可能的细网格区域,存入Flash。对64个粗格各16个细点，即 $1024\times120\times4B = 480\text{ KB}$，可存入Flash。</li>
+                    <li><strong>策略B(运行时计算):</strong> 仅存粗网格TDOA,细网格TDOA 在确定 Top-3后实时计算 $48\times120=5760$ 次远场TDOA 计算(式13),每次约10周期 $\rightarrow$ ~0.12ms,可接受。</li>
+                </ul>
+            </li>
+        </ul>
+        <div class="highlight-box">
+            <strong>推荐:</strong> 采用策略A (Flash全量预计算)。480KB对2MB Flash 毫无压力,且运行时完全零计算开销。将TDOA LUT 通过 <code>__attribute__((section(".flash_data")))</code> 放入Flash的指定段。
+        </div>
+    </div>
+
+    <!-- PAGE 9 -->
+    <div class="page" id="page9">
+        <div class="page-header">声源定位与声学成像算法框架 - 9/10</div>
+        
+        <h2>问题D: CMSIS-DSP的巧妙运用</h2>
+        <p>本节说明如何将GCC-PHAT与SRP 累积的每一步映射到CMSIS-DSP函数,最大化利用Cortex-M7的单精度FPU 流水线。</p>
+
+        <h3>D.1 关键 CMSIS-DSP 函数映射</h3>
+        <table>
+            <tr>
+                <th>CMSIS-DSP 函数</th>
+                <th>算法步骤</th>
+                <th>用途说明</th>
+            </tr>
+            <tr>
+                <td><code>arm_cmplx_mult_cmplx_f32</code></td>
+                <td>交叉功率谱(式6)</td>
+                <td>$G_{ij}(k)=X_{i}(k)\cdot X_{j}^{*}(k)$ 需先对 $X_j$ 取共轭</td>
+            </tr>
+            <tr>
+                <td><code>arm_cmplx_mag_f32</code></td>
+                <td>PHAT归一化分母</td>
+                <td>计算 $|G_{ij}(k)|=\sqrt{Re^2+Im^2}$, 用于白化除法。</td>
+            </tr>
+            <tr>
+                <td><code>arm_cmplx_conj_f32</code></td>
+                <td>复共轭</td>
+                <td>对 $X_j$ 取共轭: $Im \rightarrow -Im$</td>
+            </tr>
+            <tr>
+                <td><code>arm_dot_prod_f32</code></td>
+                <td>SRP 频域累积</td>
+                <td>将式(10)分解为两个点积之差: $\sum a_{k}c_{k} - \sum b_{k}s_{k}$</td>
+            </tr>
+            <tr>
+                <td><code>arm_rfft_fast_f32</code></td>
+                <td>实数FFT(已完成)</td>
+                <td>256点 RFFT,输出交织格式 [Re, Im, Re, Im...]。</td>
+            </tr>
+            <tr>
+                <td><code>arm_max_f32</code></td>
+                <td>峰值检测</td>
+                <td>在SRP 数组中找最大值及其索引</td>
+            </tr>
+        </table>
+
+        <h3>D.2 GCC-PHAT 核心循环C代码实现</h3>
+<pre><code class="language-c">// GCC-PHAT 计算: 120对麦克风的白化交叉功率谱
+// 输入: Mic_Freq_Buffer[16][256] - 交织复数[Re0, Im0, Re1, Im1...]
+// 输出: GCC_Re/Im[120][128] - 白化后的交叉功率谱(实/虚部)
+
+#include "arm_math.h"
+
+#define N_FFT    256   // FFT 长度
+#define N_BINS   128   // 正频部分 (N_FFT/2)
+#define NUM_MICS 16
+#define N_PAIRS  120
+#define EPSILON  1e-10f
+
+// 预计算的麦克风对索引 (Flash中)
+static const uint8_t pair_i[N_PAIRS];
+static const uint8_t pair_j[N_PAIRS];
+
+// 工作缓冲区 (DTCM 或 AXI SRAM)
+float32_t conj_buf[N_FFT];
+float32_t cross_buf[N_FFT];
+float32_t mag_buf[N_BINS];
+
+// 输出
+float32_t GCC_Re[N_PAIRS][N_BINS]; // PHAT 白化后实部
+float32_t GCC_Im[N_PAIRS][N_BINS]; // PHAT 白化后虚部
+
+void compute_gcc_phat_all(float32_t Mic_Freq[][N_FFT]) {
+    for (uint32_t p = 0; p < N_PAIRS; p++) {
+        uint8_t mi = pair_i[p], mj = pair_j[p];
+
+        // Step 1: 对 X_j 取共轭
+        arm_cmplx_conj_f32(Mic_Freq[mj], conj_buf, N_BINS);
+
+        // Step 2: X_i * X_j^*
+        arm_cmplx_mult_cmplx_f32(Mic_Freq[mi], conj_buf, cross_buf, N_BINS);
+
+        // Step 3: 计算幅度 |G_ij|
+        arm_cmplx_mag_f32(cross_buf, mag_buf, N_BINS);
+
+        // Step 4: PHAT 白化除法
+        for (uint32_t k = 0; k < N_BINS; k++) {
+            float32_t inv_mag = 1.0f / (mag_buf[k] + EPSILON);
+            GCC_Re[p][k] = cross_buf[2*k] * inv_mag;
+            GCC_Im[p][k] = cross_buf[2*k+1] * inv_mag;
+        }
+    }
+}</code></pre>
+
+        <h3>D.3 SRP 频域累积的向量化技巧</h3>
+        <p>式(10)的核心内循环 $\sum_{k}(a_{k}c_{k}-b_{k}s_{k})$ 可分解为两次 <code>arm_dot_prod_f32</code>:</p>
+<pre><code class="language-c">// 单个网格点 SRP 累积
+float32_t compute_srp_single_grid(
+    uint32_t grid_idx,
+    float32_t cos_lut[][N_BINS],  // [N_PAIRS][N_BINS] 运行时计算或查表
+    float32_t sin_lut[][N_BINS]) 
+{
+    float32_t srp_power = 0.0f;
+
+    for (uint32_t p = 0; p < N_PAIRS; p++) {
+        float32_t dot_ac, dot_bs;
+
+        // 利用 FPU流水线的128维 MAC
+        arm_dot_prod_f32(GCC_Re[p], cos_lut[p], N_BINS, &dot_ac);
+        arm_dot_prod_f32(GCC_Im[p], sin_lut[p], N_BINS, &dot_bs);
+
+        srp_power += (dot_ac - dot_bs); // Re[G * exp(j_phi)]
+    }
+
+    return srp_power;
+}</code></pre>
+        <div class="highlight-box">
+            <strong>FPU 流水线优化:</strong> <code>arm_dot_prod_f32</code> 内部展开为4路并行MAC(乘累加),每次循环处理4个float32。128个频点仅需32次循环迭代,充分利用Cortex-M7的FPU单周期乘法和双发射流水线。相比逐元素的标量循环,吞吐量提升约3~4倍。
+        </div>
+    </div>
+
+    <!-- PAGE 10 -->
+    <div class="page" id="page10">
+        <div class="page-header">声源定位与声学成像算法框架 - 10/10</div>
+        
+        <h2>系统流水线与性能总结</h2>
+
+        <h3>端到端处理流程</h3>
+        <ul class="pipeline-list">
+            <li>
+                <strong>DMA 双缓冲接收 (与计算并行)</strong><br>
+                16路 I2S/SAI DMA交织传输 → Ping-Pong缓冲区,非缓存区域(MPU配置)<br>
+                <span style="color:#e74c3c;">~0 ms (与上一帧计算重叠)</span>
+            </li>
+            <li>
+                <strong>时域预处理 (已完成)</strong><br>
+                解交织 → 加汉宁窗 → 256点 <code>arm_rfft_fast_f32</code> × 16路 → <code>Mic_Freq_Buffer[16][256]</code><br>
+                <span style="color:#e74c3c;">~0.4 ms (16 x 256点 RFFT)</span>
+            </li>
+            <li>
+                <strong>GCC-PHAT 计算 (120对)</strong><br>
+                共轭 → 复数乘法 → 幅度计算 → PHAT 白化 → <code>GCC_Re/Im[120][128]</code><br>
+                <span style="color:#e74c3c;">~0.8 ms</span>
+            </li>
+            <li>
+                <strong>粗搜索 (8×8=64点)</strong><br>
+                TDOA LUT查表 → 实时cos/sin → <code>arm_dot_prod_f32</code> 向量累积 → Top-3峰值提取<br>
+                <span style="color:#e74c3c;">~1.2 ms</span>
+            </li>
+            <li>
+                <strong>细搜索 (3×4×4=48点)</strong><br>
+                在Top-3 粗格周围细化 → 精确声源方向(θ,φ)<br>
+                <span style="color:#e74c3c;">~0.9 ms</span>
+            </li>
+            <li>
+                <strong>后处理 & 输出</strong><br>
+                声源坐标映射 → 热力图更新 → 串口/LCD 输出<br>
+                <span style="color:#e74c3c;">~0.2 ms</span>
+            </li>
+        </ul>
+
+        <h3>性能预算表</h3>
+        <table>
+            <tr>
+                <th>处理阶段</th>
+                <th>MAC 运算量</th>
+                <th>耗时 (ms)</th>
+                <th>占帧预算</th>
+            </tr>
+            <tr>
+                <td>RFFT X 16</td>
+                <td>~200K</td>
+                <td>0.4</td>
+                <td>8%</td>
+            </tr>
+            <tr>
+                <td>GCC-PHAT X 120</td>
+                <td>~400K</td>
+                <td>0.8</td>
+                <td>16%</td>
+            </tr>
+            <tr>
+                <td>粗搜索 (64点)</td>
+                <td>~2.95M</td>
+                <td>1.2</td>
+                <td>24%</td>
+            </tr>
+            <tr>
+                <td>细搜索 (48点)</td>
+                <td>~2.21M</td>
+                <td>0.9</td>
+                <td>18%</td>
+            </tr>
+            <tr>
+                <td>后处理</td>
+                <td>微量</td>
+                <td>0.2</td>
+                <td>4%</td>
+            </tr>
+            <tr style="font-weight: bold; background: #fff3e0;">
+                <td>总计</td>
+                <td>~5.76M</td>
+                <td>3.5 ms</td>
+                <td>70%</td>
+            </tr>
+        </table>
+        <p><strong>实时性验证：</strong> 总处理耗时~3.5ms,帧周期5.33ms (256/48kHz),余量1.83ms (35%)。理论成像帧率可达~285 FPS(实际受限于 ADC 帧率~188 FPS)。远超国赛要求的30FPS。</p>
+
+        <h3>内存布局总览</h3>
+        <div style="display: flex; justify-content: space-between; gap: 15px; margin-top: 20px;">
+            <div style="flex: 1; background: #e8f8f5; border: 1px solid #a3e4d7; padding: 15px; border-radius: 5px;">
+                <h4 style="margin-top: 0; color: #1abc9c;">DTCM (128 KB)</h4>
+                <ul style="padding-left: 20px; font-size: 0.9em;">
+                    <li>Mic_Freq_Buffer [16][256] = 16 KB</li>
+                    <li>conj_buf / cross_buf = 2 KB</li>
+                    <li>mag_buf = 0.5 KB</li>
+                    <li>SRP_Coarse/Fine = 0.5 KB</li>
+                </ul>
+                <div style="font-weight: bold; border-top: 1px solid #a3e4d7; padding-top: 10px; margin-top: 10px;">已用: ~19 KB / 128 KB</div>
+            </div>
+            
+            <div style="flex: 1; background: #ebf5fb; border: 1px solid #a9cce3; padding: 15px; border-radius: 5px;">
+                <h4 style="margin-top: 0; color: #3498db;">AXI SRAM (512 KB)</h4>
+                <ul style="padding-left: 20px; font-size: 0.9em;">
+                    <li>GCC_Re[120][128] = 60 KB</li>
+                    <li>GCC_Im[120][128] = 60 KB</li>
+                    <li>TDOA_LUT[112][120] = 52.5 KB</li>
+                    <li>cos/sin 临时缓冲[120][128] = 120 KB</li>
+                </ul>
+                <div style="font-weight: bold; border-top: 1px solid #a9cce3; padding-top: 10px; margin-top: 10px;">已用: ~293 KB / 512 KB</div>
+            </div>
+            
+            <div style="flex: 1; background: #fdf2e9; border: 1px solid #f5cba7; padding: 15px; border-radius: 5px;">
+                <h4 style="margin-top: 0; color: #e67e22;">Flash (2 MB)</h4>
+                <ul style="padding-left: 20px; font-size: 0.9em;">
+                    <li>TDOA_Coarse[64][120] = 30 KB</li>
+                    <li>TDOA_AllFine[1024][120] = 480 KB</li>
+                    <li>pair_i/j[120] = < 1 KB</li>
+                    <li>程序代码 = ~200 KB</li>
+                </ul>
+                <div style="font-weight: bold; border-top: 1px solid #f5cba7; padding-top: 10px; margin-top: 10px;">已用: ~711 KB / 2048 KB</div>
+            </div>
+        </div>
+
+        <div class="highlight-box" style="border-left-color: #f1c40f; background: #fef9e7; margin-top: 30px;">
+            <strong>□ 关键建议:</strong>
+            <ol>
+                <li>使用 <code>DWT_CYCCNT</code> 寄存器精确测量每个阶段的实际周期数,验证理论估算。</li>
+                <li>频率子带裁剪(500Hz~8kHz) 可将粗搜索耗时再降60%。</li>
+                <li>帧间跟踪模式下可跳过粗搜索,仅做细搜索,耗时降至~2ms。</li>
+                <li>内存布局需通过链接脚本精确控制各段的存放区域。</li>
+            </ol>
+        </div>
+    </div>
+
+</div>
+
+</body>
+</html>
