@@ -120,11 +120,16 @@ void HAL_SAI_MspInit(SAI_HandleTypeDef* saiHandle)
     PE5     ------> SAI1_SCK_A
     PC1     ------> SAI1_SD_A
     */
-    GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5;
+    GPIO_InitStruct.Pin = GPIO_PIN_4;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF6_SAI1;
+    HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+    /* PE5 shares LCD_G0 net on this hardware: lower slew rate to reduce visible dot noise. */
+    GPIO_InitStruct.Pin = GPIO_PIN_5;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
     HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
     GPIO_InitStruct.Pin = GPIO_PIN_1;
