@@ -41,8 +41,11 @@ MIC_CENTER_MM = np.array([50.0, 50.0], dtype=np.float64)
 SPEED_OF_SOUND = 343.0
 PAIR_COUNT = 40
 
-# 8x8 coarse grid
-COARSE_ANGLES_DEG = np.array([-60.0, -45.0, -30.0, -15.0, 0.0, 15.0, 30.0, 45.0], dtype=np.float64)
+# 9x9 coarse grid (symmetric coverage)
+COARSE_ANGLES_DEG = np.array(
+    [-60.0, -45.0, -30.0, -15.0, 0.0, 15.0, 30.0, 45.0, 60.0],
+    dtype=np.float64,
+)
 COARSE_GRID_SIZE = int(COARSE_ANGLES_DEG.size)
 
 OUTPUT_PATH = os.path.normpath(
