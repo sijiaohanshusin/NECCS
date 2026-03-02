@@ -27,11 +27,10 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
-#include "pcmd3180.h"
-#include "soft_i2c.h"
 #include "mpu.h"
 #include "sdram.h"
 #include "app_main_task.h"
+#include "app_display.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,6 +40,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define ENABLE_BOOT_TESTS 1u
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,10 +51,9 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-extern int16_t Rx_Buff[AUDIO_BUFFER_SIZE];
-/* 调试计数：音频流水任务每消费一帧自增一次。 */
-volatile int16_t found_val = 0; // debug counter updated in audio task
-/* 单调序号：用于统计 ISR 帧事件被覆盖/跳过的数量。 */
+/* 调试计数：音频任务每处理一帧加 1。 */
+volatile int16_t found_val = 0;
+/* ISR 帧事件序号：用于估算队列覆盖导致的丢帧。 */
 static volatile uint32_t s_audio_frame_seq = 0u;
 /* USER CODE END PV */
 
@@ -70,32 +69,49 @@ void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN 0 */
 
 /**
- * @brief  SDRAM 读写冒烟测试。
- * @note   在 32MB 空间按采样步长写入递增值并回读校验。
- * @retval 0 表示通过；否则返回失败字节偏移。
+ * @brief  SDRAM 读写冒烟测试
+ * @note   在 32MB SDRAM 上按采样步长写入并回读校验
+ * @retval 0 表示通过；非 0 为失败字节偏移
  */
 static uint32_t sdram_test(void)
 {
     volatile uint32_t *pSdram = (volatile uint32_t *)BANK5_SDRAM_ADDR;
     uint32_t i;
-    const uint32_t test_size = 32 * 1024 * 1024 / 4; /* 32MB，按 uint32 计数 */
+    const uint32_t test_size = 32u * 1024u * 1024u / 4u;
 
-    /* 每隔 4KB 写一个采样点。 */
-    for (i = 0; i < test_size; i += 1024)
+    for (i = 0u; i < test_size; i += 1024u)
     {
         pSdram[i] = i;
     }
 
-    /* 回读并校验。 */
-    for (i = 0; i < test_size; i += 1024)
+    for (i = 0u; i < test_size; i += 1024u)
     {
         if (pSdram[i] != i)
         {
-            return i * 4;  /* 失败字节偏移 */
+            return i * 4u;
         }
     }
 
-    return 0;  /* PASS */
+    return 0u;
+}
+
+/**
+ * @brief 上电自检入口
+ */
+static void app_run_boot_tests(void)
+{
+#if (ENABLE_BOOT_TESTS != 0u)
+    uint32_t sdram_err = sdram_test();
+
+    if (sdram_err == 0u)
+    {
+        printf("SDRAM Test PASS (32MB @ 0xC0000000)\r\n");
+    }
+    else
+    {
+        printf("SDRAM Test FAIL at offset 0x%08lX\r\n", sdram_err);
+    }
+#endif
 }
 
 /* USER CODE END 0 */
@@ -120,8 +136,8 @@ int main(void)
   HAL_Init();
 
         /* USER CODE BEGIN Init */
-  App_MPU_Config(); // 覆盖默认 MPU 配置，适配当前内存布局。
-  Soft_I2C_Init();
+  /* 覆盖默认 MPU 配置，使用工程自定义内存布局。 */
+  App_MPU_Config();
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -135,15 +151,12 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART1_UART_Init();
+  /* 保持已验证通过的初始化顺序：先显示，再 SAI。 */
+  App_Display_Init();
   MX_SAI1_Init();
+
   /* USER CODE BEGIN 2 */
-  {
-      uint32_t sdram_err = sdram_test();
-      if (sdram_err == 0)
-          printf("SDRAM Test PASS (32MB @ 0xC0000000)\r\n");
-      else
-          printf("SDRAM Test FAIL at offset 0x%08lX\r\n", sdram_err);
-  }
+  app_run_boot_tests();
 
   /* USER CODE END 2 */
 
@@ -228,12 +241,9 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 /**
- * @brief 在 ISR 上下文中推送最新 DMA 帧事件。
- * @details 事件队列长度为 1，ISR 侧使用覆盖写入，
- * 消费者始终获取最新帧，旧帧会被自动丢弃。
- *
- * @param half_id DMA 半缓冲标识，见 @ref Audio_DmaHalf_t。
- * @retval 无返回值。
+ * @brief 在 ISR 中推送 DMA 半帧事件
+ * @details 队列长度为 1，采用 overwrite 语义，仅保留最新帧
+ * @param half_id DMA 半缓冲标识，见 @ref Audio_DmaHalf_t
  */
 static void Audio_FrameEvent_Push_FromISR(uint8_t half_id)
 {
@@ -262,21 +272,21 @@ static void Audio_FrameEvent_Push_FromISR(uint8_t half_id)
 }
 
 /**
- * @brief SAI DMA 半传输完成回调。
- * @param hsai SAI 句柄。
- * @retval 无返回值。
+ * @brief SAI DMA 半传输完成回调
+ * @param hsai SAI 句柄
  */
-void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai) {
+void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai)
+{
     (void)hsai;
     Audio_FrameEvent_Push_FromISR(AUDIO_DMA_HALF_PING);
 }
 
 /**
- * @brief SAI DMA 全传输完成回调。
- * @param hsai SAI 句柄。
- * @retval 无返回值。
+ * @brief SAI DMA 全传输完成回调
+ * @param hsai SAI 句柄
  */
-void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai) {
+void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai)
+{
     (void)hsai;
     Audio_FrameEvent_Push_FromISR(AUDIO_DMA_HALF_PONG);
 }
