@@ -52,7 +52,10 @@
 
 /* USER CODE BEGIN PV */
 extern int16_t Rx_Buff[AUDIO_BUFFER_SIZE];
-volatile int16_t found_val = 0; // 用于调试的全局变量，记录 DMA 中断回调中读取到的某个值
+/* 调试计数：音频流水任务每消费一帧自增一次。 */
+volatile int16_t found_val = 0; // debug counter updated in audio task
+/* 单调序号：用于统计 ISR 帧事件被覆盖/跳过的数量。 */
+static volatile uint32_t s_audio_frame_seq = 0u;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -67,28 +70,28 @@ void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN 0 */
 
 /**
- * @brief  SDRAM 读写验证测试
- * @note   每隔 16KB 写入一个递增值，读回比较，覆盖全部 32MB
- * @retval 0=PASS, 其他=失败地址偏移
+ * @brief  SDRAM 读写冒烟测试。
+ * @note   在 32MB 空间按采样步长写入递增值并回读校验。
+ * @retval 0 表示通过；否则返回失败字节偏移。
  */
 static uint32_t sdram_test(void)
 {
     volatile uint32_t *pSdram = (volatile uint32_t *)BANK5_SDRAM_ADDR;
     uint32_t i;
-    const uint32_t test_size = 32 * 1024 * 1024 / 4; /* 32MB, 以 uint32 计 */
+    const uint32_t test_size = 32 * 1024 * 1024 / 4; /* 32MB，按 uint32 计数 */
 
-    /* 写入: 每个 uint32 位置写入其索引值 (仅测试间隔采样点) */
-    for (i = 0; i < test_size; i += 1024)  /* 每隔 4KB 采样一个点 */
+    /* 每隔 4KB 写一个采样点。 */
+    for (i = 0; i < test_size; i += 1024)
     {
         pSdram[i] = i;
     }
 
-    /* 读回比较 */
+    /* 回读并校验。 */
     for (i = 0; i < test_size; i += 1024)
     {
         if (pSdram[i] != i)
         {
-            return i * 4;  /* 返回失败的字节偏移 */
+            return i * 4;  /* 失败字节偏移 */
         }
     }
 
@@ -116,8 +119,8 @@ int main(void)
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
-  /* USER CODE BEGIN Init */
-  App_MPU_Config();//覆盖默认的 MPU 配置，确保内存区域属性正确
+        /* USER CODE BEGIN Init */
+  App_MPU_Config(); // 覆盖默认 MPU 配置，适配当前内存布局。
   Soft_I2C_Init();
   /* USER CODE END Init */
 
@@ -224,18 +227,58 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai) {
+/**
+ * @brief 在 ISR 上下文中推送最新 DMA 帧事件。
+ * @details 事件队列长度为 1，ISR 侧使用覆盖写入，
+ * 消费者始终获取最新帧，旧帧会被自动丢弃。
+ *
+ * @param half_id DMA 半缓冲标识，见 @ref Audio_DmaHalf_t。
+ * @retval 无返回值。
+ */
+static void Audio_FrameEvent_Push_FromISR(uint8_t half_id)
+{
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    // 向任务发送 PING 标志位 (eSetBits 表示按位置 1)
-    xTaskNotifyFromISR(xAudioPreTaskHandle, AUDIO_FLAG_PING, eSetBits, &xHigherPriorityTaskWoken);
+    Audio_FrameEvent_t event;
+
+    event.half_id = half_id;
+    event.reserved[0] = 0u;
+    event.reserved[1] = 0u;
+    event.reserved[2] = 0u;
+    event.seq = ++s_audio_frame_seq;
+
+    if (xAudioFrameQueue != NULL)
+    {
+        if (xQueueOverwriteFromISR(xAudioFrameQueue, &event, &xHigherPriorityTaskWoken) != pdPASS)
+        {
+            g_audio_no_flag_count++;
+        }
+    }
+    else
+    {
+        g_audio_no_flag_count++;
+    }
+
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
+/**
+ * @brief SAI DMA 半传输完成回调。
+ * @param hsai SAI 句柄。
+ * @retval 无返回值。
+ */
+void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai) {
+    (void)hsai;
+    Audio_FrameEvent_Push_FromISR(AUDIO_DMA_HALF_PING);
+}
+
+/**
+ * @brief SAI DMA 全传输完成回调。
+ * @param hsai SAI 句柄。
+ * @retval 无返回值。
+ */
 void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai) {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    // 向任务发送 PONG 标志位
-    xTaskNotifyFromISR(xAudioPreTaskHandle, AUDIO_FLAG_PONG, eSetBits, &xHigherPriorityTaskWoken);
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    (void)hsai;
+    Audio_FrameEvent_Push_FromISR(AUDIO_DMA_HALF_PONG);
 }
 /* USER CODE END 4 */
 
@@ -320,3 +363,4 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+
