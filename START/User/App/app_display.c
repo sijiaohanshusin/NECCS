@@ -1,4 +1,25 @@
-﻿#include "app_display.h"
+/**
+ * @file    app_display.c
+ * @brief   声学相机 UI 显示实现
+ * @details 实时渲染 SRP-PHAT 声源定位结果到 LCD 屏幕
+ *
+ * 显示内容：
+ * - 7×7 热力图 (粗搜索功率分布)
+ * - 十字准星 (精细定位结果)
+ * - 文本信息 (角度、能量、帧序号)
+ * - 诊断信息 (对比度、质量、DMA 状态)
+ *
+ * 热力图配色：
+ * - 蓝色 (低能量) → 绿色 → 黄色 → 红色 (高能量)
+ * - 动态范围：-60dB ~ 0dB (相对峰值)
+ *
+ * 性能优化：
+ * - 使用 DMA2D 硬件加速填充 (如果启用)
+ * - 仅刷新变化区域 (热力图 + 文本区)
+ * - 帧率：30 FPS (33ms 刷新周期)
+ */
+
+#include "app_display.h"
 
 #include "LCD/lcd.h"
 #include "ai_beamforming.h"
@@ -33,6 +54,13 @@ static uint16_t s_cell_w = 1u;
 static uint16_t s_cell_h = 1u;
 static uint16_t s_text_x = 0u;
 
+/**
+ * @brief   限制 uint16_t 值到指定范围
+ * @param   v   输入值 (int32_t，允许负数)
+ * @param   lo  下限
+ * @param   hi  上限
+ * @return  限制后的值 [lo, hi]
+ */
 static uint16_t s_clamp_u16(int32_t v, uint16_t lo, uint16_t hi)
 {
     if (v < (int32_t)lo)
@@ -46,6 +74,14 @@ static uint16_t s_clamp_u16(int32_t v, uint16_t lo, uint16_t hi)
     return (uint16_t)v;
 }
 
+/**
+ * @brief   RGB888 转 RGB565
+ * @param   r   红色分量 (0-255)
+ * @param   g   绿色分量 (0-255)
+ * @param   b   蓝色分量 (0-255)
+ * @return  RGB565 颜色值
+ * @note    RGB565 格式：RRRRR GGGGGG BBBBB (5-6-5 位)
+ */
 static uint16_t s_rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
     return (uint16_t)(((uint16_t)(r & 0xF8u) << 8) |
@@ -53,6 +89,15 @@ static uint16_t s_rgb565(uint8_t r, uint8_t g, uint8_t b)
                       ((uint16_t)b >> 3));
 }
 
+/**
+ * @brief   热力图配色函数
+ * @param   t   归一化值 [0.0, 1.0]
+ * @return  RGB565 颜色值
+ * @details 配色方案：
+ *          - [0.0, 0.33]: 蓝色 → 青色 (低能量)
+ *          - [0.33, 0.67]: 青色 → 黄色 (中等能量)
+ *          - [0.67, 1.0]: 黄色 → 红色 (高能量)
+ */
 static uint32_t s_heat_color(float32_t t)
 {
     float32_t x = t;
@@ -94,11 +139,25 @@ static uint32_t s_heat_color(float32_t t)
     return s_rgb565(r, g, b);
 }
 
+/**
+ * @brief   检查显示模块是否就绪
+ * @return  1=就绪, 0=未就绪
+ */
 uint8_t App_Display_IsReady(void)
 {
     return s_ready;
 }
 
+/**
+ * @brief   初始化显示模块
+ * @details 执行以下步骤：
+ *          1. 初始化 LCD 硬件 (LTDC + 面板)
+ *          2. 检测屏幕分辨率
+ *          3. 计算热力图布局 (7×7 网格)
+ *          4. 绘制边框和标题
+ *          5. 设置就绪标志
+ * @note    如果屏幕未检测到或分辨率过小，会跳过初始化
+ */
 void App_Display_Init(void)
 {
     uint16_t draw_w;
@@ -182,6 +241,19 @@ void App_Display_Init(void)
     g_display_init_stage = 0x8000u;
 }
 
+/**
+ * @brief   渲染声学相机 UI
+ * @param   pos           SRP 定位结果 (角度 + 能量)
+ * @param   coarse_power  粗搜索功率图 (7×7 = 49 点)
+ * @param   frame_seq     帧序号 (用于心跳指示)
+ * @details 渲染内容：
+ *          1. 7×7 热力图 (动态范围 -60dB ~ 0dB)
+ *          2. 十字准星 (精细定位结果)
+ *          3. 峰值矩形框 (粗搜索最大值位置)
+ *          4. 文本信息 (角度、能量、帧号、诊断)
+ *          5. 心跳指示 (左上角闪烁块)
+ * @note    如果无有效能量，显示棋盘测试图案
+ */
 void App_Display_Render(const Sound_Pos_t *pos, const float32_t *coarse_power, uint32_t frame_seq)
 {
     float32_t peak_mag = 0.0f;

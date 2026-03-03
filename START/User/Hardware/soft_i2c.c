@@ -1,15 +1,46 @@
+/**
+ * @file    soft_i2c.c
+ * @brief   软件模拟 I2C 驱动实现 (Bit-Banging)
+ * @details 使用 GPIO 模拟 I2C 协议，用于 PCMD3180 配置
+ *
+ * 硬件配置：
+ * - SCL: PB8 (Open-Drain + 上拉)
+ * - SDA: PB9 (Open-Drain + 上拉)
+ * - 速率：约 100 kHz (delay_us(5))
+ *
+ * 为什么使用软件 I2C？
+ * - 硬件 I2C 外设可能被其他模块占用
+ * - 软件 I2C 更灵活，易于调试
+ * - PCMD3180 配置频率低，性能要求不高
+ *
+ * 时序控制：
+ * - 使用 DWT (Data Watchpoint and Trace) 实现微秒级延时
+ * - STM32H7 @ 480MHz: 1us ≈ 480 cycles
+ *
+ * 线程安全：
+ * - 使用 FreeRTOS 互斥量保护 I2C 总线
+ * - 防止多任务同时访问导致时序错乱
+ */
+
 #include "soft_i2c.h"
 #include <stdio.h>
 #include "cmsis_os.h"
 
-// FreeRTOS 互斥量，防止多任务冲突
+/* ==================== FreeRTOS 互斥量 ==================== */
 static osMutexId_t i2cMutexHandle;
 static const osMutexAttr_t i2cMutex_attributes = {
   .name = "I2CMutex"
 };
 
-// ================= DWT 微秒延时 (STM32H7 专用) =================
-// 软件I2C速率控制: delay_us(2) 约等于 250kHz, delay_us(5) 约等于 100kHz
+/* ==================== DWT 微秒延时 (STM32H7 专用) ==================== */
+
+/**
+ * @brief   DWT 微秒级延时
+ * @param   microseconds  延时时间 (微秒)
+ * @note    软件 I2C 速率控制：
+ *          - delay_us(2) ≈ 250 kHz
+ *          - delay_us(5) ≈ 100 kHz
+ */
 static void I2C_Delay_us(volatile uint32_t microseconds)
 {
     uint32_t clk_cycle_start = DWT->CYCCNT;
@@ -32,8 +63,12 @@ static void I2C_Delay_us(volatile uint32_t microseconds)
 // 读取 SDA 状态
 #define SDA_READ()      HAL_GPIO_ReadPin(I2C_PORT, I2C_SDA_PIN)
 
-// ================= I2C 协议层 (Bit-Banging) =================
+/* ==================== I2C 协议层 (Bit-Banging) ==================== */
 
+/**
+ * @brief   I2C 起始信号
+ * @note    SCL 高电平时，SDA 由高变低
+ */
 static void I2C_Start(void)
 {
     SDA_HIGH();
@@ -44,6 +79,10 @@ static void I2C_Start(void)
     SCL_LOW();      // 钳住I2C总线，准备发送或接收数据
 }
 
+/**
+ * @brief   I2C 停止信号
+ * @note    SCL 高电平时，SDA 由低变高
+ */
 static void I2C_Stop(void)
 {
     SCL_LOW();
@@ -55,6 +94,11 @@ static void I2C_Stop(void)
     I2C_Delay_us(2);
 }
 
+/**
+ * @brief   等待从机应答
+ * @return  0=成功 (ACK), 1=失败 (NACK)
+ * @note    从机拉低 SDA 表示 ACK
+ */
 static uint8_t I2C_WaitAck(void)
 {
     uint8_t ack = 0;
@@ -73,6 +117,11 @@ static uint8_t I2C_WaitAck(void)
     return ack;
 }
 
+/**
+ * @brief   发送一个字节
+ * @param   byte  要发送的字节
+ * @note    MSB 先发送
+ */
 static void I2C_SendByte(uint8_t byte)
 {
     uint8_t i;
@@ -92,6 +141,12 @@ static void I2C_SendByte(uint8_t byte)
     }
 }
 
+/**
+ * @brief   接收一个字节
+ * @param   ack  1=发送 NACK (最后一个字节), 0=发送 ACK (继续接收)
+ * @return  接收到的字节
+ * @note    MSB 先接收
+ */
 static uint8_t I2C_ReadByte(uint8_t ack)
 {
     uint8_t i, receive = 0;
@@ -123,10 +178,14 @@ static uint8_t I2C_ReadByte(uint8_t ack)
     return receive;
 }
 
-// ================= 初始化与应用层 API =================
+/* ==================== 初始化与应用层 API ==================== */
 
 /**
- * @brief 系统启动时调用一次，初始化DWT和Mutex
+ * @brief   初始化软件 I2C
+ * @note    系统启动时调用一次
+ *          1. 开启 DWT 计数器用于精确延时
+ *          2. 初始化 FreeRTOS 互斥量
+ *          3. 拉高总线 (空闲状态)
  */
 void Soft_I2C_Init(void)
 {
@@ -146,11 +205,13 @@ void Soft_I2C_Init(void)
 }
 
 /**
- * @brief 写寄存器 (对应 Figure 80: Single-Byte Write Transfer)
- * @param devAddr 7位设备地址 (0x4C 或 0x4D)
- * @param regAddr 寄存器地址
- * @param data    要写入的数据
- * @return 0:成功, 1:失败
+ * @brief   写 PCMD3180 寄存器
+ * @param   devAddr  7-bit 设备地址 (0x4C 或 0x4D)
+ * @param   regAddr  寄存器地址
+ * @param   data     要写入的数据
+ * @return  0=成功, 1=失败
+ * @note    对应 PCMD3180 Figure 80: Single-Byte Write Transfer
+ *          使用 FreeRTOS 互斥量保护，超时 100ms
  */
 uint8_t PCMD_WriteReg(uint8_t devAddr, uint8_t regAddr, uint8_t data)
 {
@@ -180,11 +241,14 @@ uint8_t PCMD_WriteReg(uint8_t devAddr, uint8_t regAddr, uint8_t data)
 }
 
 /**
- * @brief 读寄存器 (对应 Figure 82: Single-Byte Read Transfer)
- * @param devAddr 7位设备地址
- * @param regAddr 寄存器地址
- * @param pData   读取数据的指针
- * @return 0:成功, 1:失败
+ * @brief   读 PCMD3180 寄存器
+ * @param   devAddr  7-bit 设备地址 (0x4C 或 0x4D)
+ * @param   regAddr  寄存器地址
+ * @param   pData    接收缓冲区指针
+ * @return  0=成功, 1=失败
+ * @note    对应 PCMD3180 Figure 81: Single-Byte Read Transfer
+ *          使用 FreeRTOS 互斥量保护，超时 100ms
+ *          读取流程：Dummy Write (设置寄存器地址) → Restart → Read
  */
 uint8_t PCMD_ReadReg(uint8_t devAddr, uint8_t regAddr, uint8_t *pData)
 {
@@ -211,6 +275,11 @@ uint8_t PCMD_ReadReg(uint8_t devAddr, uint8_t regAddr, uint8_t *pData)
     return 0;
 }
 
+/**
+ * @brief   扫描 I2C 总线上的所有设备
+ * @note    遍历 0x00-0x7F 所有地址，尝试发送起始信号和地址
+ *          如果收到 ACK，说明该地址有设备响应
+ */
 void I2C_Scan(void)
 {
     printf("Scanning I2C bus...\r\n");
