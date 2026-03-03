@@ -1,3 +1,25 @@
+/**
+ * @file    pcmd3180.h
+ * @brief   PCMD3180 PDM 转 TDM 芯片驱动头文件
+ * @details TI PCMD3180 寄存器定义与配置函数
+ *
+ * 芯片特性：
+ * - 8 通道 PDM 输入 (支持 4 个立体声 PDM 麦克风)
+ * - TDM16 输出 (最多 16 通道)
+ * - 内置 HPF (高通滤波器，可配置截止频率)
+ * - 支持 Slave 模式 (外部提供 BCLK/FSYNC)
+ * - I2C 控制接口 (7-bit 地址)
+ *
+ * 寄存器分页：
+ * - Page 0: 控制寄存器 (系统、ASI、DSP 配置)
+ * - Page 1-4: 系数寄存器 (滤波器系数，通常不需要修改)
+ *
+ * 使用方法：
+ * 1. 调用 PCMD3180_Init_Device(devAddr, startSlot)
+ * 2. 等待 10ms 让设备稳定
+ * 3. 启动 SAI 接收
+ */
+
 #ifndef _PCMD3180_H_
 #define _PCMD3180_H_
 
@@ -5,8 +27,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-/* * 调试/错误码定义 
- */
+/* ==================== 调试/错误码定义 ==================== */
 #define PCMD3180_OK         0
 #define PCMD3180_ERR        -1
 

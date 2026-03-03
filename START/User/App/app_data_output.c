@@ -1,3 +1,24 @@
+/**
+ * @file    app_data_output.c
+ * @brief   调试数据输出实现 (VOFA+ JustFloat 协议)
+ * @details 通过 UART1 输出音频处理结果，用于 PC 端实时监控
+ *
+ * 支持的输出模式：
+ * - 通道 RMS (16 通道有效值)
+ * - FFT 幅度谱 (单通道，128 点)
+ * - SRP 定位结果 (角度 + 能量 + 49 点粗搜功率图 + 诊断信息)
+ *
+ * VOFA+ JustFloat 协议：
+ * - 数据格式：[float32 × N] + [0x00, 0x00, 0x80, 0x7F]
+ * - 波特率：115200 (UART1)
+ * - 超时：5ms (非阻塞发送)
+ *
+ * 异常处理：
+ * - 粗搜功率图异常时，使用上一帧有效数据 (hold)
+ * - 非有限值 (NaN/Inf) 自动替换为 0.0
+ * - UART 忙时丢弃数据，计数器递增
+ */
+
 #include "app_data_output.h"
 
 #include "ai_beamforming.h"
@@ -25,6 +46,13 @@ static uint8_t s_has_last_coarse = 0u;
 static uint8_t s_coarse_bad_streak = 0u;
 static volatile uint32_t s_coarse_hold_count = 0u;
 
+/**
+ * @brief   VOFA+ JustFloat 协议发送函数
+ * @param   data   浮点数据数组
+ * @param   count  数据个数
+ * @details 数据格式：[float32 × count] + [0x00, 0x00, 0x80, 0x7F]
+ * @note    如果 UART 忙，丢弃数据并递增计数器
+ */
 static void VOFA_JustFloat_Send(const float32_t *data, uint16_t count)
 {
     if ((data == NULL) || (count == 0u) || (count > VOFA_MAX_FLOATS))
@@ -51,6 +79,11 @@ static void VOFA_JustFloat_Send(const float32_t *data, uint16_t count)
     }
 }
 
+/**
+ * @brief   发送 16 通道 RMS 值
+ * @details 计算每个通道的有效值 (标准差)，用于监控信号强度
+ * @note    使用 arm_std_f32 计算标准差 (AC RMS)
+ */
 void VOFA_Send_Channel_RMS(void)
 {
     float32_t ac_rms_buf[MIC_CHANNELS];
@@ -63,6 +96,13 @@ void VOFA_Send_Channel_RMS(void)
     VOFA_JustFloat_Send(ac_rms_buf, MIC_CHANNELS);
 }
 
+/**
+ * @brief   发送单通道 FFT 幅度谱
+ * @param   channel  通道号 (0-15)
+ * @details 输出 128 点幅度谱 (0-24kHz, 187.5Hz 分辨率)
+ * @note    RFFT 输出格式：[DC, Nyquist, Re1, Im1, Re2, Im2, ...]
+ *          转换为：[|DC|, |bin1|, |bin2|, ..., |Nyquist|]
+ */
 void VOFA_Send_FFT_Magnitude(uint8_t channel)
 {
     if (channel >= MIC_CHANNELS)
@@ -80,6 +120,17 @@ void VOFA_Send_FFT_Magnitude(uint8_t channel)
     VOFA_JustFloat_Send(mag_buf, FRAME_LEN / 2u);
 }
 
+/**
+ * @brief   发送 SRP 定位结果 + 诊断信息
+ * @param   pos  SRP 定位结果 (角度 + 能量)
+ * @details 发送数据包含：
+ *          - [0-2]: x_angle, y_angle, energy
+ *          - [3-51]: 7×7 粗搜功率图 (49 点)
+ *          - [52-59]: 诊断信息 (计数器 + 质量指标)
+ * @note    异常处理：
+ *          - 粗搜功率图异常时，使用上一帧有效数据 (hold)
+ *          - 非有限值 (NaN/Inf) 自动替换为 0.0
+ */
 void VOFA_Send_SRP_Result(const Sound_Pos_t *pos)
 {
     if (pos == NULL)
