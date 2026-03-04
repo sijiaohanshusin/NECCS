@@ -25,6 +25,7 @@
 #include "app_main_task.h"
 #include "LCD/lcd.h"
 #include "LCD/ltdc.h"
+#include "LCD/dma2d_accel.h"
 #include "usart.h"
 
 #include <ctype.h>
@@ -234,6 +235,7 @@ static void ui_cli_print_help(void)
     printf("cfg help\r\n");
     printf("cfg status\r\n");
     printf("cfg mode fast|balanced|clean\r\n");
+    printf("cfg interp nearest|bilinear\r\n");
     printf("cfg contrast <db_floor>\r\n");
     printf("cfg gamma <0.5..2.5>\r\n");
     printf("cfg noise <0..0.6>\r\n");
@@ -259,16 +261,24 @@ static void ui_cli_print_status(void)
            (double)cfg.gamma,
            (double)cfg.noise_gate_ratio,
            (double)cfg.noise_adapt_gain);
-    printf("cfg smooth=%u fine=%.2f bilinear=%u textdiv=%u blit=%u\r\n",
+    printf("cfg smooth=%u fine=%.2f interp=%s textdiv=%u blit=%u\r\n",
            (unsigned int)cfg.smooth_passes,
            (double)cfg.fine_gain,
-           (unsigned int)cfg.bilinear_sampling,
+           App_Display_InterpName((App_Display_Interp_t)cfg.interp_mode),
            (unsigned int)cfg.text_refresh_div,
            (unsigned int)cfg.blit_rows);
-    printf("dma2d transfer=%lu timeout=%lu fallback=%lu\r\n",
+    printf("dma2d tx=%lu timeout=%lu fallback=%lu qpk=%lu qov=%lu qerr=%lu\r\n",
            (unsigned long)g_ltdc_dma2d_transfer_count,
            (unsigned long)g_ltdc_dma2d_timeout_count,
-           (unsigned long)g_ltdc_dma2d_sw_fallback_count);
+           (unsigned long)g_ltdc_dma2d_sw_fallback_count,
+           (unsigned long)g_dma2d_queue_depth_peak,
+           (unsigned long)g_dma2d_queue_overflow_count,
+           (unsigned long)g_dma2d_queue_error_count);
+    printf("swap done=%lu pend_req=%lu err=%lu pending=%u\r\n",
+           (unsigned long)g_ltdc_swap_count,
+           (unsigned long)g_ltdc_swap_pending_count,
+           (unsigned long)g_ltdc_swap_error_count,
+           (unsigned int)ltdc_is_swap_pending());
 }
 
 static void ui_cli_apply_line(char *line)
@@ -375,6 +385,31 @@ static void ui_cli_apply_line(char *line)
         ui_cli_print_status();
         return;
     }
+    if (ui_cli_stricmp(cursor, "interp") == 0)
+    {
+        App_Display_GetConfig(&cfg);
+        if (arg == NULL)
+        {
+            printf("CLI: cfg interp nearest|bilinear\r\n");
+            return;
+        }
+        if ((ui_cli_stricmp(arg, "nearest") == 0) || (ui_cli_stricmp(arg, "near") == 0))
+        {
+            cfg.interp_mode = APP_DISPLAY_INTERP_NEAREST;
+        }
+        else if ((ui_cli_stricmp(arg, "bilinear") == 0) || (ui_cli_stricmp(arg, "bil") == 0))
+        {
+            cfg.interp_mode = APP_DISPLAY_INTERP_BILINEAR;
+        }
+        else
+        {
+            printf("CLI: cfg interp nearest|bilinear\r\n");
+            return;
+        }
+        App_Display_SetConfig(&cfg);
+        ui_cli_print_status();
+        return;
+    }
 
     App_Display_GetConfig(&cfg);
 
@@ -443,7 +478,7 @@ static void ui_cli_apply_line(char *line)
             printf("CLI: cfg bilinear <0|1>\r\n");
             return;
         }
-        cfg.bilinear_sampling = (uv != 0u) ? 1u : 0u;
+        cfg.interp_mode = (uv != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST;
     }
     else if (ui_cli_stricmp(cursor, "textdiv") == 0)
     {

@@ -29,7 +29,7 @@
 #define LTDC_PANEL_FALLBACK_ID   0X4384U
 
 /* Force a known panel profile for this project. Set to 0U to enable auto-detect. */
-#define LTDC_FORCE_PANEL_ID      0U
+#define LTDC_FORCE_PANEL_ID      0X4384U
 
 /* LCD LTDC閲嶈鍙傛暟闆?*/
 typedef struct  
@@ -58,6 +58,9 @@ extern volatile uint32_t g_ltdc_dma2d_timeout_count;
 extern volatile uint32_t g_ltdc_dma2d_transfer_count;
 extern volatile uint32_t g_ltdc_dma2d_sw_fallback_count;
 extern volatile uint16_t g_ltdc_panel_id;
+extern volatile uint32_t g_ltdc_swap_count;
+extern volatile uint32_t g_ltdc_swap_pending_count;
+extern volatile uint32_t g_ltdc_swap_error_count;
 
 
 #define LTDC_PIXFORMAT_ARGB8888      0X00     /* ARGB8888鏍煎紡 */
@@ -107,7 +110,9 @@ extern volatile uint16_t g_ltdc_panel_id;
 #define LTDC_BACKLAYERCOLOR      0X00000000
 
 /* LTDC甯х紦鍐插尯棣栧湴鍧€,杩欓噷瀹氫箟鍦⊿DRAM閲岄潰. */
-#define LTDC_FRAME_BUF_ADDR      0XC0000000  
+#define LTDC_FRAME_BUF_ADDR      0XC0000000U
+#define LTDC_TARGET_WIDTH        800U
+#define LTDC_TARGET_HEIGHT       480U
 
 /* Backlight polarity: 0=active-high, 1=active-low. */
 #define LTDC_BL_ACTIVE_LOW       0
@@ -147,6 +152,17 @@ void ltdc_layer_window_config(uint8_t layerx, uint16_t sx, uint16_t sy, uint16_t
 void ltdc_layer_parameter_config(uint8_t layerx, uint32_t bufaddr, uint8_t pixformat, uint8_t alpha, uint8_t alpha0, uint8_t bfac1, uint8_t bfac2, uint32_t bkcolor); /* LTDC灞傚熀鏈弬鏁拌缃?*/
 uint16_t ltdc_panelid_read(void);                                                                               /* LTDC 闈㈡澘ID璇诲彇鍑芥暟 */
 void ltdc_init(void);                                                                                           /* LTDC鍒濆鍖栧嚱鏁?*/
+
+uint32_t ltdc_get_frontbuf_addr(void);
+uint32_t ltdc_get_backbuf_addr(void);
+void ltdc_request_swap(void);
+uint8_t ltdc_is_swap_pending(void);
+
+uint8_t ltdc_fill_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint32_t color);
+uint8_t ltdc_color_fill_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint16_t *color);
+uint8_t ltdc_l8_fill_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, const uint8_t *src_l8, uint16_t src_stride);
+uint8_t ltdc_a8_blend_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, const uint8_t *src_a8, uint16_t src_stride, uint16_t color565);
+uint8_t ltdc_draw_flush(uint32_t timeout_loop);
 
 #endif 
 

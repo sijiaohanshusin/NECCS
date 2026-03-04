@@ -18,6 +18,12 @@ typedef enum
     APP_DISPLAY_MODE_CLEAN = 2u
 } App_Display_Mode_t;
 
+typedef enum
+{
+    APP_DISPLAY_INTERP_NEAREST = 0u,
+    APP_DISPLAY_INTERP_BILINEAR = 1u
+} App_Display_Interp_t;
+
 typedef struct
 {
     float ema_attack;
@@ -30,7 +36,7 @@ typedef struct
     uint8_t smooth_passes;
     uint8_t fine_fusion_enable;
     uint8_t draw_coarse_grid;
-    uint8_t bilinear_sampling;
+    uint8_t interp_mode;
     uint8_t text_refresh_div;
     uint8_t blit_rows;
 } App_Display_RuntimeCfg_t;
@@ -53,6 +59,7 @@ void App_Display_SetMode(App_Display_Mode_t mode);
 App_Display_Mode_t App_Display_GetMode(void);
 
 const char *App_Display_ModeName(App_Display_Mode_t mode);
+const char *App_Display_InterpName(App_Display_Interp_t interp);
 
 extern volatile uint32_t g_display_init_stage;
 extern volatile uint32_t g_display_init_error;
