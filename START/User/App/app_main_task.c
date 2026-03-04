@@ -1,20 +1,20 @@
 /**
  * @file    app_main_task.c
- * @brief   FreeRTOS 任务调度实现
- * @details 实现音频处理流水线和 UI 显示任务
+ * @brief   FreeRTOS 浠诲姟璋冨害瀹炵幇
+ * @details 瀹炵幇闊抽澶勭悊娴佹按绾垮拰 UI 鏄剧ず浠诲姟
  *
- * 任务架构：
- * - Audio_Pipeline_Task: 音频采集 → 预处理 → FFT → SRP-PHAT → 发送结果
- * - UI_Display_Task: 接收结果 → 渲染热力图 → 刷新显示
+ * 浠诲姟鏋舵瀯锛?
+ * - Audio_Pipeline_Task: 闊抽閲囬泦 鈫?棰勫鐞?鈫?FFT 鈫?SRP-PHAT 鈫?鍙戦€佺粨鏋?
+ * - UI_Display_Task: 鎺ユ敹缁撴灉 鈫?娓叉煋鐑姏鍥?鈫?鍒锋柊鏄剧ず
  *
- * 数据流：
- * - SAI DMA ISR → xAudioFrameQueue → Audio_Pipeline_Task
- * - Audio_Pipeline_Task → xPositionQueue → UI_Display_Task
+ * 鏁版嵁娴侊細
+ * - SAI DMA ISR 鈫?xAudioFrameQueue 鈫?Audio_Pipeline_Task
+ * - Audio_Pipeline_Task 鈫?xPositionQueue 鈫?UI_Display_Task
  *
- * 队列机制：
- * - 队列长度为 1 (仅保留最新数据)
- * - ISR 使用 xQueueOverwrite (覆盖旧数据)
- * - 任务使用 xQueueReceive (阻塞等待)
+ * 闃熷垪鏈哄埗锛?
+ * - 闃熷垪闀垮害涓?1 (浠呬繚鐣欐渶鏂版暟鎹?
+ * - ISR 浣跨敤 xQueueOverwrite (瑕嗙洊鏃ф暟鎹?
+ * - 浠诲姟浣跨敤 xQueueReceive (闃诲绛夊緟)
  */
 
 #include "ai_beamforming.h"
@@ -34,98 +34,441 @@
 #include <string.h>
 
 /* ============================================================================
- * 外部变量 (External Variables)
+ * 澶栭儴鍙橀噺 (External Variables)
  * ============================================================================ */
 
-/** @brief 调试计数：音频任务每处理一帧加 1 */
+/** @brief 璋冭瘯璁℃暟锛氶煶棰戜换鍔℃瘡澶勭悊涓€甯у姞 1 */
 extern int16_t found_val;
 
 /* ============================================================================
- * FreeRTOS 句柄 (FreeRTOS Handles)
+ * FreeRTOS 鍙ユ焺 (FreeRTOS Handles)
  * ============================================================================ */
 
-/** @brief 音频处理流水线任务句柄 */
+/** @brief 闊抽澶勭悊娴佹按绾夸换鍔″彞鏌?*/
 TaskHandle_t xAudioPipelineTaskHandle = NULL;
 
-/** @brief UI 显示任务句柄 */
+/** @brief UI 鏄剧ず浠诲姟鍙ユ焺 */
 TaskHandle_t xUITaskHandle = NULL;
 
-/** @brief 音频帧事件队列句柄 */
+/** @brief 闊抽甯т簨浠堕槦鍒楀彞鏌?*/
 QueueHandle_t xAudioFrameQueue = NULL;
 
-/** @brief 声源位置队列句柄 */
+/** @brief 澹版簮浣嶇疆闃熷垪鍙ユ焺 */
 QueueHandle_t xPositionQueue = NULL;
 
 /* ============================================================================
- * 运行时诊断计数器 (Runtime Diagnostic Counters)
+ * 杩愯鏃惰瘖鏂鏁板櫒 (Runtime Diagnostic Counters)
  * ============================================================================ */
 
-/** @brief 音频任务丢帧计数 (队列覆盖导致) */
+/** @brief 闊抽浠诲姟涓㈠抚璁℃暟 (闃熷垪瑕嗙洊瀵艰嚧) */
 volatile uint32_t g_audio_both_flags_count = 0u;
 
-/** @brief 音频任务未收到标志计数 (异常情况) */
+/** @brief 闊抽浠诲姟鏈敹鍒版爣蹇楄鏁?(寮傚父鎯呭喌) */
 volatile uint32_t g_audio_no_flag_count = 0u;
 
-/** @brief UI 任务渲染帧计数 */
+/** @brief UI 浠诲姟娓叉煋甯ц鏁?*/
 volatile uint32_t g_ui_render_count = 0u;
 
-/** @brief UI 任务成功接收队列数据的次数 */
+/** @brief UI 浠诲姟鎴愬姛鎺ユ敹闃熷垪鏁版嵁鐨勬鏁?*/
 volatile uint32_t g_ui_queue_rx_count = 0u;
 
-/** @brief UI 任务队列接收超时的次数 */
+/** @brief UI 浠诲姟闃熷垪鎺ユ敹瓒呮椂鐨勬鏁?*/
 volatile uint32_t g_ui_queue_timeout_count = 0u;
 
+volatile uint32_t g_ui_cli_rx_ok_count = 0u;
+volatile uint32_t g_ui_cli_rx_err_count = 0u;
+volatile uint8_t g_ui_cli_rx_alive = 0u;
+
 /* ============================================================================
- * 调试配置 (Debug Configuration)
+ * 璋冭瘯閰嶇疆 (Debug Configuration)
  * ============================================================================ */
 
-/* #define DEBUG_ENABLE */  /**< 启用调试输出 (VOFA+) */
-#define DEBUG_THROTTLE_FRAMES   20u  /**< 调试输出节流 (每 20 帧输出一次) */
-#define DEBUG_MODE              3    /**< 调试模式：0=RMS, 1=FFT, 3=SRP */
-#define DEBUG_SPECTRUM_CHANNEL  0u   /**< FFT 调试通道 */
+/* #define DEBUG_ENABLE */  /**< 鍚敤璋冭瘯杈撳嚭 (VOFA+) */
+#define DEBUG_THROTTLE_FRAMES   20u  /**< 璋冭瘯杈撳嚭鑺傛祦 (姣?20 甯ц緭鍑轰竴娆? */
+#define DEBUG_MODE              3    /**< 璋冭瘯妯″紡锛?=RMS, 1=FFT, 3=SRP */
+#define DEBUG_SPECTRUM_CHANNEL  0u   /**< FFT 璋冭瘯閫氶亾 */
 
 /* ============================================================================
- * UI 刷新参数 (UI Refresh Parameters)
+ * UI 鍒锋柊鍙傛暟 (UI Refresh Parameters)
  * ============================================================================ */
 
-#define UI_RETRY_INIT_MS        1000u  /**< UI 初始化重试间隔 (ms) */
-#define UI_RENDER_PERIOD_MS     33u    /**< UI 渲染周期 (ms)，约 30 FPS */
-#define UI_DEBUG_LOG            0u     /**< UI 调试日志开关 */
-#define UI_CLI_ENABLE           1u
-#define UI_CLI_LINE_MAX         96u
-#define UI_CLI_RX_DRAIN_MAX     32u
+#define UI_RETRY_INIT_MS         1000u  /**< UI 鍒濆鍖栭噸璇曢棿闅?(ms) */
+#define UI_DEBUG_LOG             0u     /**< UI 璋冭瘯鏃ュ織寮€鍏?*/
+#define UI_CLI_ENABLE            1u
+#define UI_CLI_LINE_MAX          96u
+#define UI_CLI_RX_DRAIN_MAX      256u
+#define UI_CLI_RX_RING_SIZE      1024u
+#define UI_FPS_MIN               5u
+#define UI_FPS_MAX               30u
+#define UI_FPS_DEFAULT           20u
+#define AUDIO_ALGO_DECIM_MIN     1u
+#define AUDIO_ALGO_DECIM_MAX     8u
+#define AUDIO_ALGO_DECIM_DEFAULT 1u
+#define PERF_RING_SAMPLES        64u
+#define PERF_RATE_PERIOD_MS      1000u
 
 /* ============================================================================
- * 任务优先级 (Task Priorities)
+ * 浠诲姟浼樺厛绾?(Task Priorities)
  * ============================================================================ */
 
-#define APP_AUDIO_TASK_PRIO     4u  /**< 音频任务优先级 (高) */
-#define APP_UI_TASK_PRIO        4u  /**< UI 任务优先级 (同级) */
+#define APP_AUDIO_TASK_PRIO     4u  /**< 闊抽浠诲姟浼樺厛绾?(楂? */
+#define APP_UI_TASK_PRIO        4u  /**< UI 浠诲姟浼樺厛绾?(鍚岀骇) */
 
 /* ============================================================================
- * 初始化函数 (Initialization Functions)
+ * 鍒濆鍖栧嚱鏁?(Initialization Functions)
  * ============================================================================ */
 
 /**
- * @brief   应用任务和队列初始化
- * @details 创建 FreeRTOS 任务和队列
+ * @brief   搴旂敤浠诲姟鍜岄槦鍒楀垵濮嬪寲
+ * @details 鍒涘缓 FreeRTOS 浠诲姟鍜岄槦鍒?
  *
- * 初始化流程：
- * 1. 创建音频帧事件队列 (长度 1, 覆盖模式)
- * 2. 创建声源位置队列 (长度 1, 覆盖模式)
- * 3. 创建音频处理任务 (优先级 4, 堆栈 2304 字节)
- * 4. 创建 UI 显示任务 (优先级 4, 堆栈 2048 字节)
+ * 鍒濆鍖栨祦绋嬶細
+ * 1. 鍒涘缓闊抽甯т簨浠堕槦鍒?(闀垮害 1, 瑕嗙洊妯″紡)
+ * 2. 鍒涘缓澹版簮浣嶇疆闃熷垪 (闀垮害 1, 瑕嗙洊妯″紡)
+ * 3. 鍒涘缓闊抽澶勭悊浠诲姟 (浼樺厛绾?4, 鍫嗘爤 2304 瀛楄妭)
+ * 4. 鍒涘缓 UI 鏄剧ず浠诲姟 (浼樺厛绾?4, 鍫嗘爤 2048 瀛楄妭)
  *
- * 队列长度为 1 的原因：
- * - 实时系统，只关心最新数据
- * - 避免队列积压导致延迟
- * - 丢帧策略：丢弃旧帧，处理新帧
+ * 闃熷垪闀垮害涓?1 鐨勫師鍥狅細
+ * - 瀹炴椂绯荤粺锛屽彧鍏冲績鏈€鏂版暟鎹?
+ * - 閬垮厤闃熷垪绉帇瀵艰嚧寤惰繜
+ * - 涓㈠抚绛栫暐锛氫涪寮冩棫甯э紝澶勭悊鏂板抚
  *
- * @note    在 FreeRTOS 启动前调用 (freertos.c 中)
+ * @note    鍦?FreeRTOS 鍚姩鍓嶈皟鐢?(freertos.c 涓?
  */
 /* ============================================================================
  * UI CLI (Runtime Tuning via UART)
  * ============================================================================ */
+
+/* ============================================================================
+ * Runtime Knobs
+ * ============================================================================ */
+
+static volatile uint32_t s_ui_target_fps = UI_FPS_DEFAULT;
+static volatile uint32_t s_audio_algo_decim = AUDIO_ALGO_DECIM_DEFAULT;
+
+/* ============================================================================
+ * Performance Profiler
+ * ============================================================================ */
+
+typedef struct
+{
+    uint64_t total_cycles;
+    uint32_t sample_count;
+    uint32_t max_cycles;
+    uint32_t ring[PERF_RING_SAMPLES];
+    uint32_t ring_count;
+    uint32_t ring_head;
+} App_Perf_SectionStat_t;
+
+static App_Perf_SectionStat_t s_perf_stats[APP_PERF_SEC_COUNT];
+static const char *s_perf_section_names[APP_PERF_SEC_COUNT] = {
+    "audio_total",
+    "audio_deint",
+    "audio_fft",
+    "audio_srp",
+    "ui_loop",
+    "ui_snapshot",
+    "ui_render",
+    "disp_prepare",
+    "disp_norm",
+    "disp_render",
+    "disp_overlay",
+    "disp_commit"
+};
+
+static volatile uint8_t s_perf_enabled = 0u;
+static volatile uint8_t s_perf_dwt_ready = 0u;
+static volatile uint32_t s_perf_audio_proc_count = 0u;
+static volatile uint32_t s_perf_ui_loop_count = 0u;
+
+static uint32_t s_perf_last_tick = 0u;
+static uint32_t s_perf_last_audio_isr = 0u;
+static uint32_t s_perf_last_audio_proc = 0u;
+static uint32_t s_perf_last_ui_loop = 0u;
+static uint32_t s_perf_last_commit = 0u;
+static uint32_t s_perf_last_swap = 0u;
+
+static uint32_t s_clamp_u32(uint32_t v, uint32_t lo, uint32_t hi)
+{
+    if (v < lo)
+    {
+        return lo;
+    }
+    if (v > hi)
+    {
+        return hi;
+    }
+    return v;
+}
+
+static int s_u32_cmp(const void *a, const void *b)
+{
+    uint32_t va = *(const uint32_t *)a;
+    uint32_t vb = *(const uint32_t *)b;
+    if (va < vb)
+    {
+        return -1;
+    }
+    if (va > vb)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+static uint8_t s_perf_enable_dwt(void)
+{
+    if (s_perf_dwt_ready != 0u)
+    {
+        return 1u;
+    }
+
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->LAR = 0xC5ACCE55u;
+    DWT->CYCCNT = 0u;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+    if ((DWT->CTRL & DWT_CTRL_CYCCNTENA_Msk) == 0u)
+    {
+        return 0u;
+    }
+
+    s_perf_dwt_ready = 1u;
+    return 1u;
+}
+
+static void s_perf_reset_rate_baseline(void)
+{
+    s_perf_last_tick = xTaskGetTickCount();
+    s_perf_last_audio_isr = g_audio_frame_seq_isr;
+    s_perf_last_audio_proc = s_perf_audio_proc_count;
+    s_perf_last_ui_loop = s_perf_ui_loop_count;
+    s_perf_last_commit = g_ltdc_swap_pending_count;
+    s_perf_last_swap = g_ltdc_swap_count;
+}
+
+void App_Perf_Init(void)
+{
+    App_Perf_Reset();
+    s_perf_enabled = 0u;
+    (void)s_perf_enable_dwt();
+}
+
+void App_Perf_SetEnabled(uint8_t enable)
+{
+    if (enable != 0u)
+    {
+        if (s_perf_enable_dwt() == 0u)
+        {
+            s_perf_enabled = 0u;
+            printf("perf: DWT unavailable\r\n");
+            return;
+        }
+        s_perf_enabled = 1u;
+        s_perf_reset_rate_baseline();
+    }
+    else
+    {
+        s_perf_enabled = 0u;
+    }
+}
+
+uint8_t App_Perf_IsEnabled(void)
+{
+    return s_perf_enabled;
+}
+
+void App_Perf_Reset(void)
+{
+    memset(s_perf_stats, 0, sizeof(s_perf_stats));
+    s_perf_audio_proc_count = 0u;
+    s_perf_ui_loop_count = 0u;
+    s_perf_reset_rate_baseline();
+}
+
+uint32_t App_Perf_BeginCycles(void)
+{
+    if ((s_perf_enabled == 0u) || (s_perf_dwt_ready == 0u))
+    {
+        return 0u;
+    }
+    return DWT->CYCCNT;
+}
+
+void App_Perf_EndCycles(App_Perf_Section_t section, uint32_t start_cycles)
+{
+    App_Perf_SectionStat_t *st;
+    uint32_t now;
+    uint32_t delta;
+
+    if ((s_perf_enabled == 0u) ||
+        (s_perf_dwt_ready == 0u) ||
+        (section >= APP_PERF_SEC_COUNT))
+    {
+        return;
+    }
+
+    now = DWT->CYCCNT;
+    delta = now - start_cycles;
+    st = &s_perf_stats[section];
+    st->total_cycles += (uint64_t)delta;
+    st->sample_count++;
+    if (delta > st->max_cycles)
+    {
+        st->max_cycles = delta;
+    }
+    st->ring[st->ring_head] = delta;
+    st->ring_head = (st->ring_head + 1u) % PERF_RING_SAMPLES;
+    if (st->ring_count < PERF_RING_SAMPLES)
+    {
+        st->ring_count++;
+    }
+}
+
+void App_Perf_CountAudioProc(void)
+{
+    s_perf_audio_proc_count++;
+}
+
+void App_Perf_CountUiLoop(void)
+{
+    s_perf_ui_loop_count++;
+}
+
+void App_Perf_MaybePrintRates(void)
+{
+    uint32_t now_tick;
+    uint32_t elapsed_tick;
+    uint32_t elapsed_ms;
+    uint32_t audio_isr;
+    uint32_t audio_proc;
+    uint32_t ui_loop;
+    uint32_t commit;
+    uint32_t swap;
+    double scale;
+
+    if (s_perf_enabled == 0u)
+    {
+        return;
+    }
+
+    now_tick = xTaskGetTickCount();
+    elapsed_tick = now_tick - s_perf_last_tick;
+    if (elapsed_tick < pdMS_TO_TICKS(PERF_RATE_PERIOD_MS))
+    {
+        return;
+    }
+
+    elapsed_ms = elapsed_tick * portTICK_PERIOD_MS;
+    if (elapsed_ms == 0u)
+    {
+        elapsed_ms = 1u;
+    }
+
+    audio_isr = g_audio_frame_seq_isr;
+    audio_proc = s_perf_audio_proc_count;
+    ui_loop = s_perf_ui_loop_count;
+    commit = g_ltdc_swap_pending_count;
+    swap = g_ltdc_swap_count;
+
+    scale = 1000.0 / (double)elapsed_ms;
+    printf("perf rate isr=%.1f proc=%.1f ui=%.1f commit=%.1f swap=%.1f\r\n",
+           (double)(audio_isr - s_perf_last_audio_isr) * scale,
+           (double)(audio_proc - s_perf_last_audio_proc) * scale,
+           (double)(ui_loop - s_perf_last_ui_loop) * scale,
+           (double)(commit - s_perf_last_commit) * scale,
+           (double)(swap - s_perf_last_swap) * scale);
+
+    s_perf_last_tick = now_tick;
+    s_perf_last_audio_isr = audio_isr;
+    s_perf_last_audio_proc = audio_proc;
+    s_perf_last_ui_loop = ui_loop;
+    s_perf_last_commit = commit;
+    s_perf_last_swap = swap;
+}
+
+void App_Perf_Dump(void)
+{
+    uint32_t i;
+    uint32_t core_hz = SystemCoreClock;
+
+    if (core_hz == 0u)
+    {
+        core_hz = 480000000u;
+    }
+
+    printf("perf cfg enabled=%u dwt=%u uifps=%lu decim=%lu core=%lu\r\n",
+           (unsigned int)s_perf_enabled,
+           (unsigned int)s_perf_dwt_ready,
+           (unsigned long)s_ui_target_fps,
+           (unsigned long)s_audio_algo_decim,
+           (unsigned long)core_hz);
+
+    for (i = 0u; i < APP_PERF_SEC_COUNT; i++)
+    {
+        App_Perf_SectionStat_t *st = &s_perf_stats[i];
+        uint32_t n = st->sample_count;
+        uint32_t max_cycles = st->max_cycles;
+        uint32_t p95_cycles = 0u;
+        double avg_cycles;
+        double avg_ms;
+        double p95_ms;
+        double max_ms;
+
+        if (n == 0u)
+        {
+            continue;
+        }
+
+        if (st->ring_count != 0u)
+        {
+            uint32_t tmp[PERF_RING_SAMPLES];
+            uint32_t j;
+            uint32_t p95_rank;
+
+            for (j = 0u; j < st->ring_count; j++)
+            {
+                uint32_t idx = (st->ring_head + PERF_RING_SAMPLES - st->ring_count + j) % PERF_RING_SAMPLES;
+                tmp[j] = st->ring[idx];
+            }
+            qsort(tmp, st->ring_count, sizeof(uint32_t), s_u32_cmp);
+            p95_rank = (st->ring_count * 95u + 99u) / 100u;
+            if (p95_rank == 0u)
+            {
+                p95_rank = 1u;
+            }
+            if (p95_rank > st->ring_count)
+            {
+                p95_rank = st->ring_count;
+            }
+            p95_cycles = tmp[p95_rank - 1u];
+        }
+
+        avg_cycles = (double)st->total_cycles / (double)n;
+        avg_ms = (avg_cycles * 1000.0) / (double)core_hz;
+        p95_ms = ((double)p95_cycles * 1000.0) / (double)core_hz;
+        max_ms = ((double)max_cycles * 1000.0) / (double)core_hz;
+
+        printf("perf %-12s n=%lu avg=%.3fms p95=%.3fms max=%.3fms\r\n",
+               s_perf_section_names[i],
+               (unsigned long)n,
+               avg_ms,
+               p95_ms,
+               max_ms);
+    }
+}
+
+static uint32_t s_ui_period_ticks(void)
+{
+    uint32_t fps = s_clamp_u32(s_ui_target_fps, UI_FPS_MIN, UI_FPS_MAX);
+    uint32_t period_ms = (1000u + (fps / 2u)) / fps;
+    TickType_t ticks = pdMS_TO_TICKS(period_ms);
+    if (ticks == 0u)
+    {
+        ticks = 1u;
+    }
+    return (uint32_t)ticks;
+}
 
 #if (UI_CLI_ENABLE != 0u)
 static int ui_cli_stricmp(const char *a, const char *b)
@@ -229,6 +572,104 @@ static uint8_t ui_cli_parse_u32(const char *s, uint32_t *out)
     return 1u;
 }
 
+static volatile uint16_t s_ui_cli_rx_wr = 0u;
+static volatile uint16_t s_ui_cli_rx_rd = 0u;
+static volatile uint8_t s_ui_cli_rx_armed = 0u;
+static volatile uint8_t s_ui_cli_rx_need_rearm = 1u;
+static volatile uint32_t s_ui_cli_rx_drop_count = 0u;
+static uint8_t s_ui_cli_rx_byte = 0u;
+static uint8_t s_ui_cli_rx_ring[UI_CLI_RX_RING_SIZE];
+
+static void ui_cli_ring_push_from_isr(uint8_t ch)
+{
+    uint16_t wr = s_ui_cli_rx_wr;
+    uint16_t next = (uint16_t)(wr + 1u);
+
+    if (next >= UI_CLI_RX_RING_SIZE)
+    {
+        next = 0u;
+    }
+
+    if (next == s_ui_cli_rx_rd)
+    {
+        s_ui_cli_rx_drop_count++;
+        g_ui_cli_rx_err_count++;
+        return;
+    }
+
+    s_ui_cli_rx_ring[wr] = ch;
+    s_ui_cli_rx_wr = next;
+    g_ui_cli_rx_ok_count++;
+}
+
+static uint8_t ui_cli_ring_pop(uint8_t *out)
+{
+    uint16_t rd;
+
+    if (out == NULL)
+    {
+        return 0u;
+    }
+
+    taskENTER_CRITICAL();
+    rd = s_ui_cli_rx_rd;
+    if (rd == s_ui_cli_rx_wr)
+    {
+        taskEXIT_CRITICAL();
+        return 0u;
+    }
+
+    *out = s_ui_cli_rx_ring[rd];
+    rd = (uint16_t)(rd + 1u);
+    if (rd >= UI_CLI_RX_RING_SIZE)
+    {
+        rd = 0u;
+    }
+    s_ui_cli_rx_rd = rd;
+    taskEXIT_CRITICAL();
+    return 1u;
+}
+
+static void ui_cli_uart_recover(void)
+{
+    if (HAL_UART_GetError(&huart1) == HAL_UART_ERROR_NONE)
+    {
+        s_ui_cli_rx_armed = 0u;
+        return;
+    }
+
+    (void)HAL_UART_AbortReceive(&huart1);
+    __HAL_UART_CLEAR_FLAG(&huart1, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_FEF | UART_CLEAR_PEF);
+    huart1.ErrorCode = HAL_UART_ERROR_NONE;
+    s_ui_cli_rx_armed = 0u;
+}
+
+static void ui_cli_uart_kick_rx_it(void)
+{
+    HAL_StatusTypeDef st;
+
+    if (s_ui_cli_rx_armed != 0u)
+    {
+        return;
+    }
+
+    if (s_ui_cli_rx_need_rearm != 0u)
+    {
+        ui_cli_uart_recover();
+        s_ui_cli_rx_need_rearm = 0u;
+    }
+
+    st = HAL_UART_Receive_IT(&huart1, &s_ui_cli_rx_byte, 1u);
+    if ((st == HAL_OK) || (st == HAL_BUSY))
+    {
+        s_ui_cli_rx_armed = 1u;
+    }
+    else
+    {
+        g_ui_cli_rx_err_count++;
+    }
+}
+
 static void ui_cli_print_help(void)
 {
     printf("\r\n");
@@ -243,8 +684,13 @@ static void ui_cli_print_help(void)
     printf("cfg smooth <0..3>\r\n");
     printf("cfg fine <0..3>\r\n");
     printf("cfg bilinear <0|1>\r\n");
+    printf("cfg norm fast|full\r\n");
     printf("cfg textdiv <1..20>\r\n");
     printf("cfg blit <1..8>\r\n");
+    printf("cfg uifps <5..30>\r\n");
+    printf("cfg algodecim <1..8>\r\n");
+    printf("cfg perf on|off|dump|reset\r\n");
+    printf("cfg uart recover\r\n");
 }
 
 static void ui_cli_print_status(void)
@@ -261,12 +707,17 @@ static void ui_cli_print_status(void)
            (double)cfg.gamma,
            (double)cfg.noise_gate_ratio,
            (double)cfg.noise_adapt_gain);
-    printf("cfg smooth=%u fine=%.2f interp=%s textdiv=%u blit=%u\r\n",
+    printf("cfg smooth=%u fine=%.2f interp=%s norm=%s textdiv=%u blit=%u\r\n",
            (unsigned int)cfg.smooth_passes,
            (double)cfg.fine_gain,
            App_Display_InterpName((App_Display_Interp_t)cfg.interp_mode),
+           App_Display_NormName((App_Display_Norm_t)cfg.norm_mode),
            (unsigned int)cfg.text_refresh_div,
            (unsigned int)cfg.blit_rows);
+    printf("cfg uifps=%lu algodecim=%lu perf=%s\r\n",
+           (unsigned long)s_ui_target_fps,
+           (unsigned long)s_audio_algo_decim,
+           (App_Perf_IsEnabled() != 0u) ? "on" : "off");
     printf("dma2d tx=%lu timeout=%lu fallback=%lu qpk=%lu qov=%lu qerr=%lu\r\n",
            (unsigned long)g_ltdc_dma2d_transfer_count,
            (unsigned long)g_ltdc_dma2d_timeout_count,
@@ -279,12 +730,20 @@ static void ui_cli_print_status(void)
            (unsigned long)g_ltdc_swap_pending_count,
            (unsigned long)g_ltdc_swap_error_count,
            (unsigned int)ltdc_is_swap_pending());
+    printf("cli rx_ok=%lu rx_err=%lu rx_drop=%lu alive=%u uart_err=0x%08lX baud=%lu\r\n",
+           (unsigned long)g_ui_cli_rx_ok_count,
+           (unsigned long)g_ui_cli_rx_err_count,
+           (unsigned long)s_ui_cli_rx_drop_count,
+           (unsigned int)g_ui_cli_rx_alive,
+           (unsigned long)HAL_UART_GetError(&huart1),
+           (unsigned long)huart1.Init.BaudRate);
 }
 
 static void ui_cli_apply_line(char *line)
 {
     char *cursor;
     char *arg = NULL;
+    char *tail;
     App_Display_RuntimeCfg_t cfg;
     float fv;
     uint32_t uv;
@@ -298,6 +757,11 @@ static void ui_cli_apply_line(char *line)
     while (isspace((unsigned char)*cursor) != 0)
     {
         cursor++;
+    }
+    tail = cursor + strlen(cursor);
+    while ((tail > cursor) && (isspace((unsigned char)tail[-1]) != 0))
+    {
+        *--tail = '\0';
     }
     if (*cursor == '\0')
     {
@@ -358,6 +822,17 @@ static void ui_cli_apply_line(char *line)
         arg = NULL;
     }
 
+    if (ui_cli_stricmp(cursor, "help") == 0)
+    {
+        ui_cli_print_help();
+        return;
+    }
+    if (ui_cli_stricmp(cursor, "status") == 0)
+    {
+        ui_cli_print_status();
+        return;
+    }
+
     if (ui_cli_stricmp(cursor, "mode") == 0)
     {
         if (arg == NULL)
@@ -407,6 +882,104 @@ static void ui_cli_apply_line(char *line)
             return;
         }
         App_Display_SetConfig(&cfg);
+        ui_cli_print_status();
+        return;
+    }
+    if (ui_cli_stricmp(cursor, "norm") == 0)
+    {
+        App_Display_GetConfig(&cfg);
+        if (arg == NULL)
+        {
+            printf("CLI: cfg norm fast|full\r\n");
+            return;
+        }
+        if (ui_cli_stricmp(arg, "fast") == 0)
+        {
+            cfg.norm_mode = APP_DISPLAY_NORM_FAST;
+        }
+        else if (ui_cli_stricmp(arg, "full") == 0)
+        {
+            cfg.norm_mode = APP_DISPLAY_NORM_FULL;
+        }
+        else
+        {
+            printf("CLI: cfg norm fast|full\r\n");
+            return;
+        }
+        App_Display_SetConfig(&cfg);
+        ui_cli_print_status();
+        return;
+    }
+    if (ui_cli_stricmp(cursor, "uifps") == 0)
+    {
+        if ((arg == NULL) || (ui_cli_parse_u32(arg, &uv) == 0u))
+        {
+            printf("CLI: cfg uifps <5..30>\r\n");
+            return;
+        }
+        s_ui_target_fps = s_clamp_u32(uv, UI_FPS_MIN, UI_FPS_MAX);
+        ui_cli_print_status();
+        return;
+    }
+    if (ui_cli_stricmp(cursor, "algodecim") == 0)
+    {
+        if ((arg == NULL) || (ui_cli_parse_u32(arg, &uv) == 0u))
+        {
+            printf("CLI: cfg algodecim <1..8>\r\n");
+            return;
+        }
+        s_audio_algo_decim = s_clamp_u32(uv, AUDIO_ALGO_DECIM_MIN, AUDIO_ALGO_DECIM_MAX);
+        ui_cli_print_status();
+        return;
+    }
+    if (ui_cli_stricmp(cursor, "perf") == 0)
+    {
+        if (arg == NULL)
+        {
+            printf("CLI: cfg perf on|off|dump|reset\r\n");
+            return;
+        }
+        if (ui_cli_stricmp(arg, "on") == 0)
+        {
+            App_Perf_SetEnabled(1u);
+        }
+        else if (ui_cli_stricmp(arg, "off") == 0)
+        {
+            App_Perf_SetEnabled(0u);
+        }
+        else if (ui_cli_stricmp(arg, "reset") == 0)
+        {
+            App_Perf_Reset();
+        }
+        else if (ui_cli_stricmp(arg, "dump") == 0)
+        {
+            App_Perf_Dump();
+        }
+        else
+        {
+            printf("CLI: cfg perf on|off|dump|reset\r\n");
+            return;
+        }
+        ui_cli_print_status();
+        return;
+    }
+    if (ui_cli_stricmp(cursor, "uart") == 0)
+    {
+        if (arg == NULL)
+        {
+            printf("CLI: cfg uart recover\r\n");
+            return;
+        }
+        if (ui_cli_stricmp(arg, "recover") == 0)
+        {
+            ui_cli_uart_recover();
+            printf("CLI: uart recover done\r\n");
+        }
+        else
+        {
+            printf("CLI: cfg uart recover\r\n");
+            return;
+        }
         ui_cli_print_status();
         return;
     }
@@ -513,21 +1086,26 @@ static void ui_cli_poll(void)
     static char line_buf[UI_CLI_LINE_MAX];
     static uint16_t line_len = 0u;
     static uint8_t banner_printed = 0u;
+    static TickType_t last_rx_tick = 0u;
     uint32_t i;
     uint8_t ch;
 
     if (banner_printed == 0u)
     {
         banner_printed = 1u;
-        printf("UI CLI ready, type 'cfg help'\r\n");
+        printf("UI CLI ready @%lu baud, type 'cfg help'\r\n", (unsigned long)huart1.Init.BaudRate);
     }
+
+    ui_cli_uart_kick_rx_it();
 
     for (i = 0u; i < UI_CLI_RX_DRAIN_MAX; i++)
     {
-        if (HAL_UART_Receive(&huart1, &ch, 1u, 0u) != HAL_OK)
+        if (ui_cli_ring_pop(&ch) == 0u)
         {
             break;
         }
+
+        last_rx_tick = xTaskGetTickCount();
 
         if ((ch == '\r') || (ch == '\n'))
         {
@@ -557,6 +1135,52 @@ static void ui_cli_poll(void)
             }
         }
     }
+
+    if ((last_rx_tick != 0u) &&
+        ((xTaskGetTickCount() - last_rx_tick) <= pdMS_TO_TICKS(2000u)))
+    {
+        g_ui_cli_rx_alive = 1u;
+    }
+    else
+    {
+        g_ui_cli_rx_alive = 0u;
+    }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    HAL_StatusTypeDef st;
+
+    if ((huart == NULL) || (huart->Instance != USART1))
+    {
+        return;
+    }
+
+    s_ui_cli_rx_armed = 0u;
+    ui_cli_ring_push_from_isr(s_ui_cli_rx_byte);
+
+    st = HAL_UART_Receive_IT(&huart1, &s_ui_cli_rx_byte, 1u);
+    if ((st == HAL_OK) || (st == HAL_BUSY))
+    {
+        s_ui_cli_rx_armed = 1u;
+    }
+    else
+    {
+        s_ui_cli_rx_need_rearm = 1u;
+        g_ui_cli_rx_err_count++;
+    }
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if ((huart == NULL) || (huart->Instance != USART1))
+    {
+        return;
+    }
+
+    s_ui_cli_rx_armed = 0u;
+    s_ui_cli_rx_need_rearm = 1u;
+    g_ui_cli_rx_err_count++;
 }
 #else
 static void ui_cli_poll(void)
@@ -567,222 +1191,217 @@ static void ui_cli_poll(void)
 void App_Task_Init(void)
 {
     BaseType_t task_ok;
+    App_Perf_Init();
 
-    /* 创建队列：长度为 1，保留最新帧/最新定位结果，降低端到端延迟 */
+    /* 鍒涘缓闃熷垪锛氶暱搴︿负 1锛屼繚鐣欐渶鏂板抚/鏈€鏂板畾浣嶇粨鏋滐紝闄嶄綆绔埌绔欢杩?*/
     xAudioFrameQueue = xQueueCreate(1, sizeof(Audio_FrameEvent_t));
     xPositionQueue = xQueueCreate(1, sizeof(Sound_Pos_t));
     configASSERT(xAudioFrameQueue != NULL);
     configASSERT(xPositionQueue != NULL);
 
-    /* 创建音频处理任务 */
-    /* 堆栈：2304 字节 (足够容纳局部变量和函数调用栈) */
+    /* 鍒涘缓闊抽澶勭悊浠诲姟 */
+    /* 鍫嗘爤锛?304 瀛楄妭 (瓒冲瀹圭撼灞€閮ㄥ彉閲忓拰鍑芥暟璋冪敤鏍? */
     task_ok = xTaskCreate(Audio_Pipeline_Task, "Audio_Pipe", 2304, NULL, APP_AUDIO_TASK_PRIO, &xAudioPipelineTaskHandle);
     configASSERT(task_ok == pdPASS);
 
-    /* 创建 UI 显示任务 */
-    /* 堆栈：2048 字节 */
+    /* 鍒涘缓 UI 鏄剧ず浠诲姟 */
+    /* 鍫嗘爤锛?048 瀛楄妭 */
     task_ok = xTaskCreate(UI_Display_Task, "UI_Disp", 2048, NULL, APP_UI_TASK_PRIO, &xUITaskHandle);
     configASSERT(task_ok == pdPASS);
 }
 
 /**
- * @brief   音频处理流水线任务
- * @details 处理音频数据流水线：DMA → 预处理 → FFT → SRP-PHAT → 输出
+ * @brief   闊抽澶勭悊娴佹按绾夸换鍔?
+ * @details 澶勭悊闊抽鏁版嵁娴佹按绾匡細DMA 鈫?棰勫鐞?鈫?FFT 鈫?SRP-PHAT 鈫?杈撳嚭
  *
- * 任务流程：
- * 1. 等待 DMA 中断事件 (xQueueReceive, 无限等待)
- * 2. 检测丢帧 (通过序号断层判断)
- * 3. 解交织 + 类型转换 (Deinterleave_Using_Matrix)
- * 4. FFT 频域变换 (AI_FFT_Process)
- * 5. SRP-PHAT 声源定位 (AI_SRP_PHAT_Process)
- * 6. 发送结果到 UI 任务 (xQueueOverwrite)
- * 7. 主动让出 CPU (taskYIELD)
+ * 浠诲姟娴佺▼锛?
+ * 1. 绛夊緟 DMA 涓柇浜嬩欢 (xQueueReceive, 鏃犻檺绛夊緟)
+ * 2. 妫€娴嬩涪甯?(閫氳繃搴忓彿鏂眰鍒ゆ柇)
+ * 3. 瑙ｄ氦缁?+ 绫诲瀷杞崲 (Deinterleave_Using_Matrix)
+ * 4. FFT 棰戝煙鍙樻崲 (AI_FFT_Process)
+ * 5. SRP-PHAT 澹版簮瀹氫綅 (AI_SRP_PHAT_Process)
+ * 6. 鍙戦€佺粨鏋滃埌 UI 浠诲姟 (xQueueOverwrite)
+ * 7. 涓诲姩璁╁嚭 CPU (taskYIELD)
  *
- * 内存优化：
- * - 复用 Mic_Freq_Buffer 作为临时 q15 平面缓冲
- * - 避免额外分配 16KB 内存
- * - 该缓冲在 FFT 前使用，FFT 后被覆盖
+ * 鍐呭瓨浼樺寲锛?
+ * - 澶嶇敤 Mic_Freq_Buffer 浣滀负涓存椂 q15 骞抽潰缂撳啿
+ * - 閬垮厤棰濆鍒嗛厤 16KB 鍐呭瓨
+ * - 璇ョ紦鍐插湪 FFT 鍓嶄娇鐢紝FFT 鍚庤瑕嗙洊
  *
- * 调试输出：
- * - DEBUG_MODE=0: 输出 RMS (有效值)
- * - DEBUG_MODE=1: 输出 FFT 频谱
- * - DEBUG_MODE=3: 输出 SRP 结果
+ * 璋冭瘯杈撳嚭锛?
+ * - DEBUG_MODE=0: 杈撳嚭 RMS (鏈夋晥鍊?
+ * - DEBUG_MODE=1: 杈撳嚭 FFT 棰戣氨
+ * - DEBUG_MODE=3: 杈撳嚭 SRP 缁撴灉
  *
- * @param   pvParameters  FreeRTOS 任务参数 (未使用)
+ * @param   pvParameters  FreeRTOS 浠诲姟鍙傛暟 (鏈娇鐢?
  *
- * @note    任务优先级：4 (高于 UI 任务)
- * @note    任务堆栈：2304 字节
- * @note    任务周期：5.33ms (48kHz, 256 点)
+ * @note    浠诲姟浼樺厛绾э細4 (楂樹簬 UI 浠诲姟)
+ * @note    浠诲姟鍫嗘爤锛?304 瀛楄妭
+ * @note    浠诲姟鍛ㄦ湡锛?.33ms (48kHz, 256 鐐?
  */
 void Audio_Pipeline_Task(void *pvParameters)
 {
     (void)pvParameters;
 
-    /* 局部变量 */
-    static uint32_t s_frame_cnt = 0u;  /* 帧计数器 */
-    uint32_t s_last_seq = 0u;          /* 上次序号 (用于丢帧检测) */
-    Sound_Pos_t current_pos;           /* 当前声源位置 */
+    static uint32_t s_frame_cnt = 0u;
+    uint32_t s_last_seq = 0u;
+    uint32_t s_decim_phase = 0u;
+    Sound_Pos_t current_pos = {0.0f, 0.0f, 0.0f};
+    Sound_Pos_t last_algo_pos = {0.0f, 0.0f, 0.0f};
+    uint8_t has_last_algo = 0u;
 
-    Audio_FrameEvent_t event;          /* DMA 事件 */
-    q15_t *p_current_dma_src;          /* 当前 DMA 源指针 */
-
-    /* 复用 Mic_Freq_Buffer 作为临时 q15 平面缓冲，避免额外分配大块内存 */
-    /* 该缓冲只在当前任务内使用，不跨任务共享 */
-    /* 使用时机：解交织后，FFT 前；FFT 后会被覆盖 */
+    Audio_FrameEvent_t event;
+    q15_t *p_current_dma_src;
     q15_t *p_temp_planar = (q15_t *)Mic_Freq_Buffer;
 
-    /* 任务主循环 */
     for (;;)
     {
-        /* ========== 步骤 1: 等待 DMA 事件 ========== */
-        /* 阻塞等待音频帧事件 (无限等待) */
         if (xQueueReceive(xAudioFrameQueue, &event, portMAX_DELAY) != pdTRUE)
         {
-            continue;  /* 接收失败，重试 */
+            continue;
         }
 
-        /* ========== 步骤 2: 丢帧检测 ========== */
-        /* 通过序号断层检测队列覆盖导致的丢帧 */
         if ((s_last_seq != 0u) && (event.seq > (s_last_seq + 1u)))
         {
-            /* 计算丢失的帧数 */
             g_audio_both_flags_count += (event.seq - s_last_seq - 1u);
         }
         s_last_seq = event.seq;
 
-        /* ========== 步骤 3: 确定 DMA 源地址 ========== */
-        /* 根据 PING/PONG 标识选择 DMA 缓冲区 */
         if (event.half_id == AUDIO_DMA_HALF_PING)
         {
-            /* PING 区：前半区 */
             p_current_dma_src = (q15_t *)&Mic_Rx_Buffer[0];
         }
         else if (event.half_id == AUDIO_DMA_HALF_PONG)
         {
-            /* PONG 区：后半区 */
             p_current_dma_src = (q15_t *)&Mic_Rx_Buffer[MIC_CHANNELS * FRAME_LEN];
         }
         else
         {
-            /* 异常：无效的半缓冲标识 */
             g_audio_no_flag_count++;
             continue;
         }
 
-        /* 调试计数 */
-        found_val++;
+        {
+            uint32_t decim = s_clamp_u32(s_audio_algo_decim, AUDIO_ALGO_DECIM_MIN, AUDIO_ALGO_DECIM_MAX);
+            uint8_t run_algo = (has_last_algo == 0u) ? 1u : ((s_decim_phase == 0u) ? 1u : 0u);
 
-        /* ========== 步骤 4: 解交织 + 类型转换 ========== */
-        /* 输入：DMA 缓冲区 (int16 交织) */
-        /* 输出：Mic_Process_Buffer (float32 平面) */
-        /* 耗时：约 0.3ms */
-        Deinterleave_Using_Matrix(p_current_dma_src,
-                                  p_temp_planar,
-                                  Mic_Process_Buffer,
-                                  FRAME_LEN,
-                                  MIC_CHANNELS);
+            s_decim_phase++;
+            if (s_decim_phase >= decim)
+            {
+                s_decim_phase = 0u;
+            }
 
-        /* 帧计数 */
-        s_frame_cnt++;
+            if (run_algo != 0u)
+            {
+                uint32_t t_audio = App_Perf_BeginCycles();
+                uint32_t t_sec;
+
+                found_val++;
+                t_sec = App_Perf_BeginCycles();
+                Deinterleave_Using_Matrix(p_current_dma_src,
+                                          p_temp_planar,
+                                          Mic_Process_Buffer,
+                                          FRAME_LEN,
+                                          MIC_CHANNELS);
+                App_Perf_EndCycles(APP_PERF_SEC_AUDIO_DEINT, t_sec);
+
+                s_frame_cnt++;
 
 #ifdef DEBUG_ENABLE
 #if (DEBUG_MODE == 0)
-        /* 调试模式 0: 输出 RMS (有效值) */
-        if ((s_frame_cnt % DEBUG_THROTTLE_FRAMES) == 0u)
-        {
-            VOFA_Send_Channel_RMS();
-        }
+                if ((s_frame_cnt % DEBUG_THROTTLE_FRAMES) == 0u)
+                {
+                    VOFA_Send_Channel_RMS();
+                }
 #endif
 #endif
 
-        /* ========== 步骤 5: FFT 频域变换 ========== */
-        /* 输入：Mic_Process_Buffer (float32 时域) */
-        /* 输出：Mic_Freq_Buffer (float32 频域复数) */
-        /* 耗时：约 0.8ms */
-        AI_FFT_Process();
+                t_sec = App_Perf_BeginCycles();
+                AI_FFT_Process();
+                App_Perf_EndCycles(APP_PERF_SEC_AUDIO_FFT, t_sec);
 
 #ifdef DEBUG_ENABLE
 #if (DEBUG_MODE == 1)
-        /* 调试模式 1: 输出 FFT 频谱 */
-        if ((s_frame_cnt % DEBUG_THROTTLE_FRAMES) == 0u)
-        {
-            VOFA_Send_FFT_Magnitude(DEBUG_SPECTRUM_CHANNEL);
-        }
+                if ((s_frame_cnt % DEBUG_THROTTLE_FRAMES) == 0u)
+                {
+                    VOFA_Send_FFT_Magnitude(DEBUG_SPECTRUM_CHANNEL);
+                }
 #endif
 #endif
 
-        /* ========== 步骤 6: SRP-PHAT 声源定位 ========== */
-        /* 输入：Mic_Freq_Buffer (频域复数) */
-        /* 输出：current_pos (声源位置) */
-        /* 耗时：约 4ms */
-        AI_SRP_PHAT_Process(&current_pos);
+                t_sec = App_Perf_BeginCycles();
+                AI_SRP_PHAT_Process(&current_pos);
+                App_Perf_EndCycles(APP_PERF_SEC_AUDIO_SRP, t_sec);
 
 #ifdef DEBUG_ENABLE
 #if (DEBUG_MODE == 3)
-        /* 调试模式 3: 输出 SRP 结果 */
-        if ((s_frame_cnt % DEBUG_THROTTLE_FRAMES) == 0u)
-        {
-            VOFA_Send_SRP_Result(&current_pos);
+                if ((s_frame_cnt % DEBUG_THROTTLE_FRAMES) == 0u)
+                {
+                    VOFA_Send_SRP_Result(&current_pos);
+                }
+#endif
+#endif
+
+                App_Perf_EndCycles(APP_PERF_SEC_AUDIO_TOTAL, t_audio);
+                last_algo_pos = current_pos;
+                has_last_algo = 1u;
+                App_Perf_CountAudioProc();
+            }
+            else
+            {
+                current_pos = last_algo_pos;
+            }
         }
-#endif
-#endif
 
-        /* ========== 步骤 7: 发送结果到 UI 任务 ========== */
-        /* 使用 xQueueOverwrite 覆盖旧数据 (队列长度为 1) */
         xQueueOverwrite(xPositionQueue, &current_pos);
-
-        /* ========== 步骤 8: 主动让出 CPU ========== */
-        /* 音频/UI 同优先级时主动让出一次 CPU，降低 UI 被长期饿死的概率 */
         taskYIELD();
     }
 }
 
 /**
- * @brief   UI 显示任务
- * @details 接收声源位置数据，渲染热力图和十字光标
+ * @brief   UI 鏄剧ず浠诲姟
+ * @details 鎺ユ敹澹版簮浣嶇疆鏁版嵁锛屾覆鏌撶儹鍔涘浘鍜屽崄瀛楀厜鏍?
  *
- * 任务流程：
- * 1. 检查显示模块是否就绪 (App_Display_IsReady)
- * 2. 如果未就绪，定期重试初始化 (1 秒间隔)
- * 3. 非阻塞接收声源位置数据 (xQueueReceive, 0 超时)
- * 4. 如果有多帧积压，仅保留最后一帧
- * 5. 临界区快照 SRP 功率数据 (避免读到半更新数据)
- * 6. 渲染 UI (App_Display_Render)
- * 7. 周期性延迟 (vTaskDelayUntil, 33ms)
+ * 浠诲姟娴佺▼锛?
+ * 1. 妫€鏌ユ樉绀烘ā鍧楁槸鍚﹀氨缁?(App_Display_IsReady)
+ * 2. 濡傛灉鏈氨缁紝瀹氭湡閲嶈瘯鍒濆鍖?(1 绉掗棿闅?
+ * 3. 闈為樆濉炴帴鏀跺０婧愪綅缃暟鎹?(xQueueReceive, 0 瓒呮椂)
+ * 4. 濡傛灉鏈夊甯хН鍘嬶紝浠呬繚鐣欐渶鍚庝竴甯?
+ * 5. 涓寸晫鍖哄揩鐓?SRP 鍔熺巼鏁版嵁 (閬垮厤璇诲埌鍗婃洿鏂版暟鎹?
+ * 6. 娓叉煋 UI (App_Display_Render)
+ * 7. 鍛ㄦ湡鎬у欢杩?(vTaskDelayUntil, 33ms)
  *
- * 初始化重试机制：
- * - 显示模块初始化可能失败 (LCD 硬件问题)
- * - 每 1 秒重试一次，直到成功
- * - 重试期间让出 CPU，避免阻塞其他任务
+ * 鍒濆鍖栭噸璇曟満鍒讹細
+ * - 鏄剧ず妯″潡鍒濆鍖栧彲鑳藉け璐?(LCD 纭欢闂)
+ * - 姣?1 绉掗噸璇曚竴娆★紝鐩村埌鎴愬姛
+ * - 閲嶈瘯鏈熼棿璁╁嚭 CPU锛岄伩鍏嶉樆濉炲叾浠栦换鍔?
  *
- * 数据同步：
- * - SRP_Power 被音频任务写入，UI 任务读取
- * - 使用临界区快照，避免数据竞争
- * - 临界区时间短 (约 0.1ms)，不影响实时性
+ * 鏁版嵁鍚屾锛?
+ * - SRP_Power 琚煶棰戜换鍔″啓鍏ワ紝UI 浠诲姟璇诲彇
+ * - 浣跨敤涓寸晫鍖哄揩鐓э紝閬垮厤鏁版嵁绔炰簤
+ * - 涓寸晫鍖烘椂闂寸煭 (绾?0.1ms)锛屼笉褰卞搷瀹炴椂鎬?
  *
- * @param   pvParameters  FreeRTOS 任务参数 (未使用)
+ * @param   pvParameters  FreeRTOS 浠诲姟鍙傛暟 (鏈娇鐢?
  *
- * @note    任务优先级：4 (与音频任务同级)
- * @note    任务堆栈：2048 字节
- * @note    任务周期：33ms (30 FPS)
+ * @note    浠诲姟浼樺厛绾э細4 (涓庨煶棰戜换鍔″悓绾?
+ * @note    浠诲姟鍫嗘爤锛?048 瀛楄妭
+ * @note    浠诲姟鍛ㄦ湡锛?3ms (30 FPS)
  */
 void UI_Display_Task(void *pvParameters)
 {
     (void)pvParameters;
 
-    /* 局部变量 */
-    Sound_Pos_t draw_pos = {0.0f, 0.0f, 0.0f};  /* 当前接收的位置 */
-    Sound_Pos_t last_pos = {0.0f, 0.0f, 0.0f};  /* 上次有效位置 */
-    SRP_VisFrame_t vis_snapshot;                /* SRP 粗搜+精搜可视化快照 */
-    uint32_t ui_frame_seq = 0u;                 /* UI 帧序号 */
-    uint32_t last_audio_isr_seq = 0u;           /* 上次观测到的 SAI DMA ISR 序号 */
-    uint8_t audio_idle_frames = 0xFFu;          /* SAI DMA 空闲帧计数 */
+    Sound_Pos_t draw_pos = {0.0f, 0.0f, 0.0f};
+    Sound_Pos_t last_pos = {0.0f, 0.0f, 0.0f};
+    SRP_VisFrame_t vis_snapshot;
+    uint32_t ui_frame_seq = 0u;
+    uint32_t last_audio_isr_seq = 0u;
+    uint8_t audio_idle_frames = 0xFFu;
 
-    TickType_t next_render_wake;                /* 下次唤醒时间 */
-    TickType_t last_init_try = 0u;              /* 上次初始化尝试时间 */
-    uint32_t last_dma2d_timeout = 0u;           /* 上次 DMA2D 超时计数 */
+    TickType_t next_render_wake;
+    TickType_t last_init_try = 0u;
+    uint32_t last_dma2d_timeout = 0u;
 
-    /* ========== 初始化显示模块 ========== */
     if (App_Display_IsReady() == 0u)
     {
         App_Display_Init();
@@ -790,43 +1409,40 @@ void UI_Display_Task(void *pvParameters)
     last_init_try = xTaskGetTickCount();
     next_render_wake = last_init_try;
 
-    /* 任务主循环 */
     for (;;)
     {
-        /* ========== 步骤 1: 检查显示模块是否就绪 ========== */
+        uint32_t t_loop;
+        uint8_t sai_dma_active;
+
         ui_cli_poll();
         if (App_Display_IsReady() == 0u)
         {
-            /* 显示模块未就绪，定期重试初始化 */
             TickType_t now = xTaskGetTickCount();
             if ((now - last_init_try) >= pdMS_TO_TICKS(UI_RETRY_INIT_MS))
             {
 #if UI_DEBUG_LOG
-                /* 调试日志：输出初始化状态 */
                 printf("UI: retry init (app=0x%08lX err=%lu lcd=%lu ltdc=%lu)\r\n",
                        (unsigned long)g_display_init_stage,
                        (unsigned long)g_display_init_error,
                        (unsigned long)g_lcd_init_stage,
                        (unsigned long)g_ltdc_init_stage);
 #endif
-                /* 重试初始化 */
                 App_Display_Init();
                 last_init_try = now;
             }
-            /* 让出 CPU，避免阻塞其他任务 */
             taskYIELD();
             continue;
         }
 
-        /* ========== 步骤 2: 非阻塞接收声源位置数据 ========== */
-        /* 非阻塞获取最新定位结果；若有多帧积压，仅保留最后一帧 */
+        App_Perf_CountUiLoop();
+        App_Perf_MaybePrintRates();
+        t_loop = App_Perf_BeginCycles();
+
         if (xQueueReceive(xPositionQueue, &draw_pos, 0u) == pdPASS)
         {
-            /* 接收成功 */
             last_pos = draw_pos;
             g_ui_queue_rx_count++;
 
-            /* 清空队列，仅保留最后一帧 */
             while (xQueueReceive(xPositionQueue, &draw_pos, 0u) == pdPASS)
             {
                 last_pos = draw_pos;
@@ -835,14 +1451,11 @@ void UI_Display_Task(void *pvParameters)
         }
         else
         {
-            /* 接收超时 (队列为空) */
             g_ui_queue_timeout_count++;
         }
 
-        /* UI 帧序号递增 */
         ui_frame_seq++;
 
-        uint8_t sai_dma_active;
         {
             uint32_t audio_seq = g_audio_frame_seq_isr;
             if (audio_seq != last_audio_isr_seq)
@@ -857,24 +1470,24 @@ void UI_Display_Task(void *pvParameters)
             sai_dma_active = (audio_idle_frames <= APP_DISPLAY_SAI_ACTIVE_HOLD_FRAMES) ? 1u : 0u;
         }
 
-        /* ========== 步骤 3: 临界区快照 SRP 功率数据 ========== */
-        /* SRP_Power 同时被音频任务写入 */
-        /* 这里做一次短临界区快照，避免 UI 读到"半更新"数据 */
-        taskENTER_CRITICAL();
-        AI_SRP_CopyVisualizationFrame(&vis_snapshot);
-        taskEXIT_CRITICAL();
+        {
+            uint32_t t_sec = App_Perf_BeginCycles();
+            taskENTER_CRITICAL();
+            AI_SRP_CopyVisualizationFrame(&vis_snapshot);
+            taskEXIT_CRITICAL();
+            App_Perf_EndCycles(APP_PERF_SEC_UI_SNAPSHOT, t_sec);
+        }
 
-        /* ========== 步骤 4: 渲染 UI ========== */
-        /* 渲染热力图 + 十字光标 + 诊断信息 */
-        /* 耗时：约 10ms (包含 DMA2D 传输) */
-        App_Display_Render(&last_pos, &vis_snapshot, ui_frame_seq, sai_dma_active);
+        {
+            uint32_t t_sec = App_Perf_BeginCycles();
+            App_Display_Render(&last_pos, &vis_snapshot, ui_frame_seq, sai_dma_active);
+            App_Perf_EndCycles(APP_PERF_SEC_UI_RENDER, t_sec);
+        }
         g_ui_render_count++;
 
-        /* ========== 步骤 5: 检查 DMA2D 超时 ========== */
         if (g_ltdc_dma2d_timeout_count != last_dma2d_timeout)
         {
 #if UI_DEBUG_LOG
-            /* 调试日志：输出 DMA2D 超时信息 */
             printf("UI: DMA2D timeout=%lu panel=0x%04X\r\n",
                    (unsigned long)g_ltdc_dma2d_timeout_count,
                    (unsigned int)g_ltdc_panel_id);
@@ -882,8 +1495,8 @@ void UI_Display_Task(void *pvParameters)
             last_dma2d_timeout = g_ltdc_dma2d_timeout_count;
         }
 
-        /* ========== 步骤 6: 周期性延迟 ========== */
-        /* 延迟到下次唤醒时间 (33ms 周期，30 FPS) */
-        vTaskDelayUntil(&next_render_wake, pdMS_TO_TICKS(UI_RENDER_PERIOD_MS));
+        App_Perf_EndCycles(APP_PERF_SEC_UI_LOOP, t_loop);
+        vTaskDelayUntil(&next_render_wake, (TickType_t)s_ui_period_ticks());
     }
 }
+
