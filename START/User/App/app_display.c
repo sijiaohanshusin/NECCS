@@ -1,45 +1,27 @@
-/**
- * @file    app_display.c
- * @brief   声学相机 UI 显示实现
- * @details 实时渲染 SRP-PHAT 声源定位结果到 LCD 屏幕
- *
- * 显示内容：
- * - 7×7 热力图 (粗搜索功率分布)
- * - 十字准星 (精细定位结果)
- * - 文本信息 (角度、能量、帧序号)
- * - 诊断信息 (对比度、质量、DMA 状态)
- *
- * 热力图配色：
- * - 蓝色 (低能量) → 绿色 → 黄色 → 红色 (高能量)
- * - 动态范围：-60dB ~ 0dB (相对峰值)
- *
- * 性能优化：
- * - 使用 DMA2D 硬件加速填充 (如果启用)
- * - 仅刷新变化区域 (热力图 + 文本区)
- * - 帧率：30 FPS (33ms 刷新周期)
- */
-
 #include "app_display.h"
 
 #include "LCD/lcd.h"
-#include "ai_beamforming.h"
+#include "LCD/ltdc.h"
 #include "ai_config.h"
-#include "ai_srp_lut.h"
+#include "mpu.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
-#define UI_MARGIN_PX        8u
-#define UI_TEXT_WIDTH_PX    140u
-#define UI_ANGLE_MIN_DEG   (-60.0f)
-#define UI_ANGLE_MAX_DEG   (60.0f)
-#define UI_DYNAMIC_MAG_MIN  (1.0e-6f)
+#ifndef COARSE_ANGLE_MIN_DEG
+#define COARSE_ANGLE_MIN_DEG (-60.0f)
+#endif
 
-/* ==================== 显示调试开关 ==================== */
-#define APP_DISPLAY_DIAG_OVERLAY       1u
-#define APP_DISPLAY_DEBUG_LOG          0u
-#define APP_DISPLAY_IDLE_TEST_PATTERN  1u
+#ifndef COARSE_ANGLE_MAX_DEG
+#define COARSE_ANGLE_MAX_DEG (60.0f)
+#endif
+
+#define APP_DISPLAY_FIELD_PIXELS      (APP_DISPLAY_FIELD_W * APP_DISPLAY_FIELD_H)
+#define APP_DISPLAY_BLUR_KERNEL_LEN   (2u * APP_DISPLAY_SMOOTH_RADIUS + 1u)
+#define APP_DISPLAY_FINE_KERNEL_LEN   (2u * APP_DISPLAY_FINE_KERNEL_RADIUS + 1u)
+#define APP_DISPLAY_DYNAMIC_MIN_PEAK  (1.0e-9f)
+#define APP_DISPLAY_HEAT_LUT_SIZE     256u
 
 static uint8_t s_ready = 0u;
 volatile uint32_t g_display_init_stage = 0u;
@@ -49,18 +31,65 @@ static uint16_t s_map_x0 = 0u;
 static uint16_t s_map_y0 = 0u;
 static uint16_t s_map_x1 = 0u;
 static uint16_t s_map_y1 = 0u;
-
-static uint16_t s_cell_w = 1u;
-static uint16_t s_cell_h = 1u;
 static uint16_t s_text_x = 0u;
 
-/**
- * @brief   限制 uint16_t 值到指定范围
- * @param   v   输入值 (int32_t，允许负数)
- * @param   lo  下限
- * @param   hi  上限
- * @return  限制后的值 [lo, hi]
- */
+static float s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
+static float s_last_noise_floor = 0.0f;
+static uint8_t s_kernel_ready = 0u;
+static uint32_t s_last_text_refresh_frame = 0u;
+
+__SECTION_AXI_SRAM static float s_field_a[APP_DISPLAY_FIELD_PIXELS];
+__SECTION_AXI_SRAM static float s_field_b[APP_DISPLAY_FIELD_PIXELS];
+__SECTION_AXI_SRAM static uint8_t s_field_norm_u8[APP_DISPLAY_FIELD_PIXELS];
+__SECTION_D2_SRAM static uint16_t s_blit_buf[APP_DISPLAY_MAX_LINE_PIXELS * APP_DISPLAY_BLIT_ROWS_MAX];
+
+static float s_blur_kernel[APP_DISPLAY_BLUR_KERNEL_LEN];
+static float s_fine_kernel[APP_DISPLAY_FINE_KERNEL_LEN * APP_DISPLAY_FINE_KERNEL_LEN];
+static uint16_t s_heat_lut[APP_DISPLAY_HEAT_LUT_SIZE];
+
+static App_Display_Mode_t s_mode = APP_DISPLAY_MODE_BALANCED;
+static App_Display_RuntimeCfg_t s_cfg = {
+    APP_DISPLAY_EMA_ATTACK,
+    APP_DISPLAY_EMA_DECAY,
+    APP_DISPLAY_DYNAMIC_DB_FLOOR,
+    APP_DISPLAY_FINE_GAIN,
+    APP_DISPLAY_DYNAMIC_GAMMA,
+    APP_DISPLAY_NOISE_GATE_RATIO,
+    APP_DISPLAY_NOISE_ADAPT_GAIN,
+    APP_DISPLAY_SMOOTH_PASSES,
+    APP_DISPLAY_FINE_FUSION_ENABLE,
+    APP_DISPLAY_DRAW_COARSE_GRID,
+    APP_DISPLAY_BILINEAR_SAMPLING,
+    APP_DISPLAY_TEXT_REFRESH_DIV,
+    APP_DISPLAY_BLIT_ROWS_MAX
+};
+
+static float s_clamp_f32(float v, float lo, float hi)
+{
+    if (v < lo)
+    {
+        return lo;
+    }
+    if (v > hi)
+    {
+        return hi;
+    }
+    return v;
+}
+
+static uint8_t s_clamp_u8(uint8_t v, uint8_t lo, uint8_t hi)
+{
+    if (v < lo)
+    {
+        return lo;
+    }
+    if (v > hi)
+    {
+        return hi;
+    }
+    return v;
+}
+
 static uint16_t s_clamp_u16(int32_t v, uint16_t lo, uint16_t hi)
 {
     if (v < (int32_t)lo)
@@ -74,14 +103,6 @@ static uint16_t s_clamp_u16(int32_t v, uint16_t lo, uint16_t hi)
     return (uint16_t)v;
 }
 
-/**
- * @brief   RGB888 转 RGB565
- * @param   r   红色分量 (0-255)
- * @param   g   绿色分量 (0-255)
- * @param   b   蓝色分量 (0-255)
- * @return  RGB565 颜色值
- * @note    RGB565 格式：RRRRR GGGGGG BBBBB (5-6-5 位)
- */
 static uint16_t s_rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
     return (uint16_t)(((uint16_t)(r & 0xF8u) << 8) |
@@ -89,79 +110,239 @@ static uint16_t s_rgb565(uint8_t r, uint8_t g, uint8_t b)
                       ((uint16_t)b >> 3));
 }
 
-/**
- * @brief   热力图配色函数
- * @param   t   归一化值 [0.0, 1.0]
- * @return  RGB565 颜色值
- * @details 配色方案：
- *          - [0.0, 0.33]: 蓝色 → 青色 (低能量)
- *          - [0.33, 0.67]: 青色 → 黄色 (中等能量)
- *          - [0.67, 1.0]: 黄色 → 红色 (高能量)
- */
-static uint32_t s_heat_color(float32_t t)
+static uint16_t s_heat_color(float t)
 {
-    float32_t x = t;
-    uint8_t r = 0u;
-    uint8_t g = 0u;
-    uint8_t b = 0u;
+    typedef struct
+    {
+        uint8_t r;
+        uint8_t g;
+        uint8_t b;
+    } rgb8_t;
 
-    if (x < 0.0f)
-    {
-        x = 0.0f;
-    }
-    if (x > 1.0f)
-    {
-        x = 1.0f;
-    }
+    static const rgb8_t k_stops[5] = {
+        {  7u,  10u,  15u},
+        { 19u,  28u,  38u},
+        { 33u,  58u,  66u},
+        {176u,  92u,  36u},
+        {255u,  34u,  20u}
+    };
 
-    if (x < 0.33333334f)
+    float x = s_clamp_f32(t, 0.0f, 1.0f) * 4.0f;
+    uint32_t seg = (uint32_t)x;
+    float k;
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+
+    if (seg >= 4u)
     {
-        float32_t k = x / 0.33333334f;
-        r = 0u;
-        g = (uint8_t)(255.0f * k);
-        b = (uint8_t)(128.0f + 127.0f * k);
-    }
-    else if (x < 0.6666667f)
-    {
-        float32_t k = (x - 0.33333334f) / 0.33333334f;
-        r = (uint8_t)(255.0f * k);
-        g = 255u;
-        b = (uint8_t)(255.0f * (1.0f - k));
-    }
-    else
-    {
-        float32_t k = (x - 0.6666667f) / 0.3333333f;
-        r = 255u;
-        g = (uint8_t)(255.0f * (1.0f - k));
-        b = 0u;
+        return s_rgb565(k_stops[4].r, k_stops[4].g, k_stops[4].b);
     }
 
+    k = x - (float)seg;
+    r = (uint8_t)((1.0f - k) * (float)k_stops[seg].r + k * (float)k_stops[seg + 1u].r);
+    g = (uint8_t)((1.0f - k) * (float)k_stops[seg].g + k * (float)k_stops[seg + 1u].g);
+    b = (uint8_t)((1.0f - k) * (float)k_stops[seg].b + k * (float)k_stops[seg + 1u].b);
     return s_rgb565(r, g, b);
 }
 
-/**
- * @brief   检查显示模块是否就绪
- * @return  1=就绪, 0=未就绪
- */
+static void s_build_heat_lut(void)
+{
+    uint32_t i;
+
+    for (i = 0u; i < APP_DISPLAY_HEAT_LUT_SIZE; i++)
+    {
+        s_heat_lut[i] = s_heat_color((float)i / 255.0f);
+    }
+}
+
+static void s_build_kernels(void)
+{
+    uint32_t i;
+    uint32_t j;
+    float sum = 0.0f;
+
+    if (s_kernel_ready != 0u)
+    {
+        return;
+    }
+
+    for (i = 0u; i < APP_DISPLAY_BLUR_KERNEL_LEN; i++)
+    {
+        int32_t dx = (int32_t)i - (int32_t)APP_DISPLAY_SMOOTH_RADIUS;
+        float w = expf(-((float)(dx * dx)) / (2.0f * APP_DISPLAY_SMOOTH_SIGMA * APP_DISPLAY_SMOOTH_SIGMA));
+        s_blur_kernel[i] = w;
+        sum += w;
+    }
+    if (sum > 0.0f)
+    {
+        for (i = 0u; i < APP_DISPLAY_BLUR_KERNEL_LEN; i++)
+        {
+            s_blur_kernel[i] /= sum;
+        }
+    }
+
+    sum = 0.0f;
+    for (i = 0u; i < APP_DISPLAY_FINE_KERNEL_LEN; i++)
+    {
+        for (j = 0u; j < APP_DISPLAY_FINE_KERNEL_LEN; j++)
+        {
+            int32_t dx = (int32_t)i - (int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS;
+            int32_t dy = (int32_t)j - (int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS;
+            float d2 = (float)(dx * dx + dy * dy);
+            float w = expf(-d2 / (2.0f * APP_DISPLAY_FINE_KERNEL_SIGMA * APP_DISPLAY_FINE_KERNEL_SIGMA));
+            s_fine_kernel[i * APP_DISPLAY_FINE_KERNEL_LEN + j] = w;
+            sum += w;
+        }
+    }
+    if (sum > 0.0f)
+    {
+        for (i = 0u; i < APP_DISPLAY_FINE_KERNEL_LEN * APP_DISPLAY_FINE_KERNEL_LEN; i++)
+        {
+            s_fine_kernel[i] /= sum;
+        }
+    }
+
+    s_kernel_ready = 1u;
+}
+
+const char *App_Display_ModeName(App_Display_Mode_t mode)
+{
+    switch (mode)
+    {
+        case APP_DISPLAY_MODE_FAST:
+            return "FAST";
+        case APP_DISPLAY_MODE_CLEAN:
+            return "CLEAN";
+        case APP_DISPLAY_MODE_BALANCED:
+        default:
+            return "BAL";
+    }
+}
+
+static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg_t *cfg)
+{
+    if (cfg == NULL)
+    {
+        return;
+    }
+
+    switch (mode)
+    {
+        case APP_DISPLAY_MODE_FAST:
+            cfg->ema_attack = 0.70f;
+            cfg->ema_decay = 0.15f;
+            cfg->db_floor = -34.0f;
+            cfg->fine_gain = 0.25f;
+            cfg->gamma = 1.00f;
+            cfg->noise_gate_ratio = 0.12f;
+            cfg->noise_adapt_gain = 1.50f;
+            cfg->smooth_passes = 0u;
+            cfg->fine_fusion_enable = 0u;
+            cfg->draw_coarse_grid = 0u;
+            cfg->bilinear_sampling = 0u;
+            cfg->text_refresh_div = 4u;
+            cfg->blit_rows = APP_DISPLAY_BLIT_ROWS_MAX;
+            break;
+
+        case APP_DISPLAY_MODE_CLEAN:
+            cfg->ema_attack = 0.58f;
+            cfg->ema_decay = 0.06f;
+            cfg->db_floor = -52.0f;
+            cfg->fine_gain = 0.50f;
+            cfg->gamma = 1.35f;
+            cfg->noise_gate_ratio = 0.10f;
+            cfg->noise_adapt_gain = 2.80f;
+            cfg->smooth_passes = 2u;
+            cfg->fine_fusion_enable = 1u;
+            cfg->draw_coarse_grid = 0u;
+            cfg->bilinear_sampling = 1u;
+            cfg->text_refresh_div = 2u;
+            cfg->blit_rows = 6u;
+            break;
+
+        case APP_DISPLAY_MODE_BALANCED:
+        default:
+            cfg->ema_attack = APP_DISPLAY_EMA_ATTACK;
+            cfg->ema_decay = APP_DISPLAY_EMA_DECAY;
+            cfg->db_floor = APP_DISPLAY_DYNAMIC_DB_FLOOR;
+            cfg->fine_gain = APP_DISPLAY_FINE_GAIN;
+            cfg->gamma = APP_DISPLAY_DYNAMIC_GAMMA;
+            cfg->noise_gate_ratio = APP_DISPLAY_NOISE_GATE_RATIO;
+            cfg->noise_adapt_gain = APP_DISPLAY_NOISE_ADAPT_GAIN;
+            cfg->smooth_passes = APP_DISPLAY_SMOOTH_PASSES;
+            cfg->fine_fusion_enable = APP_DISPLAY_FINE_FUSION_ENABLE;
+            cfg->draw_coarse_grid = APP_DISPLAY_DRAW_COARSE_GRID;
+            cfg->bilinear_sampling = APP_DISPLAY_BILINEAR_SAMPLING;
+            cfg->text_refresh_div = APP_DISPLAY_TEXT_REFRESH_DIV;
+            cfg->blit_rows = APP_DISPLAY_BLIT_ROWS_MAX;
+            break;
+    }
+}
+
+void App_Display_SetConfig(const App_Display_RuntimeCfg_t *cfg)
+{
+    if (cfg == NULL)
+    {
+        return;
+    }
+
+    s_cfg.ema_attack = s_clamp_f32(cfg->ema_attack, 0.01f, 1.0f);
+    s_cfg.ema_decay = s_clamp_f32(cfg->ema_decay, 0.01f, 1.0f);
+    s_cfg.db_floor = s_clamp_f32(cfg->db_floor, -80.0f, -6.0f);
+    s_cfg.fine_gain = s_clamp_f32(cfg->fine_gain, 0.0f, 3.0f);
+    s_cfg.gamma = s_clamp_f32(cfg->gamma, 0.5f, 2.5f);
+    s_cfg.noise_gate_ratio = s_clamp_f32(cfg->noise_gate_ratio, 0.0f, 0.6f);
+    s_cfg.noise_adapt_gain = s_clamp_f32(cfg->noise_adapt_gain, 0.0f, 6.0f);
+    s_cfg.smooth_passes = s_clamp_u8(cfg->smooth_passes, 0u, 3u);
+    s_cfg.fine_fusion_enable = (cfg->fine_fusion_enable != 0u) ? 1u : 0u;
+    s_cfg.draw_coarse_grid = (cfg->draw_coarse_grid != 0u) ? 1u : 0u;
+    s_cfg.bilinear_sampling = (cfg->bilinear_sampling != 0u) ? 1u : 0u;
+    s_cfg.text_refresh_div = s_clamp_u8(cfg->text_refresh_div, 1u, 20u);
+    s_cfg.blit_rows = s_clamp_u8(cfg->blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
+}
+
+void App_Display_GetConfig(App_Display_RuntimeCfg_t *cfg)
+{
+    if (cfg != NULL)
+    {
+        *cfg = s_cfg;
+    }
+}
+
+void App_Display_SetMode(App_Display_Mode_t mode)
+{
+    App_Display_RuntimeCfg_t mode_cfg;
+
+    if ((mode != APP_DISPLAY_MODE_FAST) &&
+        (mode != APP_DISPLAY_MODE_BALANCED) &&
+        (mode != APP_DISPLAY_MODE_CLEAN))
+    {
+        mode = APP_DISPLAY_MODE_BALANCED;
+    }
+
+    s_load_mode_defaults(mode, &mode_cfg);
+    s_mode = mode;
+    App_Display_SetConfig(&mode_cfg);
+}
+
+App_Display_Mode_t App_Display_GetMode(void)
+{
+    return s_mode;
+}
+
 uint8_t App_Display_IsReady(void)
 {
     return s_ready;
 }
 
-/**
- * @brief   初始化显示模块
- * @details 执行以下步骤：
- *          1. 初始化 LCD 硬件 (LTDC + 面板)
- *          2. 检测屏幕分辨率
- *          3. 计算热力图布局 (7×7 网格)
- *          4. 绘制边框和标题
- *          5. 设置就绪标志
- * @note    如果屏幕未检测到或分辨率过小，会跳过初始化
- */
 void App_Display_Init(void)
 {
     uint16_t draw_w;
     uint16_t draw_h;
+    uint16_t text_w;
+    uint16_t map_w;
+    uint16_t map_h;
     uint16_t map_size;
     static const char title[] = "Acoustic Imaging";
 
@@ -169,289 +350,677 @@ void App_Display_Init(void)
     g_display_init_error = 0u;
     s_ready = 0u;
 
+    s_build_kernels();
+    s_build_heat_lut();
+    s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
+    s_last_noise_floor = 0.0f;
+    s_last_text_refresh_frame = 0u;
+    App_Display_SetMode(APP_DISPLAY_MODE_FAST);
+
     g_display_init_stage = 2u;
     lcd_init();
 
     g_display_init_stage = 3u;
-#if APP_DISPLAY_DEBUG_LOG
-    (void)printf("Display probe: ID=0x%04X, lcd=%ux%u, panel=%lux%lu\r\n",
-                 lcddev.id,
-                 lcddev.width,
-                 lcddev.height,
-                 (unsigned long)lcdltdc.pwidth,
-                 (unsigned long)lcdltdc.pheight);
-#endif
-    g_display_init_stage = 4u;
-
-    if ((lcddev.width == 0u) || (lcddev.height == 0u))
-    {
-        g_display_init_error = 1u;
-        g_display_init_stage = 0xE001u;
-#if APP_DISPLAY_DEBUG_LOG
-        (void)printf("Display init skipped: invalid LCD geometry.\r\n");
-#endif
-        return;
-    }
-
     draw_w = lcddev.width;
     draw_h = lcddev.height;
 
-    if (draw_w <= (UI_MARGIN_PX * 3u + 40u))
+    if ((draw_w == 0u) || (draw_h == 0u))
     {
-        g_display_init_error = 2u;
-        g_display_init_stage = 0xE002u;
-#if APP_DISPLAY_DEBUG_LOG
-        (void)printf("Display init skipped: width too small (%u).\r\n", draw_w);
-#endif
+        g_display_init_error = 1u;
+        g_display_init_stage = 0xE001u;
         return;
     }
 
+    text_w = (draw_w > (APP_DISPLAY_TEXT_WIDTH_PX + APP_DISPLAY_MARGIN_PX * 3u))
+             ? APP_DISPLAY_TEXT_WIDTH_PX
+             : (draw_w / 3u);
+    map_w = (uint16_t)(draw_w - (APP_DISPLAY_MARGIN_PX * 3u + text_w));
+    map_h = (uint16_t)(draw_h - (APP_DISPLAY_MARGIN_PX * 2u));
+    map_size = (map_w < map_h) ? map_w : map_h;
+    if (map_size > APP_DISPLAY_MAX_LINE_PIXELS)
     {
-        uint16_t text_w = (draw_w > (UI_TEXT_WIDTH_PX + UI_MARGIN_PX * 3u)) ? UI_TEXT_WIDTH_PX : (draw_w / 3u);
-        uint16_t map_w = (uint16_t)(draw_w - (UI_MARGIN_PX * 3u + text_w));
-        uint16_t map_h = (uint16_t)(draw_h - (UI_MARGIN_PX * 2u));
-        map_size = (map_w < map_h) ? map_w : map_h;
-        if (map_size < COARSE_GRID_SIZE)
-        {
-            map_size = COARSE_GRID_SIZE;
-        }
-        s_cell_w = (uint16_t)(map_size / COARSE_GRID_SIZE);
-        s_cell_h = (uint16_t)(map_size / COARSE_GRID_SIZE);
-        if (s_cell_w == 0u)
-        {
-            s_cell_w = 1u;
-        }
-        if (s_cell_h == 0u)
-        {
-            s_cell_h = 1u;
-        }
-
-        s_map_x0 = UI_MARGIN_PX;
-        s_map_y0 = (uint16_t)((draw_h - s_cell_h * COARSE_GRID_SIZE) / 2u);
-        s_map_x1 = (uint16_t)(s_map_x0 + s_cell_w * COARSE_GRID_SIZE - 1u);
-        s_map_y1 = (uint16_t)(s_map_y0 + s_cell_h * COARSE_GRID_SIZE - 1u);
-        s_text_x = (uint16_t)(s_map_x1 + UI_MARGIN_PX);
+        map_size = APP_DISPLAY_MAX_LINE_PIXELS;
+    }
+    if (map_size < 32u)
+    {
+        g_display_init_error = 2u;
+        g_display_init_stage = 0xE002u;
+        return;
     }
 
+    s_map_x0 = APP_DISPLAY_MARGIN_PX;
+    s_map_y0 = (uint16_t)((draw_h - map_size) / 2u);
+    s_map_x1 = (uint16_t)(s_map_x0 + map_size - 1u);
+    s_map_y1 = (uint16_t)(s_map_y0 + map_size - 1u);
+    s_text_x = (uint16_t)(s_map_x1 + APP_DISPLAY_MARGIN_PX);
+
     lcd_clear(BLACK);
-    lcd_draw_rectangle((uint16_t)(s_map_x0 - 1u), (uint16_t)(s_map_y0 - 1u), (uint16_t)(s_map_x1 + 1u), (uint16_t)(s_map_y1 + 1u), WHITE);
-    lcd_show_string(s_text_x, UI_MARGIN_PX, (uint16_t)(draw_w - s_text_x - UI_MARGIN_PX), 24, 16, title, CYAN);
+    lcd_draw_rectangle((uint16_t)(s_map_x0 - 1u),
+                       (uint16_t)(s_map_y0 - 1u),
+                       (uint16_t)(s_map_x1 + 1u),
+                       (uint16_t)(s_map_y1 + 1u),
+                       WHITE);
+    lcd_show_string(s_text_x,
+                    APP_DISPLAY_MARGIN_PX,
+                    (uint16_t)(draw_w - s_text_x - APP_DISPLAY_MARGIN_PX),
+                    24,
+                    16,
+                    (char *)title,
+                    CYAN);
 
     s_ready = 1u;
     g_display_init_stage = 0x8000u;
 }
 
-/**
- * @brief   渲染声学相机 UI
- * @param   pos           SRP 定位结果 (角度 + 能量)
- * @param   coarse_power  粗搜索功率图 (7×7 = 49 点)
- * @param   frame_seq     帧序号 (用于心跳指示)
- * @details 渲染内容：
- *          1. 7×7 热力图 (动态范围 -60dB ~ 0dB)
- *          2. 十字准星 (精细定位结果)
- *          3. 峰值矩形框 (粗搜索最大值位置)
- *          4. 文本信息 (角度、能量、帧号、诊断)
- *          5. 心跳指示 (左上角闪烁块)
- * @note    如果无有效能量，显示棋盘测试图案
- */
-void App_Display_Render(const Sound_Pos_t *pos, const float32_t *coarse_power, uint32_t frame_seq)
+static float s_power_mag(float v)
 {
-    float32_t peak_mag = 0.0f;
-    uint8_t has_dynamic = 0u;
-    uint32_t max_idx = 0u;
-    uint16_t gx;
-    uint16_t gy;
-    char line[64];
+    if (!isfinite(v) || (v <= 0.0f))
+    {
+        return 0.0f;
+    }
+    return v;
+}
 
-    if ((s_ready == 0u) || (pos == NULL) || (coarse_power == NULL))
+static void s_apply_output_remap(float *x_angle, float *y_angle)
+{
+#if (SRP_OUTPUT_SWAP_XY != 0u)
+    {
+        float t = *x_angle;
+        *x_angle = *y_angle;
+        *y_angle = t;
+    }
+#endif
+#if (SRP_OUTPUT_INVERT_X != 0u)
+    *x_angle = -*x_angle;
+#endif
+#if (SRP_OUTPUT_INVERT_Y != 0u)
+    *y_angle = -*y_angle;
+#endif
+}
+
+static void s_inverse_output_remap(float *x_angle, float *y_angle)
+{
+#if (SRP_OUTPUT_INVERT_Y != 0u)
+    *y_angle = -*y_angle;
+#endif
+#if (SRP_OUTPUT_INVERT_X != 0u)
+    *x_angle = -*x_angle;
+#endif
+#if (SRP_OUTPUT_SWAP_XY != 0u)
+    {
+        float t = *x_angle;
+        *x_angle = *y_angle;
+        *y_angle = t;
+    }
+#endif
+}
+
+static void s_resample_coarse_to_field(const SRP_VisFrame_t *vis_frame)
+{
+    uint32_t y;
+    uint32_t x;
+    float span = (float)(COARSE_ANGLE_MAX_DEG - COARSE_ANGLE_MIN_DEG);
+    float inv_span;
+
+    if (span <= 1.0e-6f)
+    {
+        memset(s_field_a, 0, sizeof(s_field_a));
+        return;
+    }
+    inv_span = 1.0f / span;
+
+    for (y = 0u; y < APP_DISPLAY_FIELD_H; y++)
+    {
+        float phi_disp = (float)COARSE_ANGLE_MAX_DEG
+                       - ((float)y * span / (float)(APP_DISPLAY_FIELD_H - 1u));
+        for (x = 0u; x < APP_DISPLAY_FIELD_W; x++)
+        {
+            float theta_disp = (float)COARSE_ANGLE_MIN_DEG
+                             + ((float)x * span / (float)(APP_DISPLAY_FIELD_W - 1u));
+            float theta_raw = theta_disp;
+            float phi_raw = phi_disp;
+            float tx;
+            float py;
+            uint32_t t0;
+            uint32_t t1;
+            uint32_t p0;
+            uint32_t p1;
+            float wt;
+            float wp;
+            uint32_t idx00;
+            uint32_t idx01;
+            uint32_t idx10;
+            uint32_t idx11;
+            float v00;
+            float v01;
+            float v10;
+            float v11;
+            float vt0;
+            float vt1;
+
+            s_inverse_output_remap(&theta_raw, &phi_raw);
+
+            tx = (theta_raw - (float)COARSE_ANGLE_MIN_DEG) * inv_span * (float)(COARSE_GRID_SIZE - 1u);
+            py = (phi_raw - (float)COARSE_ANGLE_MIN_DEG) * inv_span * (float)(COARSE_GRID_SIZE - 1u);
+            tx = s_clamp_f32(tx, 0.0f, (float)(COARSE_GRID_SIZE - 1u));
+            py = s_clamp_f32(py, 0.0f, (float)(COARSE_GRID_SIZE - 1u));
+
+            t0 = (uint32_t)tx;
+            p0 = (uint32_t)py;
+            t1 = (t0 + 1u < COARSE_GRID_SIZE) ? (t0 + 1u) : t0;
+            p1 = (p0 + 1u < COARSE_GRID_SIZE) ? (p0 + 1u) : p0;
+            wt = tx - (float)t0;
+            wp = py - (float)p0;
+
+            idx00 = t0 * COARSE_GRID_SIZE + p0;
+            idx01 = t1 * COARSE_GRID_SIZE + p0;
+            idx10 = t0 * COARSE_GRID_SIZE + p1;
+            idx11 = t1 * COARSE_GRID_SIZE + p1;
+
+            v00 = s_power_mag(vis_frame->power[idx00]);
+            v01 = s_power_mag(vis_frame->power[idx01]);
+            v10 = s_power_mag(vis_frame->power[idx10]);
+            v11 = s_power_mag(vis_frame->power[idx11]);
+            vt0 = v00 * (1.0f - wt) + v01 * wt;
+            vt1 = v10 * (1.0f - wt) + v11 * wt;
+            s_field_a[y * APP_DISPLAY_FIELD_W + x] = vt0 * (1.0f - wp) + vt1 * wp;
+        }
+    }
+}
+
+static void s_apply_fine_fusion(const SRP_VisFrame_t *vis_frame)
+{
+#if (APP_DISPLAY_FINE_FUSION_ENABLE != 0u)
+    uint32_t i;
+    float peak = 0.0f;
+    float theta_span = (float)(COARSE_ANGLE_MAX_DEG - COARSE_ANGLE_MIN_DEG);
+    float min_keep;
+
+    if ((s_cfg.fine_fusion_enable == 0u) || (theta_span <= 1.0e-6f))
     {
         return;
     }
 
-    for (uint32_t i = 0u; i < COARSE_TOTAL; i++)
+    for (i = 0u; i < SRP_GRID_TOTAL; i++)
     {
-        float32_t v = coarse_power[i];
-        float32_t mag;
+        float mag = s_power_mag(vis_frame->power[i]);
+        if (mag > peak)
+        {
+            peak = mag;
+        }
+    }
+    if (peak <= APP_DISPLAY_DYNAMIC_MIN_PEAK)
+    {
+        return;
+    }
+    min_keep = peak * APP_DISPLAY_FINE_MIN_RATIO;
 
-        if (!isfinite(v))
+    for (i = COARSE_TOTAL; i < SRP_GRID_TOTAL; i++)
+    {
+        float mag = s_power_mag(vis_frame->power[i]);
+        float theta;
+        float phi;
+        float u;
+        float v;
+        int32_t cx;
+        int32_t cy;
+        int32_t ky;
+        int32_t kx;
+
+        if (mag < min_keep)
+        {
+            continue;
+        }
+        theta = vis_frame->theta_deg[i];
+        phi = vis_frame->phi_deg[i];
+        s_apply_output_remap(&theta, &phi);
+        u = (theta - (float)COARSE_ANGLE_MIN_DEG) / theta_span;
+        v = ((float)COARSE_ANGLE_MAX_DEG - phi) / theta_span;
+        if ((u < 0.0f) || (u > 1.0f) || (v < 0.0f) || (v > 1.0f))
+        {
+            continue;
+        }
+        cx = (int32_t)(u * (float)(APP_DISPLAY_FIELD_W - 1u) + 0.5f);
+        cy = (int32_t)(v * (float)(APP_DISPLAY_FIELD_H - 1u) + 0.5f);
+
+        for (ky = -(int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS; ky <= (int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS; ky++)
+        {
+            int32_t fy = cy + ky;
+            uint32_t ky_idx;
+            if ((fy < 0) || (fy >= (int32_t)APP_DISPLAY_FIELD_H))
+            {
+                continue;
+            }
+            ky_idx = (uint32_t)(ky + (int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS);
+            for (kx = -(int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS; kx <= (int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS; kx++)
+            {
+                int32_t fx = cx + kx;
+                uint32_t kx_idx;
+                float w;
+                uint32_t fidx;
+                if ((fx < 0) || (fx >= (int32_t)APP_DISPLAY_FIELD_W))
+                {
+                    continue;
+                }
+                kx_idx = (uint32_t)(kx + (int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS);
+                w = s_fine_kernel[ky_idx * APP_DISPLAY_FINE_KERNEL_LEN + kx_idx];
+                fidx = (uint32_t)fy * APP_DISPLAY_FIELD_W + (uint32_t)fx;
+                s_field_a[fidx] += s_cfg.fine_gain * mag * w;
+            }
+        }
+    }
+#else
+    (void)vis_frame;
+#endif
+}
+
+static void s_apply_blur_once(void)
+{
+#if (APP_DISPLAY_SMOOTH_ENABLE != 0u)
+    uint32_t y;
+    uint32_t x;
+    int32_t k;
+
+    for (y = 0u; y < APP_DISPLAY_FIELD_H; y++)
+    {
+        for (x = 0u; x < APP_DISPLAY_FIELD_W; x++)
+        {
+            float acc = 0.0f;
+            for (k = -(int32_t)APP_DISPLAY_SMOOTH_RADIUS; k <= (int32_t)APP_DISPLAY_SMOOTH_RADIUS; k++)
+            {
+                int32_t xi = (int32_t)x + k;
+                uint32_t xi_c = (uint32_t)((xi < 0) ? 0 : ((xi >= (int32_t)APP_DISPLAY_FIELD_W) ? ((int32_t)APP_DISPLAY_FIELD_W - 1) : xi));
+                uint32_t wk = (uint32_t)(k + (int32_t)APP_DISPLAY_SMOOTH_RADIUS);
+                acc += s_field_a[y * APP_DISPLAY_FIELD_W + xi_c] * s_blur_kernel[wk];
+            }
+            s_field_b[y * APP_DISPLAY_FIELD_W + x] = acc;
+        }
+    }
+
+    for (y = 0u; y < APP_DISPLAY_FIELD_H; y++)
+    {
+        for (x = 0u; x < APP_DISPLAY_FIELD_W; x++)
+        {
+            float acc = 0.0f;
+            for (k = -(int32_t)APP_DISPLAY_SMOOTH_RADIUS; k <= (int32_t)APP_DISPLAY_SMOOTH_RADIUS; k++)
+            {
+                int32_t yi = (int32_t)y + k;
+                uint32_t yi_c = (uint32_t)((yi < 0) ? 0 : ((yi >= (int32_t)APP_DISPLAY_FIELD_H) ? ((int32_t)APP_DISPLAY_FIELD_H - 1) : yi));
+                uint32_t wk = (uint32_t)(k + (int32_t)APP_DISPLAY_SMOOTH_RADIUS);
+                acc += s_field_b[yi_c * APP_DISPLAY_FIELD_W + x] * s_blur_kernel[wk];
+            }
+            s_field_a[y * APP_DISPLAY_FIELD_W + x] = acc;
+        }
+    }
+#endif
+}
+
+static float s_prepare_field(const SRP_VisFrame_t *vis_frame)
+{
+    uint32_t i;
+    float peak = 0.0f;
+
+    s_resample_coarse_to_field(vis_frame);
+    s_apply_fine_fusion(vis_frame);
+#if (APP_DISPLAY_SMOOTH_ENABLE != 0u)
+    {
+        uint8_t p;
+        for (p = 0u; p < s_cfg.smooth_passes; p++)
+        {
+            s_apply_blur_once();
+        }
+    }
+#endif
+    for (i = 0u; i < APP_DISPLAY_FIELD_PIXELS; i++)
+    {
+        float v = s_field_a[i];
+        if (!isfinite(v) || (v < 0.0f))
         {
             v = 0.0f;
+            s_field_a[i] = 0.0f;
         }
-        mag = fabsf(v);
-
-        if (mag > peak_mag)
+        if (v > peak)
         {
-            peak_mag = mag;
-            max_idx = i;
+            peak = v;
         }
     }
-    has_dynamic = (peak_mag > UI_DYNAMIC_MAG_MIN) ? 1u : 0u;
+    return peak;
+}
 
-    for (gy = 0u; gy < COARSE_GRID_SIZE; gy++)
+static void s_update_norm_field(float field_peak, uint32_t frame_seq)
+{
+    uint32_t i;
+    float ref;
+    float floor_linear;
+    float bg_sum = 0.0f;
+    uint32_t bg_cnt = 0u;
+
+    if ((field_peak <= APP_DISPLAY_DYNAMIC_MIN_PEAK) && (APP_DISPLAY_IDLE_TEST_PATTERN != 0u))
     {
-        for (gx = 0u; gx < COARSE_GRID_SIZE; gx++)
+        for (i = 0u; i < APP_DISPLAY_FIELD_H; i++)
         {
-            uint32_t idx = (uint32_t)gy * COARSE_GRID_SIZE + gx;
-            float32_t v = coarse_power[idx];
-            float32_t mag;
-            float32_t t;
-            uint16_t x0;
-            uint16_t y0;
-            uint16_t x1;
-            uint16_t y1;
-
-            if (!isfinite(v))
+            uint32_t x;
+            for (x = 0u; x < APP_DISPLAY_FIELD_W; x++)
             {
-                v = 0.0f;
-            }
-            mag = fabsf(v);
-
-            if (has_dynamic != 0u)
-            {
-                float32_t ratio = mag / peak_mag;   /* [0,1] */
-                if (ratio < 1.0e-6f)
-                {
-                    ratio = 1.0e-6f;               /* clamp to -60dB */
-                }
-                t = (log10f(ratio) + 6.0f) / 6.0f; /* -60dB~0dB -> 0~1 */
-            }
-            else
-            {
-#if APP_DISPLAY_IDLE_TEST_PATTERN
-                /* 无有效能量动态时，显示棋盘图案用于确认屏幕持续刷新。 */
                 uint32_t phase = (frame_seq >> 2) & 1u;
-                t = (((gx + gy + phase) & 1u) != 0u) ? 0.55f : 0.25f;
-#else
-                t = 0.0f;
-#endif
+                s_field_norm_u8[i * APP_DISPLAY_FIELD_W + x] = ((((x >> 3) + (i >> 3) + phase) & 1u) != 0u) ? 48u : 12u;
             }
+        }
+        s_last_noise_floor = 0.0f;
+        return;
+    }
 
-            x0 = (uint16_t)(s_map_x0 + gx * s_cell_w);
-            y0 = (uint16_t)(s_map_y0 + gy * s_cell_h);
-            x1 = (uint16_t)(x0 + s_cell_w - 1u);
-            y1 = (uint16_t)(y0 + s_cell_h - 1u);
+    if (field_peak <= APP_DISPLAY_DYNAMIC_MIN_PEAK)
+    {
+        memset(s_field_norm_u8, 0, sizeof(s_field_norm_u8));
+        s_last_noise_floor = 0.0f;
+        return;
+    }
 
-            lcd_fill(x0, y0, x1, y1, s_heat_color(t));
+    ref = (s_peak_ema < APP_DISPLAY_DYNAMIC_MIN_PEAK) ? APP_DISPLAY_DYNAMIC_MIN_PEAK : s_peak_ema;
+    for (i = 0u; i < APP_DISPLAY_FIELD_PIXELS; i++)
+    {
+        if (s_field_a[i] < (field_peak * 0.5f))
+        {
+            bg_sum += s_field_a[i];
+            bg_cnt++;
         }
     }
-#if APP_DISPLAY_DIAG_OVERLAY
-    /* 左上角心跳块: 用于肉眼确认 UI 正在持续刷新。 */
+    floor_linear = field_peak * s_cfg.noise_gate_ratio;
+    if (bg_cnt > 0u)
     {
-        uint16_t hb_w = (s_cell_w > 12u) ? 12u : s_cell_w;
-        uint16_t hb_h = (s_cell_h > 12u) ? 12u : s_cell_h;
-        uint16_t hb_x1 = (uint16_t)(s_map_x0 + hb_w - 1u);
-        uint16_t hb_y1 = (uint16_t)(s_map_y0 + hb_h - 1u);
-        uint32_t hb_color = (((frame_seq >> 1) & 1u) != 0u) ? GREEN : RED;
-        lcd_fill(s_map_x0, s_map_y0, hb_x1, hb_y1, hb_color);
+        float bg_floor = (bg_sum / (float)bg_cnt) * s_cfg.noise_adapt_gain;
+        if (bg_floor > floor_linear)
+        {
+            floor_linear = bg_floor;
+        }
     }
+    floor_linear = s_clamp_f32(floor_linear, 0.0f, field_peak);
+    s_last_noise_floor = floor_linear;
+
+    for (i = 0u; i < APP_DISPLAY_FIELD_PIXELS; i++)
+    {
+        float v = s_field_a[i] - floor_linear;
+        float ratio;
+        float db;
+        float t;
+        uint32_t q;
+        if (v <= 0.0f)
+        {
+            s_field_norm_u8[i] = 0u;
+            continue;
+        }
+        ratio = s_clamp_f32(v / ref, 1.0e-9f, 1.0f);
+        db = 20.0f * log10f(ratio);
+        if (db <= s_cfg.db_floor)
+        {
+            s_field_norm_u8[i] = 0u;
+            continue;
+        }
+        if (db >= 0.0f)
+        {
+            s_field_norm_u8[i] = 255u;
+            continue;
+        }
+        t = s_clamp_f32((db - s_cfg.db_floor) / (-s_cfg.db_floor), 0.0f, 1.0f);
+        if (fabsf(s_cfg.gamma - 1.0f) > 0.02f)
+        {
+            t = powf(t, s_cfg.gamma);
+        }
+        q = (uint32_t)(t * 255.0f + 0.5f);
+        s_field_norm_u8[i] = (q > 255u) ? 255u : (uint8_t)q;
+    }
+}
+
+static uint8_t s_sample_norm_nearest(float fx, float fy)
+{
+    uint32_t x;
+    uint32_t y;
+    fx = s_clamp_f32(fx, 0.0f, (float)(APP_DISPLAY_FIELD_W - 1u));
+    fy = s_clamp_f32(fy, 0.0f, (float)(APP_DISPLAY_FIELD_H - 1u));
+    x = (uint32_t)(fx + 0.5f);
+    y = (uint32_t)(fy + 0.5f);
+    if (x >= APP_DISPLAY_FIELD_W)
+    {
+        x = APP_DISPLAY_FIELD_W - 1u;
+    }
+    if (y >= APP_DISPLAY_FIELD_H)
+    {
+        y = APP_DISPLAY_FIELD_H - 1u;
+    }
+    return s_field_norm_u8[y * APP_DISPLAY_FIELD_W + x];
+}
+
+static uint8_t s_sample_norm_bilinear(float fx, float fy)
+{
+    uint32_t x0;
+    uint32_t y0;
+    uint32_t x1;
+    uint32_t y1;
+    float wx;
+    float wy;
+    float v00;
+    float v01;
+    float v10;
+    float v11;
+    float vx0;
+    float vx1;
+    uint32_t q;
+
+    fx = s_clamp_f32(fx, 0.0f, (float)(APP_DISPLAY_FIELD_W - 1u));
+    fy = s_clamp_f32(fy, 0.0f, (float)(APP_DISPLAY_FIELD_H - 1u));
+    x0 = (uint32_t)fx;
+    y0 = (uint32_t)fy;
+    x1 = (x0 + 1u < APP_DISPLAY_FIELD_W) ? (x0 + 1u) : x0;
+    y1 = (y0 + 1u < APP_DISPLAY_FIELD_H) ? (y0 + 1u) : y0;
+    wx = fx - (float)x0;
+    wy = fy - (float)y0;
+
+    v00 = (float)s_field_norm_u8[y0 * APP_DISPLAY_FIELD_W + x0];
+    v01 = (float)s_field_norm_u8[y0 * APP_DISPLAY_FIELD_W + x1];
+    v10 = (float)s_field_norm_u8[y1 * APP_DISPLAY_FIELD_W + x0];
+    v11 = (float)s_field_norm_u8[y1 * APP_DISPLAY_FIELD_W + x1];
+    vx0 = v00 * (1.0f - wx) + v01 * wx;
+    vx1 = v10 * (1.0f - wx) + v11 * wx;
+    q = (uint32_t)(vx0 * (1.0f - wy) + vx1 * wy + 0.5f);
+    return (q > 255u) ? 255u : (uint8_t)q;
+}
+
+static uint16_t s_angle_to_x(float angle)
+{
+    float ratio;
+    uint16_t width = (uint16_t)(s_map_x1 - s_map_x0 + 1u);
+    float span = (float)(COARSE_ANGLE_MAX_DEG - COARSE_ANGLE_MIN_DEG);
+    int32_t x;
+
+    if (span < 1.0e-6f)
+    {
+        return s_map_x0;
+    }
+    ratio = s_clamp_f32((angle - (float)COARSE_ANGLE_MIN_DEG) / span, 0.0f, 1.0f);
+    x = (int32_t)(s_map_x0 + ratio * (float)(width - 1u));
+    return s_clamp_u16(x, s_map_x0, s_map_x1);
+}
+
+static uint16_t s_angle_to_y(float angle)
+{
+    float ratio;
+    uint16_t height = (uint16_t)(s_map_y1 - s_map_y0 + 1u);
+    float span = (float)(COARSE_ANGLE_MAX_DEG - COARSE_ANGLE_MIN_DEG);
+    int32_t y;
+
+    if (span < 1.0e-6f)
+    {
+        return s_map_y0;
+    }
+    ratio = s_clamp_f32(((float)COARSE_ANGLE_MAX_DEG - angle) / span, 0.0f, 1.0f);
+    y = (int32_t)(s_map_y0 + ratio * (float)(height - 1u));
+    return s_clamp_u16(y, s_map_y0, s_map_y1);
+}
+
+static void s_render_field_rows(void)
+{
+    uint16_t map_w = (uint16_t)(s_map_x1 - s_map_x0 + 1u);
+    uint16_t map_h = (uint16_t)(s_map_y1 - s_map_y0 + 1u);
+    uint8_t blit_rows = s_clamp_u8(s_cfg.blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
+    uint16_t y_blk;
+
+    if ((map_w == 0u) || (map_h == 0u) || (map_w > APP_DISPLAY_MAX_LINE_PIXELS))
+    {
+        return;
+    }
+
+    for (y_blk = 0u; y_blk < map_h; y_blk = (uint16_t)(y_blk + blit_rows))
+    {
+        uint16_t rows = map_h - y_blk;
+        uint16_t row;
+
+        if (rows > blit_rows)
+        {
+            rows = blit_rows;
+        }
+
+        for (row = 0u; row < rows; row++)
+        {
+            uint16_t y = (uint16_t)(y_blk + row);
+            float fy = (map_h > 1u) ? ((float)y * (float)(APP_DISPLAY_FIELD_H - 1u) / (float)(map_h - 1u)) : 0.0f;
+            uint16_t x;
+            uint16_t *dst = &s_blit_buf[(uint32_t)row * (uint32_t)map_w];
+
+            for (x = 0u; x < map_w; x++)
+            {
+                float fx = (map_w > 1u) ? ((float)x * (float)(APP_DISPLAY_FIELD_W - 1u) / (float)(map_w - 1u)) : 0.0f;
+                uint8_t q = (s_cfg.bilinear_sampling != 0u) ? s_sample_norm_bilinear(fx, fy) : s_sample_norm_nearest(fx, fy);
+                dst[x] = s_heat_lut[q];
+            }
+        }
+
+        lcd_color_fill(s_map_x0,
+                       (uint16_t)(s_map_y0 + y_blk),
+                       s_map_x1,
+                       (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                       s_blit_buf);
+    }
+}
+
+static void s_draw_overlay(const Sound_Pos_t *pos,
+                           uint32_t frame_seq,
+                           uint32_t peak_idx,
+                           float peak_theta,
+                           float peak_phi,
+                           float field_peak,
+                           uint8_t sai_dma_active)
+{
+    char line[80];
+
+    if (s_text_x >= (lcddev.width - APP_DISPLAY_MARGIN_PX))
+    {
+        return;
+    }
+
+    lcd_fill(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 20u), (uint16_t)(lcddev.width - APP_DISPLAY_MARGIN_PX), s_map_y1, BLACK);
+    (void)snprintf(line, sizeof(line), "X:%6.1f", (double)pos->x_angle);
+    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 24u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, YELLOW);
+    (void)snprintf(line, sizeof(line), "Y:%6.1f", (double)pos->y_angle);
+    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 42u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, YELLOW);
+    (void)snprintf(line, sizeof(line), "E:%0.3f", isfinite(pos->energy) ? (double)pos->energy : 0.0);
+    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 60u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, GREEN);
+    (void)snprintf(line, sizeof(line), "F:%lu Pk:%c", (unsigned long)frame_seq, (peak_idx < COARSE_TOTAL) ? 'C' : 'F');
+    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 78u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, CYAN);
+    (void)snprintf(line, sizeof(line), "Pk:(%0.1f,%0.1f)", (double)peak_theta, (double)peak_phi);
+    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 96u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, WHITE);
+    (void)snprintf(line, sizeof(line), "Mode:%s dB:%0.0f", App_Display_ModeName(s_mode), (double)s_cfg.db_floor);
+    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 114u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, CYAN);
+    (void)snprintf(line, sizeof(line), "Nf:%0.2e G:%0.2f", (double)s_last_noise_floor, (double)s_cfg.gamma);
+    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 132u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, YELLOW);
+#if (APP_DISPLAY_DIAG_OVERLAY != 0u)
+    (void)snprintf(line, sizeof(line), "PkE:%0.2e EMA:%0.2e", (double)field_peak, (double)s_peak_ema);
+    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 150u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, LIGHTGREEN);
+    (void)snprintf(line, sizeof(line), "D2D:%s TO:%lu SW:%lu", (LTDC_ENABLE_DMA2D != 0) ? "ON" : "SW", (unsigned long)g_ltdc_dma2d_timeout_count, (unsigned long)g_ltdc_dma2d_sw_fallback_count);
+    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 168u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, GREEN);
+    (void)snprintf(line, sizeof(line), "UI:%lu/%lu SAI:%s", (unsigned long)g_ui_render_count, (unsigned long)g_ui_queue_rx_count, (sai_dma_active != 0u) ? "ON" : "OFF");
+    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 186u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, LIGHTBLUE);
 #endif
+}
+
+void App_Display_Render(const Sound_Pos_t *pos,
+                        const SRP_VisFrame_t *vis_frame,
+                        uint32_t frame_seq,
+                        uint8_t sai_dma_active)
+{
+    float field_peak;
+    uint32_t peak_idx = 0u;
+    float peak_theta = 0.0f;
+    float peak_phi = 0.0f;
+    uint8_t refresh_text;
+
+    if ((s_ready == 0u) || (pos == NULL) || (vis_frame == NULL))
+    {
+        return;
+    }
+
+    field_peak = s_prepare_field(vis_frame);
+    if (field_peak > s_peak_ema)
+    {
+        s_peak_ema += s_cfg.ema_attack * (field_peak - s_peak_ema);
+    }
+    else
+    {
+        s_peak_ema += s_cfg.ema_decay * (field_peak - s_peak_ema);
+    }
+    if (s_peak_ema < APP_DISPLAY_EMA_MIN_PEAK)
+    {
+        s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
+    }
+
+    s_update_norm_field(field_peak, frame_seq);
+    s_render_field_rows();
+
+    if (vis_frame->peak_idx < SRP_GRID_TOTAL)
+    {
+        peak_idx = vis_frame->peak_idx;
+        peak_theta = vis_frame->theta_deg[peak_idx];
+        peak_phi = vis_frame->phi_deg[peak_idx];
+    }
+    s_apply_output_remap(&peak_theta, &peak_phi);
 
     {
-        uint16_t cx;
-        uint16_t cy;
-        uint16_t c_half;
-        uint16_t x_l;
-        uint16_t x_r;
-        uint16_t y_t;
-        uint16_t y_b;
-        float32_t ax = pos->x_angle;
-        float32_t ay = pos->y_angle;
-        float32_t ratio_x;
-        float32_t ratio_y;
-
-        if (!isfinite(ax))
-        {
-            ax = 0.0f;
-        }
-        if (!isfinite(ay))
-        {
-            ay = 0.0f;
-        }
-
-        if (ax < UI_ANGLE_MIN_DEG)
-        {
-            ax = UI_ANGLE_MIN_DEG;
-        }
-        if (ax > UI_ANGLE_MAX_DEG)
-        {
-            ax = UI_ANGLE_MAX_DEG;
-        }
-        if (ay < UI_ANGLE_MIN_DEG)
-        {
-            ay = UI_ANGLE_MIN_DEG;
-        }
-        if (ay > UI_ANGLE_MAX_DEG)
-        {
-            ay = UI_ANGLE_MAX_DEG;
-        }
-
-        ratio_x = (ax - UI_ANGLE_MIN_DEG) / (UI_ANGLE_MAX_DEG - UI_ANGLE_MIN_DEG);
-        ratio_y = (UI_ANGLE_MAX_DEG - ay) / (UI_ANGLE_MAX_DEG - UI_ANGLE_MIN_DEG);
-
-        cx = (uint16_t)(s_map_x0 + ratio_x * (float32_t)(s_cell_w * COARSE_GRID_SIZE - 1u));
-        cy = (uint16_t)(s_map_y0 + ratio_y * (float32_t)(s_cell_h * COARSE_GRID_SIZE - 1u));
-
-        cx = s_clamp_u16(cx, s_map_x0, s_map_x1);
-        cy = s_clamp_u16(cy, s_map_y0, s_map_y1);
-
-        c_half = (uint16_t)(((s_cell_w < s_cell_h) ? s_cell_w : s_cell_h) / 2u);
-        if (c_half < 2u)
-        {
-            c_half = 2u;
-        }
-
-        x_l = (cx > (uint16_t)(s_map_x0 + c_half)) ? (uint16_t)(cx - c_half) : s_map_x0;
-        x_r = ((uint32_t)cx + c_half < s_map_x1) ? (uint16_t)(cx + c_half) : s_map_x1;
-        y_t = (cy > (uint16_t)(s_map_y0 + c_half)) ? (uint16_t)(cy - c_half) : s_map_y0;
-        y_b = ((uint32_t)cy + c_half < s_map_y1) ? (uint16_t)(cy + c_half) : s_map_y1;
-
-        lcd_draw_line(x_l, cy, x_r, cy, WHITE);
-        lcd_draw_line(cx, y_t, cx, y_b, WHITE);
+        float ax = s_clamp_f32(pos->x_angle, (float)COARSE_ANGLE_MIN_DEG, (float)COARSE_ANGLE_MAX_DEG);
+        float ay = s_clamp_f32(pos->y_angle, (float)COARSE_ANGLE_MIN_DEG, (float)COARSE_ANGLE_MAX_DEG);
+        uint16_t cx = s_angle_to_x(ax);
+        uint16_t cy = s_angle_to_y(ay);
+        uint16_t half = APP_DISPLAY_CROSSHAIR_HALF_PX;
+        uint16_t xl = (cx > (uint16_t)(s_map_x0 + half)) ? (uint16_t)(cx - half) : s_map_x0;
+        uint16_t xr = ((uint32_t)cx + half < s_map_x1) ? (uint16_t)(cx + half) : s_map_x1;
+        uint16_t yt = (cy > (uint16_t)(s_map_y0 + half)) ? (uint16_t)(cy - half) : s_map_y0;
+        uint16_t yb = ((uint32_t)cy + half < s_map_y1) ? (uint16_t)(cy + half) : s_map_y1;
+        lcd_draw_line(xl, cy, xr, cy, WHITE);
+        lcd_draw_line(cx, yt, cx, yb, WHITE);
     }
 
     {
-        uint16_t peak_col = (uint16_t)(max_idx % COARSE_GRID_SIZE);
-        uint16_t peak_row = (uint16_t)(max_idx / COARSE_GRID_SIZE);
-        uint16_t x0 = (uint16_t)(s_map_x0 + peak_col * s_cell_w);
-        uint16_t y0 = (uint16_t)(s_map_y0 + peak_row * s_cell_h);
-        uint16_t x1 = (uint16_t)(x0 + s_cell_w - 1u);
-        uint16_t y1 = (uint16_t)(y0 + s_cell_h - 1u);
+        uint16_t px = s_angle_to_x(peak_theta);
+        uint16_t py = s_angle_to_y(peak_phi);
+        uint16_t r = APP_DISPLAY_PEAK_MARKER_RADIUS_PX;
+        uint16_t x0 = (px > (uint16_t)(s_map_x0 + r)) ? (uint16_t)(px - r) : s_map_x0;
+        uint16_t y0 = (py > (uint16_t)(s_map_y0 + r)) ? (uint16_t)(py - r) : s_map_y0;
+        uint16_t x1 = ((uint32_t)px + r < s_map_x1) ? (uint16_t)(px + r) : s_map_x1;
+        uint16_t y1 = ((uint32_t)py + r < s_map_y1) ? (uint16_t)(py + r) : s_map_y1;
         lcd_draw_rectangle(x0, y0, x1, y1, WHITE);
     }
 
-    lcd_fill(s_text_x, (uint16_t)(UI_MARGIN_PX + 20u), (uint16_t)(lcddev.width - UI_MARGIN_PX), s_map_y1, BLACK);
-
-    (void)snprintf(line, sizeof(line), "X:%6.1f deg", (double)pos->x_angle);
-    lcd_show_string(s_text_x, (uint16_t)(UI_MARGIN_PX + 24u), (uint16_t)(lcddev.width - s_text_x - UI_MARGIN_PX), 16, 16, line, YELLOW);
-
-    (void)snprintf(line, sizeof(line), "Y:%6.1f deg", (double)pos->y_angle);
-    lcd_show_string(s_text_x, (uint16_t)(UI_MARGIN_PX + 42u), (uint16_t)(lcddev.width - s_text_x - UI_MARGIN_PX), 16, 16, line, YELLOW);
-
-    (void)snprintf(line, sizeof(line), "E:%0.3f", isfinite(pos->energy) ? (double)pos->energy : 0.0);
-    lcd_show_string(s_text_x, (uint16_t)(UI_MARGIN_PX + 60u), (uint16_t)(lcddev.width - s_text_x - UI_MARGIN_PX), 16, 16, line, GREEN);
-
-    (void)snprintf(line, sizeof(line), "F:%lu", (unsigned long)frame_seq);
-    lcd_show_string(s_text_x, (uint16_t)(UI_MARGIN_PX + 78u), (uint16_t)(lcddev.width - s_text_x - UI_MARGIN_PX), 16, 16, line, (((frame_seq >> 1) & 1u) != 0u) ? GREEN : CYAN);
-
-    (void)snprintf(line, sizeof(line), "Pk:(%0.1f,%0.1f)", (double)coarse_theta_deg[max_idx / COARSE_GRID_SIZE], (double)coarse_phi_deg[max_idx % COARSE_GRID_SIZE]);
-    lcd_show_string(s_text_x, (uint16_t)(UI_MARGIN_PX + 96u), (uint16_t)(lcddev.width - s_text_x - UI_MARGIN_PX), 16, 16, line, WHITE);
-
-#if APP_DISPLAY_DIAG_OVERLAY
-    (void)snprintf(line, sizeof(line), "UI:R%lu Q%lu T%lu",
-                   (unsigned long)g_ui_render_count,
-                   (unsigned long)g_ui_queue_rx_count,
-                   (unsigned long)g_ui_queue_timeout_count);
-    lcd_show_string(s_text_x, (uint16_t)(UI_MARGIN_PX + 114u), (uint16_t)(lcddev.width - s_text_x - UI_MARGIN_PX), 16, 16, line, CYAN);
-
-    (void)snprintf(line, sizeof(line), "SRP:C%0.2f Q%0.2f",
-                   (double)g_srp_last_contrast,
-                   (double)g_srp_last_quality);
-    lcd_show_string(s_text_x, (uint16_t)(UI_MARGIN_PX + 132u), (uint16_t)(lcddev.width - s_text_x - UI_MARGIN_PX), 16, 16, line, YELLOW);
-
-    (void)snprintf(line, sizeof(line), "Mag:%0.2e DMA:%s TO:%lu",
-                   (double)peak_mag,
-                   (LTDC_ENABLE_DMA2D != 0) ? "ON" : "SW",
-                   (unsigned long)g_ltdc_dma2d_timeout_count);
-    lcd_show_string(s_text_x, (uint16_t)(UI_MARGIN_PX + 150u), (uint16_t)(lcddev.width - s_text_x - UI_MARGIN_PX), 16, 16, line, GREEN);
-#endif
+    refresh_text = 0u;
+    if (frame_seq <= 1u)
+    {
+        refresh_text = 1u;
+    }
+    else if ((uint32_t)(frame_seq - s_last_text_refresh_frame) >= (uint32_t)s_cfg.text_refresh_div)
+    {
+        refresh_text = 1u;
+    }
+    if (refresh_text != 0u)
+    {
+        s_last_text_refresh_frame = frame_seq;
+        s_draw_overlay(pos, frame_seq, peak_idx, peak_theta, peak_phi, field_peak, sai_dma_active);
+    }
 }

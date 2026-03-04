@@ -55,8 +55,10 @@ extern "C" {
  */
 #if defined (__GNUC__)
   #define __SECTION_DMA_BUFFER   __attribute__((section(".dma_buffer"))) __attribute__((aligned(32)))
+  #define __SECTION_D2_SRAM       __attribute__((section(".d2_sram_data"))) __attribute__((aligned(32)))
 #else
   #define __SECTION_DMA_BUFFER    __attribute__((section(".dma_buffer")))  // Keil/IAR 请自行适配 section 定义
+  #define __SECTION_D2_SRAM       __attribute__((section(".d2_sram_data")))
 #endif
 
 /**

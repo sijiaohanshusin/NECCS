@@ -109,6 +109,8 @@ extern volatile uint32_t g_audio_both_flags_count;
 
 /** @brief 音频任务未收到任何标志的次数 (异常情况) */
 extern volatile uint32_t g_audio_no_flag_count;
+/** @brief ISR 侧音频帧序号 (用于判断 SAI DMA 活跃性) */
+extern volatile uint32_t g_audio_frame_seq_isr;
 
 /** @brief UI 任务渲染帧计数 (正常运行计数) */
 extern volatile uint32_t g_ui_render_count;
