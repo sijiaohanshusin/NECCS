@@ -2,6 +2,7 @@
 
 #include "LCD/lcd.h"
 #include "LCD/ltdc.h"
+#include "LCD/dma2d_accel.h"
 #include "ai_config.h"
 #include "mpu.h"
 
@@ -22,6 +23,7 @@
 #define APP_DISPLAY_FINE_KERNEL_LEN   (2u * APP_DISPLAY_FINE_KERNEL_RADIUS + 1u)
 #define APP_DISPLAY_DYNAMIC_MIN_PEAK  (1.0e-9f)
 #define APP_DISPLAY_HEAT_LUT_SIZE     256u
+#define APP_DISPLAY_DMA2D_TIMEOUT     0x1FFFFFu
 
 static uint8_t s_ready = 0u;
 volatile uint32_t g_display_init_stage = 0u;
@@ -36,12 +38,15 @@ static uint16_t s_text_x = 0u;
 static float s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
 static float s_last_noise_floor = 0.0f;
 static uint8_t s_kernel_ready = 0u;
-static uint32_t s_last_text_refresh_frame = 0u;
+static uint32_t s_last_text_refresh_frame[2] = {0u, 0u};
+static uint32_t s_fb_addr_a = 0u;
+static uint32_t s_fb_addr_b = 0u;
 
 __SECTION_AXI_SRAM static float s_field_a[APP_DISPLAY_FIELD_PIXELS];
 __SECTION_AXI_SRAM static float s_field_b[APP_DISPLAY_FIELD_PIXELS];
 __SECTION_AXI_SRAM static uint8_t s_field_norm_u8[APP_DISPLAY_FIELD_PIXELS];
 __SECTION_D2_SRAM static uint16_t s_blit_buf[APP_DISPLAY_MAX_LINE_PIXELS * APP_DISPLAY_BLIT_ROWS_MAX];
+__SECTION_D2_SRAM static uint8_t s_blit_l8_buf[APP_DISPLAY_MAX_LINE_PIXELS * APP_DISPLAY_BLIT_ROWS_MAX];
 
 static float s_blur_kernel[APP_DISPLAY_BLUR_KERNEL_LEN];
 static float s_fine_kernel[APP_DISPLAY_FINE_KERNEL_LEN * APP_DISPLAY_FINE_KERNEL_LEN];
@@ -59,7 +64,7 @@ static App_Display_RuntimeCfg_t s_cfg = {
     APP_DISPLAY_SMOOTH_PASSES,
     APP_DISPLAY_FINE_FUSION_ENABLE,
     APP_DISPLAY_DRAW_COARSE_GRID,
-    APP_DISPLAY_BILINEAR_SAMPLING,
+    (APP_DISPLAY_BILINEAR_SAMPLING != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST,
     APP_DISPLAY_TEXT_REFRESH_DIV,
     APP_DISPLAY_BLIT_ROWS_MAX
 };
@@ -220,6 +225,15 @@ const char *App_Display_ModeName(App_Display_Mode_t mode)
     }
 }
 
+const char *App_Display_InterpName(App_Display_Interp_t interp)
+{
+    if (interp == APP_DISPLAY_INTERP_BILINEAR)
+    {
+        return "BIL";
+    }
+    return "NEAR";
+}
+
 static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg_t *cfg)
 {
     if (cfg == NULL)
@@ -240,7 +254,7 @@ static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg
             cfg->smooth_passes = 0u;
             cfg->fine_fusion_enable = 0u;
             cfg->draw_coarse_grid = 0u;
-            cfg->bilinear_sampling = 0u;
+            cfg->interp_mode = APP_DISPLAY_INTERP_NEAREST;
             cfg->text_refresh_div = 4u;
             cfg->blit_rows = APP_DISPLAY_BLIT_ROWS_MAX;
             break;
@@ -256,7 +270,7 @@ static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg
             cfg->smooth_passes = 2u;
             cfg->fine_fusion_enable = 1u;
             cfg->draw_coarse_grid = 0u;
-            cfg->bilinear_sampling = 1u;
+            cfg->interp_mode = APP_DISPLAY_INTERP_BILINEAR;
             cfg->text_refresh_div = 2u;
             cfg->blit_rows = 6u;
             break;
@@ -273,7 +287,7 @@ static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg
             cfg->smooth_passes = APP_DISPLAY_SMOOTH_PASSES;
             cfg->fine_fusion_enable = APP_DISPLAY_FINE_FUSION_ENABLE;
             cfg->draw_coarse_grid = APP_DISPLAY_DRAW_COARSE_GRID;
-            cfg->bilinear_sampling = APP_DISPLAY_BILINEAR_SAMPLING;
+            cfg->interp_mode = (APP_DISPLAY_BILINEAR_SAMPLING != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST;
             cfg->text_refresh_div = APP_DISPLAY_TEXT_REFRESH_DIV;
             cfg->blit_rows = APP_DISPLAY_BLIT_ROWS_MAX;
             break;
@@ -297,7 +311,7 @@ void App_Display_SetConfig(const App_Display_RuntimeCfg_t *cfg)
     s_cfg.smooth_passes = s_clamp_u8(cfg->smooth_passes, 0u, 3u);
     s_cfg.fine_fusion_enable = (cfg->fine_fusion_enable != 0u) ? 1u : 0u;
     s_cfg.draw_coarse_grid = (cfg->draw_coarse_grid != 0u) ? 1u : 0u;
-    s_cfg.bilinear_sampling = (cfg->bilinear_sampling != 0u) ? 1u : 0u;
+    s_cfg.interp_mode = (cfg->interp_mode == APP_DISPLAY_INTERP_BILINEAR) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST;
     s_cfg.text_refresh_div = s_clamp_u8(cfg->text_refresh_div, 1u, 20u);
     s_cfg.blit_rows = s_clamp_u8(cfg->blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
 }
@@ -336,6 +350,66 @@ uint8_t App_Display_IsReady(void)
     return s_ready;
 }
 
+static void s_fill_rect_async(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint32_t color)
+{
+    if ((x0 > x1) || (y0 > y1))
+    {
+        return;
+    }
+
+    if (ltdc_fill_async(x0, y0, x1, y1, color) == 0u)
+    {
+        lcd_fill(x0, y0, x1, y1, color);
+    }
+}
+
+static void s_draw_hline_async(uint16_t x0, uint16_t y, uint16_t x1, uint32_t color)
+{
+    s_fill_rect_async(x0, y, x1, y, color);
+}
+
+static void s_draw_vline_async(uint16_t x, uint16_t y0, uint16_t y1, uint32_t color)
+{
+    s_fill_rect_async(x, y0, x, y1, color);
+}
+
+static void s_draw_rect_async(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint32_t color)
+{
+    s_draw_hline_async(x0, y0, x1, color);
+    s_draw_hline_async(x0, y1, x1, color);
+    s_draw_vline_async(x0, y0, y1, color);
+    s_draw_vline_async(x1, y0, y1, color);
+}
+
+static uint8_t s_backbuf_slot(void)
+{
+    uint32_t back_addr = ltdc_get_backbuf_addr();
+
+    if (back_addr == s_fb_addr_a)
+    {
+        return 0u;
+    }
+    if (back_addr == s_fb_addr_b)
+    {
+        return 1u;
+    }
+    return 0xFFu;
+}
+
+static void s_commit_frame(void)
+{
+    if (ltdc_draw_flush(APP_DISPLAY_DMA2D_TIMEOUT) != 0u)
+    {
+        DMA2D_Accel_Reset();
+        return;
+    }
+
+    if (ltdc_is_swap_pending() == 0u)
+    {
+        ltdc_request_swap();
+    }
+}
+
 void App_Display_Init(void)
 {
     uint16_t draw_w;
@@ -344,7 +418,6 @@ void App_Display_Init(void)
     uint16_t map_w;
     uint16_t map_h;
     uint16_t map_size;
-    static const char title[] = "Acoustic Imaging";
 
     g_display_init_stage = 1u;
     g_display_init_error = 0u;
@@ -354,7 +427,10 @@ void App_Display_Init(void)
     s_build_heat_lut();
     s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
     s_last_noise_floor = 0.0f;
-    s_last_text_refresh_frame = 0u;
+    s_last_text_refresh_frame[0] = 0u;
+    s_last_text_refresh_frame[1] = 0u;
+    s_fb_addr_a = 0u;
+    s_fb_addr_b = 0u;
     App_Display_SetMode(APP_DISPLAY_MODE_FAST);
 
     g_display_init_stage = 2u;
@@ -394,19 +470,20 @@ void App_Display_Init(void)
     s_map_y1 = (uint16_t)(s_map_y0 + map_size - 1u);
     s_text_x = (uint16_t)(s_map_x1 + APP_DISPLAY_MARGIN_PX);
 
-    lcd_clear(BLACK);
-    lcd_draw_rectangle((uint16_t)(s_map_x0 - 1u),
-                       (uint16_t)(s_map_y0 - 1u),
-                       (uint16_t)(s_map_x1 + 1u),
-                       (uint16_t)(s_map_y1 + 1u),
-                       WHITE);
-    lcd_show_string(s_text_x,
-                    APP_DISPLAY_MARGIN_PX,
-                    (uint16_t)(draw_w - s_text_x - APP_DISPLAY_MARGIN_PX),
-                    24,
-                    16,
-                    (char *)title,
-                    CYAN);
+    g_display_init_stage = 4u;
+    s_fb_addr_a = ltdc_get_frontbuf_addr();
+    s_fb_addr_b = ltdc_get_backbuf_addr();
+    DMA2D_Accel_LoadClutFromRgb565(s_heat_lut, APP_DISPLAY_HEAT_LUT_SIZE);
+
+    s_fill_rect_async(0u, 0u, (uint16_t)(draw_w - 1u), (uint16_t)(draw_h - 1u), BLACK);
+    {
+        uint16_t bx0 = (s_map_x0 > 0u) ? (uint16_t)(s_map_x0 - 1u) : s_map_x0;
+        uint16_t by0 = (s_map_y0 > 0u) ? (uint16_t)(s_map_y0 - 1u) : s_map_y0;
+        uint16_t bx1 = ((uint32_t)s_map_x1 + 1u < draw_w) ? (uint16_t)(s_map_x1 + 1u) : s_map_x1;
+        uint16_t by1 = ((uint32_t)s_map_y1 + 1u < draw_h) ? (uint16_t)(s_map_y1 + 1u) : s_map_y1;
+        s_draw_rect_async(bx0, by0, bx1, by1, WHITE);
+    }
+    s_commit_frame();
 
     s_ready = 1u;
     g_display_init_stage = 0x8000u;
@@ -863,6 +940,7 @@ static void s_render_field_rows(void)
     uint16_t map_w = (uint16_t)(s_map_x1 - s_map_x0 + 1u);
     uint16_t map_h = (uint16_t)(s_map_y1 - s_map_y0 + 1u);
     uint8_t blit_rows = s_clamp_u8(s_cfg.blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
+    uint8_t use_bilinear = (s_cfg.interp_mode == APP_DISPLAY_INTERP_BILINEAR) ? 1u : 0u;
     uint16_t y_blk;
 
     if ((map_w == 0u) || (map_h == 0u) || (map_w > APP_DISPLAY_MAX_LINE_PIXELS))
@@ -885,21 +963,48 @@ static void s_render_field_rows(void)
             uint16_t y = (uint16_t)(y_blk + row);
             float fy = (map_h > 1u) ? ((float)y * (float)(APP_DISPLAY_FIELD_H - 1u) / (float)(map_h - 1u)) : 0.0f;
             uint16_t x;
-            uint16_t *dst = &s_blit_buf[(uint32_t)row * (uint32_t)map_w];
+            uint8_t *dst = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];
 
             for (x = 0u; x < map_w; x++)
             {
                 float fx = (map_w > 1u) ? ((float)x * (float)(APP_DISPLAY_FIELD_W - 1u) / (float)(map_w - 1u)) : 0.0f;
-                uint8_t q = (s_cfg.bilinear_sampling != 0u) ? s_sample_norm_bilinear(fx, fy) : s_sample_norm_nearest(fx, fy);
-                dst[x] = s_heat_lut[q];
+                uint8_t q = (use_bilinear != 0u) ? s_sample_norm_bilinear(fx, fy) : s_sample_norm_nearest(fx, fy);
+                dst[x] = q;
             }
         }
 
-        lcd_color_fill(s_map_x0,
-                       (uint16_t)(s_map_y0 + y_blk),
-                       s_map_x1,
-                       (uint16_t)(s_map_y0 + y_blk + rows - 1u),
-                       s_blit_buf);
+        if (ltdc_l8_fill_async(s_map_x0,
+                               (uint16_t)(s_map_y0 + y_blk),
+                               s_map_x1,
+                               (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                               s_blit_l8_buf,
+                               map_w) == 0u)
+        {
+            for (row = 0u; row < rows; row++)
+            {
+                uint8_t *src = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];
+                uint16_t *dst = &s_blit_buf[(uint32_t)row * (uint32_t)map_w];
+                uint16_t x;
+
+                for (x = 0u; x < map_w; x++)
+                {
+                    dst[x] = s_heat_lut[src[x]];
+                }
+            }
+
+            if (ltdc_color_fill_async(s_map_x0,
+                                      (uint16_t)(s_map_y0 + y_blk),
+                                      s_map_x1,
+                                      (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                                      s_blit_buf) == 0u)
+            {
+                lcd_color_fill(s_map_x0,
+                               (uint16_t)(s_map_y0 + y_blk),
+                               s_map_x1,
+                               (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                               s_blit_buf);
+            }
+        }
     }
 }
 
@@ -912,13 +1017,25 @@ static void s_draw_overlay(const Sound_Pos_t *pos,
                            uint8_t sai_dma_active)
 {
     char line[80];
+    static char title[] = "Acoustic Imaging";
 
     if (s_text_x >= (lcddev.width - APP_DISPLAY_MARGIN_PX))
     {
         return;
     }
 
-    lcd_fill(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 20u), (uint16_t)(lcddev.width - APP_DISPLAY_MARGIN_PX), s_map_y1, BLACK);
+    lcd_fill(s_text_x,
+             (uint16_t)(APP_DISPLAY_MARGIN_PX + 20u),
+             (uint16_t)(lcddev.width - APP_DISPLAY_MARGIN_PX),
+             s_map_y1,
+             BLACK);
+    lcd_show_string(s_text_x,
+                    APP_DISPLAY_MARGIN_PX,
+                    (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX),
+                    16,
+                    16,
+                    title,
+                    CYAN);
     (void)snprintf(line, sizeof(line), "X:%6.1f", (double)pos->x_angle);
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 24u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, YELLOW);
     (void)snprintf(line, sizeof(line), "Y:%6.1f", (double)pos->y_angle);
@@ -929,16 +1046,32 @@ static void s_draw_overlay(const Sound_Pos_t *pos,
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 78u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, CYAN);
     (void)snprintf(line, sizeof(line), "Pk:(%0.1f,%0.1f)", (double)peak_theta, (double)peak_phi);
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 96u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, WHITE);
-    (void)snprintf(line, sizeof(line), "Mode:%s dB:%0.0f", App_Display_ModeName(s_mode), (double)s_cfg.db_floor);
+    (void)snprintf(line,
+                   sizeof(line),
+                   "Mode:%s/%s dB:%0.0f",
+                   App_Display_ModeName(s_mode),
+                   App_Display_InterpName((App_Display_Interp_t)s_cfg.interp_mode),
+                   (double)s_cfg.db_floor);
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 114u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, CYAN);
     (void)snprintf(line, sizeof(line), "Nf:%0.2e G:%0.2f", (double)s_last_noise_floor, (double)s_cfg.gamma);
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 132u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, YELLOW);
 #if (APP_DISPLAY_DIAG_OVERLAY != 0u)
     (void)snprintf(line, sizeof(line), "PkE:%0.2e EMA:%0.2e", (double)field_peak, (double)s_peak_ema);
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 150u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, LIGHTGREEN);
-    (void)snprintf(line, sizeof(line), "D2D:%s TO:%lu SW:%lu", (LTDC_ENABLE_DMA2D != 0) ? "ON" : "SW", (unsigned long)g_ltdc_dma2d_timeout_count, (unsigned long)g_ltdc_dma2d_sw_fallback_count);
+    (void)snprintf(line,
+                   sizeof(line),
+                   "D2D TO:%lu SW:%lu Q:%lu/%lu",
+                   (unsigned long)g_ltdc_dma2d_timeout_count,
+                   (unsigned long)g_ltdc_dma2d_sw_fallback_count,
+                   (unsigned long)g_dma2d_queue_overflow_count,
+                   (unsigned long)g_dma2d_queue_depth_peak);
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 168u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, GREEN);
-    (void)snprintf(line, sizeof(line), "UI:%lu/%lu SAI:%s", (unsigned long)g_ui_render_count, (unsigned long)g_ui_queue_rx_count, (sai_dma_active != 0u) ? "ON" : "OFF");
+    (void)snprintf(line,
+                   sizeof(line),
+                   "Swap:%lu Err:%lu SAI:%s",
+                   (unsigned long)g_ltdc_swap_count,
+                   (unsigned long)g_ltdc_swap_error_count,
+                   (sai_dma_active != 0u) ? "ON" : "OFF");
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 186u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, LIGHTBLUE);
 #endif
 }
@@ -953,8 +1086,13 @@ void App_Display_Render(const Sound_Pos_t *pos,
     float peak_theta = 0.0f;
     float peak_phi = 0.0f;
     uint8_t refresh_text;
+    uint8_t back_slot;
 
     if ((s_ready == 0u) || (pos == NULL) || (vis_frame == NULL))
+    {
+        return;
+    }
+    if (ltdc_is_swap_pending() != 0u)
     {
         return;
     }
@@ -975,6 +1113,13 @@ void App_Display_Render(const Sound_Pos_t *pos,
 
     s_update_norm_field(field_peak, frame_seq);
     s_render_field_rows();
+    {
+        uint16_t bx0 = (s_map_x0 > 0u) ? (uint16_t)(s_map_x0 - 1u) : s_map_x0;
+        uint16_t by0 = (s_map_y0 > 0u) ? (uint16_t)(s_map_y0 - 1u) : s_map_y0;
+        uint16_t bx1 = ((uint32_t)s_map_x1 + 1u < lcddev.width) ? (uint16_t)(s_map_x1 + 1u) : s_map_x1;
+        uint16_t by1 = ((uint32_t)s_map_y1 + 1u < lcddev.height) ? (uint16_t)(s_map_y1 + 1u) : s_map_y1;
+        s_draw_rect_async(bx0, by0, bx1, by1, WHITE);
+    }
 
     if (vis_frame->peak_idx < SRP_GRID_TOTAL)
     {
@@ -994,8 +1139,8 @@ void App_Display_Render(const Sound_Pos_t *pos,
         uint16_t xr = ((uint32_t)cx + half < s_map_x1) ? (uint16_t)(cx + half) : s_map_x1;
         uint16_t yt = (cy > (uint16_t)(s_map_y0 + half)) ? (uint16_t)(cy - half) : s_map_y0;
         uint16_t yb = ((uint32_t)cy + half < s_map_y1) ? (uint16_t)(cy + half) : s_map_y1;
-        lcd_draw_line(xl, cy, xr, cy, WHITE);
-        lcd_draw_line(cx, yt, cx, yb, WHITE);
+        s_draw_hline_async(xl, cy, xr, WHITE);
+        s_draw_vline_async(cx, yt, yb, WHITE);
     }
 
     {
@@ -1006,21 +1151,31 @@ void App_Display_Render(const Sound_Pos_t *pos,
         uint16_t y0 = (py > (uint16_t)(s_map_y0 + r)) ? (uint16_t)(py - r) : s_map_y0;
         uint16_t x1 = ((uint32_t)px + r < s_map_x1) ? (uint16_t)(px + r) : s_map_x1;
         uint16_t y1 = ((uint32_t)py + r < s_map_y1) ? (uint16_t)(py + r) : s_map_y1;
-        lcd_draw_rectangle(x0, y0, x1, y1, WHITE);
+        s_draw_rect_async(x0, y0, x1, y1, WHITE);
     }
 
+    back_slot = s_backbuf_slot();
     refresh_text = 0u;
     if (frame_seq <= 1u)
     {
         refresh_text = 1u;
     }
-    else if ((uint32_t)(frame_seq - s_last_text_refresh_frame) >= (uint32_t)s_cfg.text_refresh_div)
+    else if (back_slot > 1u)
+    {
+        refresh_text = 1u;
+    }
+    else if ((uint32_t)(frame_seq - s_last_text_refresh_frame[back_slot]) >= (uint32_t)s_cfg.text_refresh_div)
     {
         refresh_text = 1u;
     }
     if (refresh_text != 0u)
     {
-        s_last_text_refresh_frame = frame_seq;
+        if (back_slot <= 1u)
+        {
+            s_last_text_refresh_frame[back_slot] = frame_seq;
+        }
         s_draw_overlay(pos, frame_seq, peak_idx, peak_theta, peak_phi, field_peak, sai_dma_active);
     }
+
+    s_commit_frame();
 }

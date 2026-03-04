@@ -976,6 +976,11 @@
               <FilePath>..\User\BSP\LCD\ltdc.c</FilePath>
             </File>
             <File>
+              <FileName>dma2d_accel.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\BSP\LCD\dma2d_accel.c</FilePath>
+            </File>
+            <File>
               <FileName>tft_spi.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\BSP\LCD\tft_spi.c</FilePath>

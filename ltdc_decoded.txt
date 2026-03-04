@@ -1,0 +1,1072 @@
+/**
+ ****************************************************************************************************
+ * @file        ltdc.c
+ * @version     V1.0
+ * @brief       LTDC 濡炵懓宕慨鈺傜閿濆洨鍨?
+ ****************************************************************************************************
+ * @attention   Waiken-Smart 闁规瘱鍐ㄧ彾闁哄懘缂氱换?
+ *
+ * 閻庡湱鍋ら悰娆撶嵁閸愭彃閰?    STM32H743IIT6閻忓繐绻掗柈瀵哥磼閻斿憡绶?
+ *
+ ****************************************************************************************************
+ */
+
+#include "LCD/ltdc.h"
+#include "LCD/lcd.h"
+#include "LCD/tft_spi.h"
+
+
+LTDC_HandleTypeDef  g_ltdc_handle;       /* LTDC闁告瑣鍎查悞?*/
+DMA2D_HandleTypeDef g_dma2d_handle;      /* DMA2D闁告瑣鍎查悞?*/
+
+static uint8_t s_ltdc_dwt_ready = 0u;
+
+static void ltdc_dwt_init(void)
+{
+    if (s_ltdc_dwt_ready != 0u)
+    {
+        return;
+    }
+
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    DWT->CYCCNT = 0u;
+    s_ltdc_dwt_ready = 1u;
+}
+
+static void ltdc_delay_us(uint32_t us)
+{
+    uint32_t ticks;
+    uint32_t start;
+
+    if (us == 0u)
+    {
+        return;
+    }
+
+    ltdc_dwt_init();
+    ticks = (SystemCoreClock / 1000000u) * us;
+    start = DWT->CYCCNT;
+    while ((uint32_t)(DWT->CYCCNT - start) < ticks) { }
+}
+
+static void ltdc_delay_ms(uint32_t ms)
+{
+    /* Keep LTDC reset delay independent from RTOS tick to avoid init stalls. */
+    while (ms-- > 0u)
+    {
+        ltdc_delay_us(1000u);
+    }
+}
+
+#define delay_ms ltdc_delay_ms
+#define delay_us ltdc_delay_us
+
+uint32_t *g_ltdc_framebuf[2];              /* LTDC LCD閻㈩垎鍛閻庢稒蓱閺嗙喓绱掗崟顒€鐦归梺?闊洤鎳橀妴蹇涘箰閸パ勫€婚悗鐢垫嚀缁ㄥ弶寰勮閻剟鎯冮崟顐㈡暥閻庢稒锚鐏忣垶宕?*/
+_ltdc_dev lcdltdc;                         /* 缂佺媴绱曢幃濂揅D LTDC闁汇劌瀚伴崳鍝ユ啺娴ｇ妫橀柡?*/
+volatile uint32_t g_ltdc_init_stage = 0u;
+volatile uint32_t g_ltdc_dma2d_timeout_count = 0u;
+volatile uint16_t g_ltdc_panel_id = 0u;
+
+#define LTDC_DMA2D_TIMEOUT_LOOP   0X1FFFFFU
+
+static void ltdc_fill_sw_rect(uint32_t psx, uint32_t psy, uint32_t pex, uint32_t pey, uint32_t color)
+{
+#if LTDC_PIXFORMAT == LTDC_PIXFORMAT_ARGB8888
+    uint32_t *base = (uint32_t *)g_ltdc_framebuf[lcdltdc.activelayer];
+    for (uint32_t y = psy; y <= pey; y++)
+    {
+        uint32_t *row = base + y * lcdltdc.pwidth + psx;
+        for (uint32_t x = psx; x <= pex; x++)
+        {
+            *row++ = color;
+        }
+    }
+#elif LTDC_PIXFORMAT == LTDC_PIXFORMAT_RGB888
+    uint8_t r = (uint8_t)((color >> 16) & 0xFFu);
+    uint8_t g = (uint8_t)((color >> 8) & 0xFFu);
+    uint8_t b = (uint8_t)(color & 0xFFu);
+    uint8_t *base = (uint8_t *)g_ltdc_framebuf[lcdltdc.activelayer];
+    for (uint32_t y = psy; y <= pey; y++)
+    {
+        uint8_t *row = base + (y * lcdltdc.pwidth + psx) * 3u;
+        for (uint32_t x = psx; x <= pex; x++)
+        {
+            row[0] = b;
+            row[1] = g;
+            row[2] = r;
+            row += 3;
+        }
+    }
+#else
+    uint16_t c565 = (uint16_t)color;
+    uint16_t *base = (uint16_t *)g_ltdc_framebuf[lcdltdc.activelayer];
+    for (uint32_t y = psy; y <= pey; y++)
+    {
+        uint16_t *row = base + y * lcdltdc.pwidth + psx;
+        for (uint32_t x = psx; x <= pex; x++)
+        {
+            *row++ = c565;
+        }
+    }
+#endif
+}
+
+static void ltdc_color_fill_sw_rect(uint32_t psx, uint32_t psy, uint32_t pex, uint32_t pey, const uint16_t *color)
+{
+#if LTDC_PIXFORMAT == LTDC_PIXFORMAT_RGB565
+    uint32_t width = pex - psx + 1u;
+    uint16_t *base = (uint16_t *)g_ltdc_framebuf[lcdltdc.activelayer];
+
+    for (uint32_t y = psy; y <= pey; y++)
+    {
+        uint16_t *row = base + y * lcdltdc.pwidth + psx;
+        for (uint32_t x = 0u; x < width; x++)
+        {
+            row[x] = *color++;
+        }
+    }
+#else
+    (void)psx;
+    (void)psy;
+    (void)pex;
+    (void)pey;
+    (void)color;
+#endif
+}
+
+static uint8_t ltdc_dma2d_wait_complete(void)
+{
+    uint32_t timeout = 0u;
+
+    while (1)
+    {
+        uint32_t isr = DMA2D->ISR;
+
+        if ((isr & DMA2D_FLAG_TC) != 0u)
+        {
+            DMA2D->IFCR = DMA2D_FLAG_TC;
+            return 0u;
+        }
+
+        if ((isr & (DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE)) != 0u)
+        {
+            g_ltdc_dma2d_timeout_count++;
+            DMA2D->IFCR = DMA2D_FLAG_TC | DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE | DMA2D_FLAG_CTC | DMA2D_FLAG_TW;
+            return 1u;
+        }
+
+        timeout++;
+        if (timeout > LTDC_DMA2D_TIMEOUT_LOOP)
+        {
+            g_ltdc_dma2d_timeout_count++;
+            DMA2D->IFCR = DMA2D_FLAG_TC | DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE | DMA2D_FLAG_CTC | DMA2D_FLAG_TW;
+            return 1u;
+        }
+    }
+}
+
+
+/**
+ * @brief       LTDC鐎殿喒鍋撻柛?
+ * @param       sw   : 1,闁瑰灚鎸哥槐? 0,闁稿繑濞婂Λ?
+ * @retval      闁?
+ */
+void ltdc_switch(uint8_t sw)
+{
+    if (sw)
+    {
+        __HAL_LTDC_ENABLE(&g_ltdc_handle);   /* 闁瑰灚鎸哥槐鎱橳DC */
+    }
+    else
+    {
+        __HAL_LTDC_DISABLE(&g_ltdc_handle);  /* 闁稿繑濞婂Λ纰橳DC */
+    }
+}
+
+/**
+ * @brief       LTDC鐎殿喒鍋撻柛蹇氭珪鐎垫氨鈧鑹鹃惇?
+ * @param       layerx      : 0,缂佹鍏涚粩瀵镐沪? 1,缂佹鍏涚花鈺冧沪?
+ * @param       sw          : 1,闁瑰灚鎸哥槐?   0,闁稿繑濞婂Λ?
+ * @retval      闁?
+ */
+void ltdc_layer_switch(uint8_t layerx, uint8_t sw)
+{
+    if (sw) 
+    {
+        __HAL_LTDC_LAYER_ENABLE(&g_ltdc_handle, layerx);   /* 鐎殿喒鍋撻柛姘辨－ayerx */
+    }
+    else
+    {
+        __HAL_LTDC_LAYER_DISABLE(&g_ltdc_handle, layerx);  /* 闁稿繑濞婂Λ纾峚yerx */
+    }
+
+    __HAL_LTDC_RELOAD_CONFIG(&g_ltdc_handle);              /* 缂佹柨顑呭畵鍡涙煂瀹ュ棙鐓€闁告梻濮惧ù鍥煀瀹ュ洨鏋?*/
+}
+
+/**
+ * @brief       LTDC闂侇偄顦扮€氥劎浠?
+ * @param       layerx   : 閻忕偛鍊歌ぐ?0,缂佹鍏涚粩瀵镐沪? 1,缂佹鍏涚花鈺冧沪?
+ * @retval      闁?
+ */
+void ltdc_select_layer(uint8_t layerx)
+{
+    lcdltdc.activelayer = layerx;
+}
+
+/**
+ * @brief       LTDC闁哄嫬澧介妵姘跺棘閻熺増鍊婚悹浣稿⒔閻?
+ * @param       dir         : 0,缂佹梹鐗曢惈? 1,婵☆垼浜滈惈?
+ * @retval      闁?
+ */
+void ltdc_display_dir(uint8_t dir)
+{
+    lcdltdc.dir = dir;     /* 闁哄嫬澧介妵姘跺棘閻熺増鍊?*/
+
+    if (dir == 0)          /* 缂佹梹鐗曢惈?*/
+    {
+        lcdltdc.width = lcdltdc.pheight;
+        lcdltdc.height = lcdltdc.pwidth;
+    }
+    else if (dir == 1)     /* 婵☆垼浜滈惈?*/
+    {
+        lcdltdc.width = lcdltdc.pwidth;
+        lcdltdc.height = lcdltdc.pheight;
+    }
+}
+
+/**
+ * @brief       LTDC闁汇垼宕甸崑锝夊礄閼恒儲娈?
+ * @param       x,y         : 闁告劖鐟ラ崣鍡涘锤閹邦厾鍨?
+ * @param       color       : 濡増绮忔竟濠囧磹?
+ * @retval      闁?
+ */
+void ltdc_draw_point(uint16_t x, uint16_t y, uint32_t color)
+{ 
+#if LTDC_PIXFORMAT == LTDC_PIXFORMAT_ARGB8888
+
+    if (lcdltdc.dir)    /* 婵☆垼浜滈惈?*/
+    {
+        *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) = color;
+    }
+    else                /* 缂佹梹鐗曢惈?*/
+    {
+        *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) = color;
+    }
+
+#elif LTDC_PIXFORMAT == LTDC_PIXFORMAT_RGB888
+
+    if (lcdltdc.dir)     /* 婵☆垼浜滈惈?*/
+    {
+        *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) = color;
+        *(uint8_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x) + 2) = color >> 16;
+    }
+    else                /* 缂佹梹鐗曢惈?*/
+    {
+        *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) = color;
+        *(uint8_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y) + 2) = color >> 16;
+    }
+    
+#else
+
+    if (lcdltdc.dir)    /* 婵☆垼浜滈惈?*/
+    {
+        *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) = color;
+    }
+    else                /* 缂佹梹鐗曢惈?*/
+    {
+        *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) = color;
+    }
+
+#endif
+}
+
+/**
+ * @brief       LTDC閻犲洩宕甸崑锝夊礄閼恒儲娈?
+ * @param       x,y       : 閻犲洩顕цぐ鍥倷閸︻厽鐣遍柛褎鍔栭悥?
+ * @retval      濡増绮忔竟濠囧磹?
+ */
+uint32_t ltdc_read_point(uint16_t x, uint16_t y)
+{ 
+#if LTDC_PIXFORMAT == LTDC_PIXFORMAT_ARGB8888
+
+    if (lcdltdc.dir)    /* 婵☆垼浜滈惈?*/
+    {
+        return *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x));
+    }
+    else                /* 缂佹梹鐗曢惈?*/
+    {
+        return *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y));
+    }
+
+#elif LTDC_PIXFORMAT == LTDC_PIXFORMAT_RGB888
+
+    if (lcdltdc.dir)    /* 婵☆垼浜滈惈?*/
+    {
+        return *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) & 0XFFFFFF;
+    }
+    else                /* 缂佹梹鐗曢惈?*/
+    {
+        return *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) & 0XFFFFFF;
+    }
+    
+#else
+
+    if (lcdltdc.dir)    /* 婵☆垼浜滈惈?*/
+    {
+        return *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x));
+    }
+    else                /* 缂佹梹鐗曢惈?*/
+    {
+        return *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y));
+    }
+
+#endif
+}
+
+/**
+ * @brief       LTDC濠靛鍋勯崢鏍儗閳轰浇鍩? DMA2D濠靛鍋勯崢?
+ * @note       (sx,sy),(ex,ey):濠靛鍋勯崢鏍儗閳轰浇鍩岄悗鐢殿攰椤宕搁幇顓犲灱,闁告牕鎼悡娆愬緞瑜嶉惃顒佺▔?(ex - sx + 1) * (ey - sy + 1)
+ *              婵炲鍔嶉崜?sx,ex,濞戞挸绉烽崗妯诲緞瑜岀花鐞筩ddev.width - 1; sy,ey,濞戞挸绉烽崗妯诲緞瑜岀花鐞筩ddev.height - 1
+ * @param       sx,sy       : 閻犙冨槻椤劙宕搁幇顓犲灱
+ * @param       ex,ey       : 缂備焦鎸诲顐﹀锤閹邦厾鍨?
+ * @param       color       : 濠靛鍋勯崢鏍儍閸曨垼鏉归柤?
+ * @retval      闁?
+ */
+void ltdc_fill(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint32_t color)
+{ 
+    uint32_t psx, psy, pex, pey;        /* 濞寸媭妾糃D闂傚牄鍨哄妯荤▔閸濆嫮鍞ㄩ柛鎴濇濞堟垿宕搁幇顓犲灱缂?濞戞挸绉瑰▓銏犖熼鍡欏建閻忕偛绻愯ぐ澶愬礌閺嶎兘鍋撶仦钘夌秮闁?*/
+    uint16_t offline;
+    uint32_t addr; 
+
+    if ((lcdltdc.width == 0u) || (lcdltdc.height == 0u))
+    {
+        return;
+    }
+    if ((sx >= lcdltdc.width) || (sy >= lcdltdc.height))
+    {
+        return;
+    }
+    if (ex >= lcdltdc.width)
+    {
+        ex = lcdltdc.width - 1u;
+    }
+    if (ey >= lcdltdc.height)
+    {
+        ey = lcdltdc.height - 1u;
+    }
+    if ((ex < sx) || (ey < sy))
+    {
+        return;
+    }
+
+    /* 闁秆勫姈閻栵絿鍖栭弰蹇旂ギ闁?*/
+    if (lcdltdc.dir)                    /* 婵☆垼浜滈惈?*/
+    {
+        psx = sx;
+        psy = sy;
+        pex = ex;
+        pey = ey;
+    }
+    else                                /* 缂佹梹鐗曢惈?*/
+    {
+        if (ex >= lcdltdc.pheight)
+        {
+            ex = lcdltdc.pheight - 1;   /* 闂傚嫭鍔曢崺妤呮嚑閸愩劍绾?*/
+        }
+
+        if (sx >= lcdltdc.pheight)
+        {
+            sx = lcdltdc.pheight - 1;   /* 闂傚嫭鍔曢崺妤呮嚑閸愩劍绾?*/
+        }
+        
+        psx = sy;
+        psy = lcdltdc.pheight - ex - 1;
+        pex = ey;
+        pey = lcdltdc.pheight - sx - 1;
+    }
+
+#if (LTDC_ENABLE_DMA2D == 0)
+    ltdc_fill_sw_rect(psx, psy, pex, pey, color);
+    return;
+#endif
+
+    offline = lcdltdc.pwidth - (pex - psx + 1);   /* 閻炴稑鑻禍鍝ョ矓?鐟滅増鎸告晶鐘垫偘鐏炵偓浠橀柛姘凹缁斿瓨绋夐鍕壖缂佽京濮撮幏鐗堢▔鐎ｂ晝顏遍悶娑樼灱椤戝洦绋夐埀顒佺▔椤忓嫬鍓肩紒杈╁С缁狅綁姊荤€靛憡鐣遍柛宥呯箳缁€宀勫极閹殿喗绐?*/
+    addr = ((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * psy + psx));
+
+    __HAL_RCC_DMA2D_CLK_ENABLE();                             /* 濞达綀鍎婚崗妤2D闁哄啫鐖奸幐?*/
+
+    DMA2D->CR &= ~(DMA2D_CR_START);                           /* 闁稿繐鐗嗘禒鐘差潰椤㈢嫻A2D */
+    DMA2D->IFCR = DMA2D_FLAG_TC | DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE | DMA2D_FLAG_CTC | DMA2D_FLAG_TW;
+    DMA2D->CR = DMA2D_R2M;                                    /* 閻庨潧瀚悺銊╁闯閵娿儱鐓傞悗娑櫭崑宥夊闯閵娢翠礁顕?*/
+    DMA2D->OPFCCR = LTDC_PIXFORMAT;                           /* 閻犱礁澧介悿鍡橈紣濠婂棗顥忛柡宥囧帶缁?*/
+    DMA2D->OOR = offline;                                     /* 閻犱礁澧介悿鍡欐偘鐏炴垝鐒婄紒? */
+
+    DMA2D->OMAR = addr;                                       /* 閺夊牊鎸搁崵顓犫偓娑櫭崑宥夊闯閵娿儲鍕鹃柛褉鍋?*/
+    DMA2D->NLR = (pey - psy + 1) | ((pex - psx + 1) << 16);   /* 閻犱焦鍎抽悾鍓ф偘鐏炵偓娈堕悗闈涘閻°劑宕?*/
+    DMA2D->OCOLR = color;                                     /* 閻犱焦鍎抽悾鐐綇閹惧啿姣夊Λ鐗堢矎婢瑰﹦鈧潧瀚悺銊╁闯?*/
+    DMA2D->CR |= DMA2D_CR_START;                              /* 闁告凹鍨版慨銆A2D */
+    if (ltdc_dma2d_wait_complete() != 0u)
+    {
+        /* DMA2D error/timeout: force software path so init can still paint framebuffer. */
+        ltdc_fill_sw_rect(psx, psy, pex, pey, color);
+    }
+}
+
+///* 濞达綀娉曢弫顥狹A2D闁烩晝顭堥崣褔鎯冮崙顧嘗閹煎瓨鎸搁崵閬嶅极妫颁礁鈻忛柣鈶┾偓鏄匒2D濠㈣埖鐗為?濞戞挸绉电敮褰掓嚒? */
+///**
+// * @brief       闁革负鍔嶇€垫氨鈧鑹剧亸顖炲春閻斿嘲鏁跺┑澶樺亜閸樻牠宕￠弴姘跺殝濡増绮忔竟?
+// * @param       (sx,sy),(ex,ey)  : 濠靛鍋勯崢鏍儗閳轰浇鍩岄悗鐢殿攰椤宕搁幇顓犲灱,闁告牕鎼悡娆愬緞瑜嶉惃顒佺▔?(ex - sx + 1) * (ey - sy + 1)
+// * @param       color            : 閻熸洑绀侀敐鐐哄礂閸涱垱鐣卞Λ鐗堢矎婢?
+// * @retval      闁?
+// */
+//void ltdc_fill(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint32_t color)
+//{
+//    uint32_t psx, psy, pex, pey;   /* 濞寸媭妾糃D闂傚牄鍨哄妯荤▔閸濆嫮鍞ㄩ柛鎴濇濞堟垿宕搁幇顓犲灱缂?濞戞挸绉瑰▓銏犖熼鍡欏建閻忕偛绻愯ぐ澶愬礌閺嶎兘鍋撶仦钘夌秮闁?*/
+//    uint32_t timeout = 0; 
+//    uint16_t offline;
+//    uint32_t addr;  
+//
+//    if (ex >= lcdltdc.width)
+//    {
+//        ex = lcdltdc.width - 1;
+//    }
+//
+//    if (ey >= lcdltdc.height)
+//    {
+//        ey = lcdltdc.height - 1;
+//    }
+//
+//    /* 闁秆勫姈閻栵絿鍖栭弰蹇旂ギ闁?*/
+//    if (lcdltdc.dir)   /* 婵☆垼浜滈惈?*/
+//    {
+//        psx = sx; 
+//        psy = sy;
+//        pex = ex;
+//        pey = ey;
+//    }
+//    else               /* 缂佹梹鐗曢惈?*/
+//    {
+//        psx = sy;
+//        psy = lcdltdc.pheight - ex - 1;
+//        pex = ey;
+//        pey = lcdltdc.pheight - sx - 1;
+//    }
+
+//    offline = lcdltdc.pwidth - (pex - psx + 1);
+//    addr =((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * psy + psx));
+//
+//    if (LTDC_PIXFORMAT == LTDC_PIXEL_FORMAT_RGB565)  /* 濠碘€冲€归悘澶愬及閻ょ嫤B565闁哄秶鍘х槐锟犳儍閸曨喚妯堥梻鍥ｅ亾閻熸洑娴囩换妯兼偘瀹€鍕垫澒闁肩灏ù鍡涘箲椤喚绀夐悘?6bit閺夌儐鍓氬畷鍙夌▔?2bit闁?*/
+//    {
+//        color = ((color & 0X0000F800) << 8) | ((color & 0X000007E0) << 5 ) | ((color & 0X0000001F) << 3);
+//    }
+//
+//    /* 闂佹澘绉堕悿鍜睲A2D闁汇劌瀚啯鐎?*/
+//    g_dma2d_handle.Instance = DMA2D;
+//    g_dma2d_handle.Init.Mode = DMA2D_R2M;                                                    /* 閻庨潧瀚悺銊╁闯閵娿儱鐓傞悗娑櫭崑宥夊闯閵娢翠礁顕?*/
+//    g_dma2d_handle.Init.ColorMode = LTDC_PIXFORMAT;                                          /* 閻犱礁澧介悿鍡橈紣濠婂棗顥忛柡宥囧帶缁?*/
+//    g_dma2d_handle.Init.OutputOffset = offline;                                              /* 閺夊牊鎸搁崵顓㈠磻韫囨泤? */
+//    HAL_DMA2D_Init(&g_dma2d_handle);                                                         /* 闁告帗绻傞～鎰板礌閺堝A2D */
+//
+//    HAL_DMA2D_ConfigLayer(&g_dma2d_handle, lcdltdc.activelayer);                             /* 閻忕偛鍊块崢銈囩磾?*/
+//    HAL_DMA2D_Start(&g_dma2d_handle, color, (uint32_t)addr, pex - psx + 1, pey - psy + 1);   /* 鐎殿喒鍋撻柛姘煎灟缁辫埖娼?*/
+//    HAL_DMA2D_PollForTransfer(&g_dma2d_handle, 1000);                                        /* 濞磋偐濮剧欢顓㈠极閻楀牆绁?*/
+//
+//    while((__HAL_DMA2D_GET_FLAG( &g_dma2d_handle,DMA2D_FLAG_TC) == 0) && (timeout < 0X5000)) /* 缂佹稑顦欢鐑A2D濞磋偐濮剧欢顓犫偓鐟版湰閸?*/
+//    {
+//        timeout++;
+//    }
+//    __HAL_DMA2D_CLEAR_FLAG(&g_dma2d_handle,DMA2D_FLAG_TC);                                   /* 婵炴挸鎳樺▍搴㈠閻樿櫣缈婚悗鐟版湰閸ㄦ岸寮介崶褏绠?*/
+//}
+
+/**
+ * @brief       闁革负鍔嶇€垫氨鈧鑹剧亸顖炲春閻斿嘲鏁跺┑澶樺亜閸樻牠骞愰崶褏鏆板Λ鐗堢矎婢瑰﹪宕? DMA2D濠靛鍋勯崢?
+ * @note        婵縿鍊曢崵閬嶅极妫颁胶鐭岄柡鈧娑樼槷uint16_t,RGB565闁哄秶鍘х槐锟犳儍閸曨垼鏉归柤鐟板级閺嗙喓绱掗崟顐稏闁?
+ *              (sx,sy),(ex,ey):濠靛鍋勯崢鏍儗閳轰浇鍩岄悗鐢殿攰椤宕搁幇顓犲灱,闁告牕鎼悡娆愬緞瑜嶉惃顒佺▔?(ex - sx + 1) * (ey - sy + 1)
+ *              婵炲鍔嶉崜?sx,ex,濞戞挸绉烽崗妯诲緞瑜岀花鐞筩ddev.width - 1; sy,ey,濞戞挸绉烽崗妯诲緞瑜岀花鐞筩ddev.height - 1
+ * @param       sx,sy       : 閻犙冨槻椤劙宕搁幇顓犲灱
+ * @param       ex,ey       : 缂備焦鎸诲顐﹀锤閹邦厾鍨?
+ * @param       color       : 濠靛鍋勯崢鏍儍閸曨垼鏉归柤鐟板级閺嗙喓绱掗崟顖ｆ禃闁革附婢樺?
+ * @retval      闁?
+ */
+void ltdc_color_fill(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint16_t *color)
+{
+    uint32_t psx, psy, pex, pey;   /* 濞寸媭妾糃D闂傚牄鍨哄妯荤▔閸濆嫮鍞ㄩ柛鎴濇濞堟垿宕搁幇顓犲灱缂?濞戞挸绉瑰▓銏犖熼鍡欏建閻忕偛绻愯ぐ澶愬礌閺嶎兘鍋撶仦钘夌秮闁?*/
+    uint16_t offline;
+    uint32_t addr;
+
+    if ((lcdltdc.width == 0u) || (lcdltdc.height == 0u) || (color == NULL))
+    {
+        return;
+    }
+    if ((sx >= lcdltdc.width) || (sy >= lcdltdc.height))
+    {
+        return;
+    }
+    if (ex >= lcdltdc.width)
+    {
+        ex = lcdltdc.width - 1u;
+    }
+    if (ey >= lcdltdc.height)
+    {
+        ey = lcdltdc.height - 1u;
+    }
+    if ((ex < sx) || (ey < sy))
+    {
+        return;
+    }
+  
+    /* 闁秆勫姈閻栵絿鍖栭弰蹇旂ギ闁?*/
+    if (lcdltdc.dir)               /* 婵☆垼浜滈惈?*/
+    {
+        psx = sx;
+        psy = sy;
+        pex = ex;
+        pey = ey;
+    }
+    else                           /* 缂佹梹鐗曢惈?*/
+    {
+        psx = sy;
+        psy = lcdltdc.pheight - ex - 1;
+        pex = ey;
+        pey = lcdltdc.pheight - sx - 1;
+    }
+
+#if (LTDC_ENABLE_DMA2D == 0)
+    ltdc_color_fill_sw_rect(psx, psy, pex, pey, color);
+    return;
+#endif
+
+    offline = lcdltdc.pwidth - (pex - psx + 1);   /* 閻炴稑鑻禍鍝ョ矓?鐟滅増鎸告晶鐘垫偘鐏炵偓浠橀柛姘凹缁斿瓨绋夐鍕壖缂佽京濮撮幏鐗堢▔鐎ｂ晝顏遍悶娑樼灱椤戝洦绋夐埀顒佺▔椤忓嫬鍓肩紒杈╁С缁狅綁姊荤€靛憡鐣遍柛宥呯箳缁€宀勫极閹殿喗绐?*/
+    addr = ((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * psy + psx));
+
+    __HAL_RCC_DMA2D_CLK_ENABLE();                             /* 濞达綀鍎婚崗妤2D闁哄啫鐖奸幐?*/
+
+    DMA2D->CR &= ~(DMA2D_CR_START);                           /* 闁稿繐鐗嗘禒鐘差潰椤㈢嫻A2D */
+    DMA2D->IFCR = DMA2D_FLAG_TC | DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE | DMA2D_FLAG_CTC | DMA2D_FLAG_TW;
+    DMA2D->CR = DMA2D_M2M;                                    /* 閻庢稒锚閸嬪秹宕抽妸銉ョ厒閻庢稒锚閸嬪秹宕抽妸未浣割嚕?*/
+    DMA2D->FGPFCCR = LTDC_PIXFORMAT;                          /* 閻犱礁澧介悿鍡涘礈瀹ュ棙鐝悘鐐插€块·渚€鎳濋崣澶屽鐎?*/
+    DMA2D->FGOR = 0;                                          /* 闁告挸绉靛▍娆戜沪閸屾繍鏀介柛瀣箳浜涘☉? */
+    DMA2D->OOR = offline;                                     /* 閻犱礁澧介悿鍡欐偘鐏炴垝鐒婄紒?*/
+
+    DMA2D->FGMAR = (uint32_t)color;                           /* 婵犙勫姇濠€鎾锤閳?*/
+    DMA2D->OMAR = addr;                                       /* 閺夊牊鎸搁崵顓犫偓娑櫭崑宥夊闯閵娿儲鍕鹃柛褉鍋?*/
+    DMA2D->NLR = (pey - psy + 1) | ((pex - psx + 1) << 16);   /* 閻犱焦鍎抽悾鍓ф偘鐏炵偓娈堕悗闈涘閻°劑宕?*/
+    DMA2D->CR |= DMA2D_CR_START;                              /* 闁告凹鍨版慨銆A2D */
+    if (ltdc_dma2d_wait_complete() != 0u)
+    {
+        /* DMA2D error/timeout: force software path so init can still paint framebuffer. */
+        ltdc_color_fill_sw_rect(psx, psy, pex, pey, color);
+    }
+}  
+
+/**
+ * @brief       LTDC婵炴挸鎳庨惈?
+ * @param       color       : 濡増绮忔竟濠囧磹?
+ * @retval      闁?
+ */
+void ltdc_clear(uint32_t color)
+{
+    if ((lcdltdc.width == 0u) || (lcdltdc.height == 0u))
+    {
+        return;
+    }
+    ltdc_fill(0, 0, lcdltdc.width - 1, lcdltdc.height - 1, color);
+}
+
+/**
+ * @brief       LTDC闁哄啫鐖奸幐?Fdclk)閻犱礁澧介悿鍡涘礄閼恒儲娈?
+ * @param       pll3n     : PLL3 VCO闁稿﹤绉归。鍓佸寲缂佹ɑ娈?PLL闁稿﹤绉归。?,        闁告瑦鐗曢埀顒冨鐎垫牠宕?4~512.
+ * @param       pll3m     : PLL3濡澘瀚崹搴紣閹寸娀鍏囬柡?閺夆晜澶嘗L濞戞柨顑呮晶鐘绘儍閸曨偄鐎诲Λ?,  闁告瑦鐗曢埀顒冨鐎垫牠宕?1~63.
+ * @param       pll3r     : PLL3闁汇劌澧旈柛鎺戞椤ｅ墎鍖栫紒妯绘(PLL濞戞柨顑呴幃妤呮儍閸曨偄鐎诲Λ?,   闁告瑦鐗曢埀顒冨鐎垫牠宕?1~128.
+ *
+ * @note        Fvco = Fs * (pll3n / pll3m);
+ *              Fr = Fvco / pll3r = Fs * (pll3n / (pll3m * pll3r));
+ *              Fdclk = Fr;
+ *              闁稿繑婀归懙?
+ *              Fvco: VCO濡増鍨瑰?
+ *              Fr: PLL3闁汇劌澧旈柛鎺戞椤ｈ埖娼忛幘鍐叉瘔闁哄啫鐖奸幐鎾达紣閹寸姴鑺?
+ *              Fs: PLL3閺夊牊鎸搁崣鍡涘籍閸洘瀵Λ鐗堝灩瀹?闁告瑯鍨禍鎺楀及閻ゆ槓I,CSI,HSE缂?缂侇垵宕电划娲籍閸洘瀵柛鎺撶箓椤劙宕犻弽銊︻槯闂侇偄顦扮€氣剦SE濞达絾绮堢拹鐑禠L闁汇劌瀚欢顓㈠礂閵夛附顦ч梺鐣屽枑缁?.
+ *
+ *              闁稿娲╅?濠㈣埖鐗犻崕鎾疾閼搁潧鐩佸☉?5M, pllm = 25 闁汇劌瀚鍌炲磹? Fs = 25Mhz闁?pllm闁告帒妫濋。鍫曞触鎼搭煈鏆ラ柣?濞?Mhz.
+ *              濞撴艾顑呴々? 閻熸洑绀佺欢閬嶅礆?3M闁汇劌鍤汿DC闁哄啫鐖奸幐? 闁告帗鐟ヨぐ鍙夌閵夘煈鍟庣紓? pll3n = 300, pllm = 25, pll3r = 9
+ *              Fdclk= ((25 / 25) * 300) / 9 = 33 Mhz
+ * @retval      0, 闁瑰瓨鍔曟慨?
+ *              1, 濠㈡儼绮剧憴?
+ */
+uint8_t ltdc_clk_set(uint32_t pll3n, uint32_t pll3m, uint32_t pll3r)
+{
+    RCC_PeriphCLKInitTypeDef periphclk_initure;
+
+    /* LTDC閺夊牊鎸搁崵顓㈠磽韫囨洜顦遍柡鍐ㄧ埣閹告捇鏁嶅畝鍕粯閻熸洑鐒﹂悧鎾箲椤斿灝娈扮€规瓕椴告晶宥嗘媴鐠恒劍鏆忛柣銊ュ殯CD闁轰胶澧楀畵渚€骞嶇€ｎ亜鏂€闁哄鍎甸崢銈囩磾椤曞棛纾?*/
+    periphclk_initure.PeriphClockSelection = RCC_PERIPHCLK_LTDC;     /* LTDC闁哄啫鐖奸幐?*/
+    periphclk_initure.PLL3.PLL3M = pll3m;
+    periphclk_initure.PLL3.PLL3N = pll3n;
+    periphclk_initure.PLL3.PLL3P = 2;
+    periphclk_initure.PLL3.PLL3Q = 2;
+    periphclk_initure.PLL3.PLL3R = pll3r;
+
+    if (HAL_RCCEx_PeriphCLKConfig(&periphclk_initure) == HAL_OK)     /* 闂佹澘绉堕悿鍡涘磽韫囨洜顦遍柡鍐ㄧ埣閹?*/
+    {
+        return 0;                                                    /* 闁瑰瓨鍔曟慨?*/
+    }
+    else 
+    {
+        return 1;                                                    /* 濠㈡儼绮剧憴?*/
+    }
+}
+
+/**
+ * @brief       LTDC閻忕偛鍊婚悰銉╁矗閿濆牜鍟庣紓? 缂佹劖顨呰ぐ娑欑椤ф墫D闂傚牄鍨哄姗€宕搁幇顓犲灱缂侇垵顔婄拹鐔煎春閸濆嫬娅?
+ * @note        婵縿鍊曢崵閬嶅极閺夎法绠戝銈堫嚙濠€鐚痶dc_layer_parameter_config濞戞柨顑呴幃妤呭礃瀹ュ牜鍟庣紓?闁告瑱绠戦ˇ?鐟滅増鎹侀鏇犵磾椤旂偓鐣辩紒鎰殔瑜版盯宕愰梻瀵哥憹缂佹稑顦花顒勬閵忊剝绶查柣銊ュ閺?
+ *              閻庨潧鎲″?GRAM闁汇劌瀚幖閿嬫媴?閻?闁告劖鐟ч崑锝夊礄閼恒儲娈?,濞戞梻鍠曢々锕傚冀鐟欏嫬绁︾紒鎰殔瑜版盯鎯冮崟顐晬濡ゅ倹蓱濞煎灚娼诲☉婊庢斀濞ｅ浂鍠楅弫?闁告熬绠戦崹顖炲及閸撗佷粵濞戞挸绉甸婊呮暜?闁哄牜鍏涚欢銉х矙鐎ｎ亝鐨戦柡鍫簻娴犳稒绌遍鑺ユ毉).
+ * @param       layerx      : 0,缂佹鍏涚粩瀵镐沪? 1,缂佹鍏涚花鈺冧沪?
+ * @param       sx, sy      : 閻犙冨槻椤劙宕搁幇顓犲灱
+ * @param       width,height: 閻庣妫勭€规娊宕畝鍕蒋閹?
+ * @retval      闁?
+ */
+void ltdc_layer_window_config(uint8_t layerx, uint16_t sx, uint16_t sy, uint16_t width, uint16_t height)
+{
+    HAL_LTDC_SetWindowPosition(&g_ltdc_handle, sx, sy, layerx);     /* 閻犱礁澧介悿鍡欑玻濡も偓瑜版盯鎯冮崟顏嗙Т缂?*/
+    HAL_LTDC_SetWindowSize(&g_ltdc_handle, width, height, layerx);  /* 閻犱礁澧介悿鍡欑玻濡も偓瑜版稒寰勮閻?*/
+  
+    if (lcdltdc.pheight == 1280 && layerx == 0)
+    {
+        LTDC_Layer1->CFBLR = (width * 4 << 16) | (width * 4 + 7);   /* 閻㈩垎鍛闁告劖褰冪亸顖滄偘瀹€鍕瘣闁告粌鐭侀、鎴︽⒒绾惧鐛╅悹浣稿⒔閻?濞寸姰鍎遍悺褔鎳為崒娆掔闁告娲戠紞? */
+    }  
+}
+
+/**
+ * @brief       LTDC閻忕偛鍊搁悢鈧柡鍫墮瀵剟寮幏宀婂晭缂?
+ * @note        婵縿鍊曢崵閬嶅极?闊洤鎳橀妴蹇涘捶閳衡暟dc_layer_window_config濞戞柨顑呮晶鐘垫媼閸撗呮瀭.
+ * @param       layerx      : 0,缂佹鍏涚粩瀵镐沪? 1,缂佹鍏涚花鈺冧沪?
+ * @param       bufaddr     : 閻忕偛鍊块·渚€鎳濋幓鎺撳缂傚倹鎸搁悺銊ф導瀹勯偊娼楅柛锔芥緲濞?
+ * @param       pixformat   : 閻忕偛鍊搁崕姘辨閻樺磭澹愮€? 0,ARGB8888; 1,RGB888; 2,RGB565; 3,ARGB1555; 4,ARGB4444; 5,L8; 6;AL44; 7;AL88
+ * @param       alpha       : 閻忕偛鍊规禍鐣屸偓瑙勵儖lpha闁? 0,闁稿繈鍔戦埀顒€绻戝Σ?255,濞戞挸绉归埀顒€绻戝Σ?
+ * @param       alpha0      : 濮掓稒顭堥缁橈紣濠婂棗顥廇lpha闁? 0,闁稿繈鍔戦埀顒€绻戝Σ?255,濞戞挸绉归埀顒€绻戝Σ?
+ * @param       bfac1       : 婵烇絽鍢查幃搴ｅ寲缂佹ɑ娈?, 4(100),闁诡厽甯掗悾缍歭pha; 6(101),闁稿秴绻掔粈瀛塴pha*闁诡厽甯掗悾缍歭pha
+ * @param       bfac2       : 婵烇絽鍢查幃搴ｅ寲缂佹ɑ娈?, 5(101),闁诡厽甯掗悾缍歭pha; 7(111),闁稿秴绻掔粈瀛塴pha*闁诡厽甯掗悾缍歭pha
+ * @param       bkcolor     : 閻忕偛鍊跨划顖滄媼閵堝鏉归柤?32濞?濞?4濞达絽绉靛﹢渚€寮?RGB888闁哄秶鍘х槐?
+ * @retval      闁?
+ */
+void ltdc_layer_parameter_config(uint8_t layerx, uint32_t bufaddr, uint8_t pixformat, uint8_t alpha, uint8_t alpha0, uint8_t bfac1, uint8_t bfac2, uint32_t bkcolor)
+{
+    LTDC_LayerCfgTypeDef playercfg;
+
+    playercfg.WindowX0 = 0;                                            /* 缂佹劖顨呰ぐ娑氭導瀹勯偊娼梄闁秆勫姈閻?*/
+    playercfg.WindowY0 = 0;                                            /* 缂佹劖顨呰ぐ娑氭導瀹勯偊娼梇闁秆勫姈閻?*/
+    playercfg.WindowX1 = lcdltdc.pwidth;                               /* 缂佹劖顨呰ぐ娑氱磼閸噥鍓綳闁秆勫姈閻?*/
+    playercfg.WindowY1 = lcdltdc.pheight;                              /* 缂佹劖顨呰ぐ娑氱磼閸噥鍓綴闁秆勫姈閻?*/
+    playercfg.PixelFormat = pixformat;                                 /* 閻犱礁澧介悿鍡欎沪閸屾艾鍓肩紒杈╁У閻楃顕?*/
+    playercfg.Alpha = alpha;                                           /* 閻犱礁澧介悿鍡欎沪閸屾稐鑸悗瑙勵儖lpha闁?0~255,缁绢収鍏涘▎?55闁告帒妫濋。?255濞戞挸鎼悾顒勫礂閵娿倗鐟濋梺顐㈢箲濡?*/
+    playercfg.Alpha0 = alpha0;                                         /* 閻犱礁澧介悿鍡橆渶濡鍚囧Λ鐗堢矎婢瑰ぞlpha闁?*/
+    playercfg.BlendingFactor1 = (uint32_t)bfac1 << 8;                  /* 閻犱礁澧介悿鍡欎沪閸屾稖绌块柛姘墢闁挳寮? */
+    playercfg.BlendingFactor2 = (uint32_t)bfac2;                       /* 閻犱礁澧介悿鍡欎沪閸屾稖绌块柛姘墢闁挳寮? */
+    playercfg.FBStartAdress = bufaddr;                                 /* 閻犱礁澧介悿鍡欎沪閸岀儐鏉归柤瑙勫絻閹舵氨绱撻幘宕囨憼閻犙冨槻椤劙宕烽弶鎸庣祷 */
+    playercfg.ImageWidth = lcdltdc.pwidth;                             /* 閻犱礁澧介悿鍡橈紣濠婂棗顥忛悽顖嗗懐澶勯柛鎰絻鐏忣垶鎯冮崟顐晬閹?*/
+    playercfg.ImageHeight = lcdltdc.pheight;                           /* 閻犱礁澧介悿鍡橈紣濠婂棗顥忛悽顖嗗懐澶勯柛鎰絻鐏忣垶鎯冮崟顖滃蒋閹?*/
+    playercfg.Backcolor.Red = (uint8_t)(bkcolor & 0X00FF0000) >> 16;   /* 闁煎啿鏈▍娆愶紣濠婂棗顥忕紒淇卞灱婢瑰﹪鏌堥妸銉ョ€?*/
+    playercfg.Backcolor.Green = (uint8_t)(bkcolor & 0X0000FF00) >> 8;  /* 闁煎啿鏈▍娆愶紣濠婂棗顥忕紓浣藉劵婢瑰﹪鏌堥妸銉ョ€?*/
+    playercfg.Backcolor.Blue = (uint8_t)bkcolor & 0X000000FF;          /* 闁煎啿鏈▍娆愶紣濠婂棗顥忛柦鍐╃箚婢瑰﹪鏌堥妸銉ョ€?*/
+    HAL_LTDC_ConfigLayer(&g_ltdc_handle, &playercfg, layerx);          /* 閻犱礁澧介悿鍡涘箥閳ь剟鏌呮径澶庡幀闁汇劌瀚惇?*/
+}  
+
+/**
+ * @brief       LTDC閻犲洩顕цぐ鍥閵忊剝绶睮D
+ * @note        闁告巻鏅濋弫顥睠D RGB缂佹崘娉曞▓鎴﹀嫉閳ь剚顨囧Ο鍦Т(R7,G7,B7)闁哄鍎撮惁鎴﹀礆椤愶附妗ㄩ柡澶岀D
+ *              PG6 = R7(M0); PI2 = G7(M1); PI7 = B7(M2);
+ *              M2:M1:M0
+ *              0 :0 :0     4.3 閻?80*272  RGB閻?ID = 0X4342
+ *              0 :0 :1     7   閻?00*480  RGB閻?ID = 0X7084
+ *              0 :1 :0     7   閻?024*600 RGB閻?ID = 0X7016
+ *              0 :1 :1     5.5 閻?20*1280 RGB閻?ID = 0X5571
+ *              1 :0 :0     4.3 閻?00*480  RGB閻?ID = 0X4384
+ *              1 :0 :1     10.1閻?280*800 RGB閻?ID = 0X1018
+ * @param       闁?
+ * @retval      0, 闂傚牏鍋炵涵? 
+ *              闁稿繑婀圭划? LCD ID
+ */
+uint16_t ltdc_panelid_read(void)
+{
+    uint8_t idx = 0;
+
+    GPIO_InitTypeDef gpio_init_struct;
+
+    __HAL_RCC_GPIOG_CLK_ENABLE();                              /* 濞达綀鍎婚崗妤狿IOG闁哄啫鐖奸幐?*/
+    __HAL_RCC_GPIOI_CLK_ENABLE();                              /* 濞达綀鍎婚崗妤狿IOI闁哄啫鐖奸幐?*/
+    
+    gpio_init_struct.Pin = GPIO_PIN_6;                         /* R7鐎殿喗娲濋崜绯欸6 */
+    gpio_init_struct.Mode = GPIO_MODE_INPUT;                   /* 閺夊牊鎸搁崣?*/
+    gpio_init_struct.Pull = GPIO_PULLUP;                       /* 濞戞挸锕ユ刊?*/
+    gpio_init_struct.Speed = GPIO_SPEED_HIGH;                  /* 濡ゅ倹锕㈤埀?*/
+    HAL_GPIO_Init(GPIOG, &gpio_init_struct);                   /* 闁告帗绻傞～鎰板礌閺堢嚌6 */
+    
+    gpio_init_struct.Pin = GPIO_PIN_2 | GPIO_PIN_7;            /* G7,B7鐎殿喗娲濋崜绯欼2,7 */
+    HAL_GPIO_Init(GPIOI, &gpio_init_struct);                   /* 闁告帗绻傞～鎰板礌閺堢嚐2,7 */
+
+    delay_us(10);
+    idx  = (uint8_t)HAL_GPIO_ReadPin(GPIOG, GPIO_PIN_6);       /* 閻犲洩顕цぐ鍢? */
+    idx |= (uint8_t)HAL_GPIO_ReadPin(GPIOI, GPIO_PIN_2) << 1;  /* 閻犲洩顕цぐ鍢? */
+    idx |= (uint8_t)HAL_GPIO_ReadPin(GPIOI, GPIO_PIN_7) << 2;  /* 閻犲洩顕цぐ鍢? */
+
+    switch (idx)
+    {
+        case 0 :
+            return 0X4342;                    /* 4.3閻庣數顭堥惈?480*272闁告帒妫滄ご鎼佹偝?*/
+        
+        case 1 :
+            return 0X7084;                    /* 7  閻庣數顭堥惈?800*480闁告帒妫滄ご鎼佹偝?*/
+        
+        case 2 :
+            return 0X7016;                    /* 7  閻庣數顭堥惈?1024*600闁告帒妫滄ご鎼佹偝?*/
+        
+        case 3 :
+            return 0X5571;                    /* 5.5閻庣數顭堥惈?720*1280闁告帒妫滄ご鎼佹偝?*/
+        
+        case 4 :
+            return 0X4384;                    /* 4.3閻庣數顭堥惈?800*480闁告帒妫滄ご鎼佹偝?*/
+        
+        case 5 :
+            return 0X1018;                    /* 10.1閻庣數顭堥惈?1280*800闁告帒妫滄ご鎼佹偝?*/
+        
+        default :
+            return 0;
+    }
+}
+
+/**
+ * @brief       LTDC闁告帗绻傞～鎰板礌閺嵮冩瘣闁?
+ * @param       闁?
+ * @retval      闁?
+ */
+void ltdc_init(void)
+{
+    uint16_t lcdid = 0;
+    g_ltdc_init_stage = 1u;
+
+    /* Clear runtime geometry first, avoid stale values when re-init or ID mismatch. */
+    lcdltdc.pwidth = 0U;
+    lcdltdc.pheight = 0U;
+    lcdltdc.width = 0U;
+    lcdltdc.height = 0U;
+
+    lcdid = ltdc_panelid_read();    /* panel id from ID pins */
+    g_ltdc_init_stage = 2u;
+
+#if RGB_80_8001280
+    lcdid = 0X8081;
+#endif
+
+#if (LTDC_FORCE_PANEL_ID != 0U)
+    lcdid = (uint16_t)LTDC_FORCE_PANEL_ID;
+#endif
+
+#if LTDC_ENABLE_ID_FALLBACK
+    if (lcdid == 0U)
+    {
+        lcdid = LTDC_PANEL_FALLBACK_ID;
+    }
+#endif
+    g_ltdc_panel_id = lcdid;
+
+    if (lcdid == 0X5571)
+    {
+        tft_spi_init();
+    }
+  
+    if (lcdid == 0X4342)
+    {
+        lcdltdc.pwidth = 480;       /* 闂傚牄鍨哄妯尖偓纭呮鐎?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.pheight = 272;      /* 闂傚牄鍨哄妯活殗濡搫顔?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.hsw = 1;            /* 婵ɑ娼欓柦鈺呭触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.hbp = 40;           /* 婵ɑ娼欓柦鈺呭触鎼达紕鐭?*/
+        lcdltdc.hfp = 5;            /* 婵ɑ娼欓柦鈺呭礈瀹ュ懐鐭?*/      
+        lcdltdc.vsw = 1;            /* 闁搞劌鍊诲ú鍧楀触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.vbp = 8;            /* 闁搞劌鍊诲ú鍧楀触鎼达紕鐭?*/      
+        lcdltdc.vfp = 8;            /* 闁搞劌鍊诲ú鍧楀礈瀹ュ懐鐭?*/
+        ltdc_clk_set(300, 25, 33);  /* 閻犱礁澧介悿鍡涘磽韫囨洜顦遍柡鍐ㄧ埣閹? 9Mhz */
+    }
+    else if (lcdid == 0X7084)
+    {
+        lcdltdc.pwidth = 800;       /* 闂傚牄鍨哄妯尖偓纭呮鐎?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.pheight = 480;      /* 闂傚牄鍨哄妯活殗濡搫顔?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.hsw = 1;            /* 婵ɑ娼欓柦鈺呭触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.hbp = 46;           /* 婵ɑ娼欓柦鈺呭触鎼达紕鐭?*/
+        lcdltdc.hfp = 210;          /* 婵ɑ娼欓柦鈺呭礈瀹ュ懐鐭?*/
+        lcdltdc.vsw = 1;            /* 闁搞劌鍊诲ú鍧楀触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.vbp = 23;           /* 闁搞劌鍊诲ú鍧楀触鎼达紕鐭?*/
+        lcdltdc.vfp = 22;           /* 闁搞劌鍊诲ú鍧楀礈瀹ュ懐鐭?*/
+        ltdc_clk_set(300, 25, 9);   /* 閻犱礁澧介悿鍡涘磽韫囨洜顦遍柡鍐ㄧ埣閹?33Mhz(濠碘€冲€归悘澶婎嚕閳ь剟宕ｇ仦鐐枖,闂傚洠鍋撻悷鏇氱窔濡鹃攱鎷呭顧塋K闁?8.75Mhz,闁归潧绉崇槐鏉啃掗弮鍥╃獩濠? */
+    }
+    else if (lcdid == 0X7016)
+    {
+        lcdltdc.pwidth = 1024;      /* 闂傚牄鍨哄妯尖偓纭呮鐎?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.pheight = 600;      /* 闂傚牄鍨哄妯活殗濡搫顔?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.hsw = 20;           /* 婵ɑ娼欓柦鈺呭触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.hbp = 140;          /* 婵ɑ娼欓柦鈺呭触鎼达紕鐭?*/
+        lcdltdc.hfp = 160;          /* 婵ɑ娼欓柦鈺呭礈瀹ュ懐鐭?*/
+        lcdltdc.vsw = 3;            /* 闁搞劌鍊诲ú鍧楀触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.vbp = 20;           /* 闁搞劌鍊诲ú鍧楀触鎼达紕鐭?*/
+        lcdltdc.vfp = 12;           /* 闁搞劌鍊诲ú鍧楀礈瀹ュ懐鐭?*/
+        ltdc_clk_set(300, 25, 6);   /* 閻犱礁澧介悿鍡涘磽韫囨洜顦遍柡鍐ㄧ埣閹? 50Mhz */
+    }
+    else if (lcdid == 0X5571)
+    {
+        lcdltdc.pwidth = 720;       /* 闂傚牄鍨哄妯尖偓纭呮鐎?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.pheight = 1280;     /* 闂傚牄鍨哄妯活殗濡搫顔?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.hsw = 10;           /* 婵ɑ娼欓柦鈺呭触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.hbp = 36;           /* 婵ɑ娼欓柦鈺呭触鎼达紕鐭?*/
+        lcdltdc.hfp = 46;           /* 婵ɑ娼欓柦鈺呭礈瀹ュ懐鐭?*/
+        lcdltdc.vsw = 5;            /* 闁搞劌鍊诲ú鍧楀触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.vbp = 5;            /* 闁搞劌鍊诲ú鍧楀触鎼达紕鐭?*/
+        lcdltdc.vfp = 16;           /* 闁搞劌鍊诲ú鍧楀礈瀹ュ懐鐭?*/
+        ltdc_clk_set(330, 25, 6);   /* 閻犱礁澧介悿鍡涘磽韫囨洜顦遍柡鍐ㄧ埣閹? 55Mhz */
+    }
+    else if (lcdid == 0X4384)
+    {
+        lcdltdc.pwidth = 800;       /* 闂傚牄鍨哄妯尖偓纭呮鐎?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.pheight = 480;      /* 闂傚牄鍨哄妯活殗濡搫顔?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.hsw = 48;           /* 婵ɑ娼欓柦鈺呭触鐏炵虎鍔勯悗纭呮鐎?*/      
+        lcdltdc.hbp = 88;           /* 婵ɑ娼欓柦鈺呭触鎼达紕鐭?*/
+        lcdltdc.hfp = 40;           /* 婵ɑ娼欓柦鈺呭礈瀹ュ懐鐭?*/
+        lcdltdc.vsw = 3;            /* 闁搞劌鍊诲ú鍧楀触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.vbp = 32;           /* 闁搞劌鍊诲ú鍧楀触鎼达紕鐭?*/
+        lcdltdc.vfp = 13;           /* 闁搞劌鍊诲ú鍧楀礈瀹ュ懐鐭?*/
+        ltdc_clk_set(300, 25, 9);   /* 閻犱礁澧介悿鍡涘磽韫囨洜顦遍柡鍐ㄧ埣閹?33Mhz */ 
+    }
+    else if (lcdid == 0X8081)       /* 8閻?00*1280 RGB閻?*/
+    {
+        lcdltdc.pwidth = 800;       /* 闂傚牄鍨哄妯尖偓纭呮鐎?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.pheight = 1280;     /* 闂傚牄鍨哄妯活殗濡搫顔?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.hsw = 5;            /* 婵ɑ娼欓柦鈺呭触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.hbp = 20;           /* 婵ɑ娼欓柦鈺呭触鎼达紕鐭?*/
+        lcdltdc.hfp = 40;           /* 婵ɑ娼欓柦鈺呭礈瀹ュ懐鐭?*/
+        lcdltdc.vsw = 3;            /* 闁搞劌鍊诲ú鍧楀触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.vbp = 20;           /* 闁搞劌鍊诲ú鍧楀触鎼达紕鐭?*/
+        lcdltdc.vfp = 30;           /* 闁搞劌鍊诲ú鍧楀礈瀹ュ懐鐭?*/
+        ltdc_clk_set(300, 25, 5);   /* 閻犱礁澧介悿鍡涘磽韫囨洜顦遍柡鍐ㄧ埣閹? 60Mhz */
+    }
+    else if (lcdid == 0X1018)       /* 10.1閻?280*800 RGB閻?*/
+    {
+        lcdltdc.pwidth = 1280;      /* 闂傚牄鍨哄妯尖偓纭呮鐎?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.pheight = 800;      /* 闂傚牄鍨哄妯活殗濡搫顔?闁告娲戠紞?闁稿秴绻掔粈?*/
+        lcdltdc.hsw = 10;           /* 婵ɑ娼欓柦鈺呭触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.hbp = 140;          /* 婵ɑ娼欓柦鈺呭触鎼达紕鐭?*/
+        lcdltdc.hfp = 10;           /* 婵ɑ娼欓柦鈺呭礈瀹ュ懐鐭?*/
+        lcdltdc.vsw = 3;            /* 闁搞劌鍊诲ú鍧楀触鐏炵虎鍔勯悗纭呮鐎?*/
+        lcdltdc.vbp = 10;           /* 闁搞劌鍊诲ú鍧楀触鎼达紕鐭?*/
+        lcdltdc.vfp = 10;           /* 闁搞劌鍊诲ú鍧楀礈瀹ュ懐鐭?*/
+        ltdc_clk_set(300, 25, 5);   /* 閻犱礁澧介悿鍡涘磽韫囨洜顦遍柡鍐ㄧ埣閹? 60Mhz */
+    } 
+    g_ltdc_init_stage = 3u;
+    if ((lcdltdc.pwidth == 0U) || (lcdltdc.pheight == 0U))
+    {
+        g_ltdc_init_stage = 0xE301u;
+        lcddev.id = 0U;
+        lcddev.width = 0U;
+        lcddev.height = 0U;
+        return;
+    }
+
+    lcddev.id = lcdid;
+
+    lcddev.width = lcdltdc.pwidth;      /* 閻犱礁澧介悿鍞媍ddev闁汇劌瀚鏃€鎯旈敃鈧顒勫极?*/
+    lcddev.height = lcdltdc.pheight;    /* 閻犱礁澧介悿鍞媍ddev闁汇劌瀚伴悵顔芥償閿曗偓瀵剟寮?*/
+    lcdltdc.pixformat = LTDC_PIXFORMAT; /* 濡増绮忔竟濠囧磽韫囨洜顦遍柡宥囧帶缁?*/
+
+#if LTDC_PIXFORMAT == LTDC_PIXFORMAT_ARGB8888
+    lcdltdc.pixsize = 4;    /* bytes per pixel */
+#elif LTDC_PIXFORMAT == LTDC_PIXFORMAT_RGB888
+    lcdltdc.pixsize = 3;    /* bytes per pixel */
+#else
+    lcdltdc.pixsize = 2;    /* bytes per pixel */
+#endif
+
+    g_ltdc_framebuf[0] = (uint32_t *)LTDC_FRAME_BUF_ADDR;
+    lcdltdc.activelayer = 0u;
+    
+    /* LTDC闂佹澘绉堕悿?*/
+    g_ltdc_handle.Instance = LTDC;
+    
+    if (lcdid == 0X8081)
+    {
+        g_ltdc_handle.Init.HSPolarity = LTDC_HSPOLARITY_AH;     /* 婵ɑ娼欓柦鈺呭触鐏炵虎鍔勯柡瀣╃劍閳?濡ゅ倹顭囬弫鎼佺嵁閾忣偅绠掗柡?*/
+    }
+    else
+    {
+        g_ltdc_handle.Init.HSPolarity = LTDC_HSPOLARITY_AL;     /* 婵ɑ娼欓柦鈺呭触鐏炵虎鍔勯柡瀣╃劍閳?濞达絽娴烽弫鎼佺嵁閾忣偅绠掗柡?*/
+    }
+    
+    g_ltdc_handle.Init.VSPolarity = LTDC_VSPOLARITY_AL;         /* 闁搞劌鍊诲ú鍧楀触鐏炵虎鍔勯柡瀣╃劍閳?濞达絽娴烽弫鎼佺嵁閾忣偅绠掗柡?*/
+    g_ltdc_handle.Init.DEPolarity = LTDC_DEPOLARITY_AL;         /* 闁轰胶澧楀畵浣规媴閼愁垰鍘撮柡瀣╃劍閳?濞达絽娴烽弫鎼佺嵁閾忣偅绠掗柡?*/
+    g_ltdc_handle.State = HAL_LTDC_STATE_RESET;
+    
+    if (lcdid == 0X1018 || lcdid == 0X8081)
+    {
+        g_ltdc_handle.Init.PCPolarity = LTDC_PCPOLARITY_IIPC;   /* 闁稿秴绻掔粈宀勫籍閸洘瀵柡瀣╃劍閳?濡ゅ倹顭囬弫鎼佺嵁閾忣偅绠掗柡?*/
+    }
+    else 
+    {
+        g_ltdc_handle.Init.PCPolarity = LTDC_PCPOLARITY_IPC;    /* 闁稿秴绻掔粈宀勫籍閸洘瀵柡瀣╃劍閳?濞达絽娴烽弫鎼佺嵁閾忣偅绠掗柡?*/
+    }
+
+    g_ltdc_handle.Init.HorizontalSync = lcdltdc.hsw - 1;                                            /* 婵ɑ娼欓柦鈺呭触鐏炵虎鍔勯悗纭呮鐎?*/
+    g_ltdc_handle.Init.VerticalSync = lcdltdc.vsw - 1;                                              /* 闁搞劌鍊诲ú鍧楀触鐏炵虎鍔勫Δ鍌浢€?*/
+    g_ltdc_handle.Init.AccumulatedHBP = lcdltdc.hsw + lcdltdc.hbp - 1;                              /* 缂侀硸鍨版慨鐐差潩閺夋垿鎸柛姘闁劎鈧妫勭€?*/
+    g_ltdc_handle.Init.AccumulatedVBP = lcdltdc.vsw + lcdltdc.vbp - 1;                              /* 缂侀硸鍨版慨鐐哄垂閸屾粍绾柛姘闁劍顨囧Ο鍝勵唺 */
+    g_ltdc_handle.Init.AccumulatedActiveW = lcdltdc.hsw + lcdltdc.hbp + lcdltdc.pwidth - 1;         /* 缂侀硸鍨版慨鐐哄嫉婢跺娅忛悗纭呮鐎?*/
+    g_ltdc_handle.Init.AccumulatedActiveH = lcdltdc.vsw + lcdltdc.vbp + lcdltdc.pheight - 1;        /* 缂侀硸鍨版慨鐐哄嫉婢跺娅忓Δ鍌浢€?*/
+    g_ltdc_handle.Init.TotalWidth = lcdltdc.hsw + lcdltdc.hbp + lcdltdc.pwidth + lcdltdc.hfp - 1;   /* 闁诡剝顕ч鏃€鎯?*/
+    g_ltdc_handle.Init.TotalHeigh = lcdltdc.vsw + lcdltdc.vbp + lcdltdc.pheight + lcdltdc.vfp - 1;  /* 闁诡剙顭烽悵顔芥償?*/
+    g_ltdc_handle.Init.Backcolor.Red = 0;                                                           /* 闁煎啿鏈▍娆撴嚌閼碱剙顒㈤柤瑙勫絻閳?*/
+    g_ltdc_handle.Init.Backcolor.Green = 0;                                                         /* 闁煎啿鏈▍娆撴嚌閼碱剝闆归柤瑙勫絻閳?*/
+    g_ltdc_handle.Init.Backcolor.Blue = 0;                                                          /* 闁煎啿鏈▍娆撴嚌閼艰埖鎲柤瑙勫絻閳?*/
+    g_ltdc_init_stage = 4u;
+    HAL_LTDC_Init(&g_ltdc_handle);
+    g_ltdc_init_stage = 5u;
+
+    /* 閻忕偛鍊块崢銈囩磾?*/
+    ltdc_layer_parameter_config(0, (uint32_t)g_ltdc_framebuf[0], LTDC_PIXFORMAT, 255, 0, 6, 7, 0X000000);   /* 閻忕偛鍊稿顒勫极娴兼潙甯崇紓?*/
+    ltdc_layer_window_config(0, 0, 0, lcdltdc.pwidth, lcdltdc.pheight);                                     /* 閻忕偛鍊婚悰銉╁矗閿濆甯崇紓?濞寸媭妾糃D闂傚牄鍨哄姗€宕搁幇顓犲灱缂侇垵顔婄拹鐔煎春閸濆嫬娅?濞戞挸绉烽々锕傛⒕韫囧海鈹掑ǎ鍥跺枟閺? */
+    g_ltdc_init_stage = 6u;
+
+    //ltdc_layer_parameter_config(1, (uint32_t)g_ltdc_framebuf[1], LTDC_PIXFORMAT, 127, 0, 6, 7, 0X000000); /* 閻忕偛鍊稿顒勫极娴兼潙甯崇紓?*/
+    //ltdc_layer_window_config(1, 0, 0, lcdltdc.pwidth, lcdltdc.pheight);                                   /* 閻忕偛鍊婚悰銉╁矗閿濆甯崇紓?濞寸媭妾糃D闂傚牄鍨哄姗€宕搁幇顓犲灱缂侇垵顔婄拹鐔煎春閸濆嫬娅?濞戞挸绉烽々锕傛⒕韫囧海鈹掑ǎ鍥跺枟閺? */
+
+    //ltdc_display_dir(1);                 /* 濮掓稒顭堥璇差潨椤愩垻娼岄柨娑樿嫰濠€鐚痗d_init闁告垼濮ら弳鐔兼煂瀹€鍕〃閻犱礁澧介悿?*/
+    ltdc_select_layer(0);                  /* 闂侇偄顦扮€氥劎绮?閻?*/
+    /* Force a first-frame software clear so old SDRAM image is overwritten even if DMA2D is unstable. */
+    ltdc_fill_sw_rect(0u, 0u, lcdltdc.pwidth - 1u, lcdltdc.pheight - 1u, 0u);
+
+    /* Turn on backlight early for visibility, even if panel reset sequence stalls. */
+    LTDC_BL(1);
+    g_ltdc_init_stage = 61u;
+    if (lcdid != 0X5571)                   /* 5571鐎规瓕灏欑划鈩冨緞瀹ュ嫮绉撮弶鈺佹矗缁?*/
+    {
+        /* LTDC LCD濠㈣泛绉崇紞?*/
+        LTDC_RST(1);
+        g_ltdc_init_stage = 62u;
+        delay_ms(10);
+        g_ltdc_init_stage = 63u;
+        LTDC_RST(0);
+        g_ltdc_init_stage = 64u;
+        delay_ms(50);
+        g_ltdc_init_stage = 65u;
+        LTDC_RST(1); 
+        g_ltdc_init_stage = 66u;
+        delay_ms(200); 
+        g_ltdc_init_stage = 67u;
+    }
+    
+    g_ltdc_init_stage = 68u;
+    LTDC_BL(1);                            /* 闁绘劙鈧稑鐦ㄩ柤鍐茶嫰閸?*/
+    g_ltdc_init_stage = 69u;
+    ltdc_clear(0XFFFFFFFF);                /* 婵炴挸鎳庨惈?*/
+    g_ltdc_init_stage = 70u;
+}
+
+/**
+ * @brief       LTDC閹煎瓨娲栭惇鐧怬闁告帗绻傞～鎰板礌閺嵮勫闁哄啫鐖奸幐鎾存媴閼愁垰鍘?
+ * @note        婵縿鍊曢崵閬嶅极妫颁胶绐楅悶姘卞祽AL_LTDC_Init()閻犲鍟伴弫?
+ * @param       hltdc:LTDC闁告瑣鍎查悞?
+ * @retval      闁?
+ */
+void HAL_LTDC_MspInit(LTDC_HandleTypeDef *hltdc)
+{
+    GPIO_InitTypeDef gpio_init_struct;
+
+    __HAL_RCC_LTDC_CLK_ENABLE();       /* 濞达綀鍎婚崗妤睺DC闁哄啫鐖奸幐?*/
+    __HAL_RCC_DMA2D_CLK_ENABLE();      /* 濞达綀鍎婚崗妤A2D闁哄啫鐖奸幐?*/
+
+    /* LTDC濞ｅ洠鈧啿濞囬柟璨夊啫鐓戠€殿喗娲濋崜?LTDC_DE(PF10), LTDC_VSYNC(PI9), LTDC_HSYNC(PI10), LTDC_CLK(PG7) */
+    /* LTDC 闁轰胶澧楀畵浣割嚕閺団€冲    LTDC_R7(PG6), LTDC_R6(PH12), LTDC_R5(PH11), LTDC_R4(PH10), LTDC_R3(PH9), LTDC_R2(PH8), LTDC_R1(PA2), LTDC_R0(PG13),
+                       LTDC_G7(PI2), LTDC_G6(PI1), LTDC_G5(PI0), LTDC_G4(PH15), LTDC_G3(PH14), LTDC_G2(PH13), LTDC_G1(PE6), LTDC_G0(PE5),
+                       LTDC_B7(PI7), LTDC_B6(PI6), LTDC_B5(PI5), LTDC_B4(PI4), LTDC_B3(PA8), LTDC_B2(PD6), LTDC_B1(PG12), LTDC_B0(PG14) */
+  
+    /* 濞寸姰鍎扮粭鍛村及閻ゆ考DC濞ｅ洠鈧啿濞囬柟璨夊啫鐓戠€殿喗娲濋崜?DE/VSYNC/HSYNC/CLK缂佹稑顦卞▓鎴︽煀瀹ュ洨鏋?*/
+    LTDC_BL_GPIO_CLK_ENABLE();         /* LTDC_BL鐎殿喗娲濋崜濂稿籍閸洘瀵ù锝堝劵閸?*/
+    LTDC_RST_GPIO_CLK_ENABLE();        /* LTDC_RST鐎殿喗娲濋崜濂稿籍閸洘瀵ù锝堝劵閸?*/  
+    LTDC_DE_GPIO_CLK_ENABLE();         /* LTDC_DE鐎殿喗娲濋崜濂稿籍閸洘瀵ù锝堝劵閸?*/
+    LTDC_VSYNC_GPIO_CLK_ENABLE();      /* LTDC_VSYNC鐎殿喗娲濋崜濂稿籍閸洘瀵ù锝堝劵閸?*/
+    LTDC_HSYNC_GPIO_CLK_ENABLE();      /* LTDC_HSYNC鐎殿喗娲濋崜濂稿籍閸洘瀵ù锝堝劵閸?*/
+    LTDC_CLK_GPIO_CLK_ENABLE();        /* LTDC_CLK鐎殿喗娲濋崜濂稿籍閸洘瀵ù锝堝劵閸?*/
+    
+    gpio_init_struct.Pin = LTDC_BL_GPIO_PIN;                /* 闁煎啿鑻崢婊堝箳瑜嶉崺妤€顕ｉ弴鈥冲 */
+    gpio_init_struct.Mode = GPIO_MODE_OUTPUT_PP;            /* 闁规亽鍔嶇亸铏綇閹惧啿姣?*/
+    gpio_init_struct.Pull = GPIO_PULLUP;                    /* 濞戞挸锕ユ刊?*/
+    gpio_init_struct.Speed = GPIO_SPEED_HIGH;               /* 濡ゅ倹锕㈤埀?*/
+    HAL_GPIO_Init(LTDC_BL_GPIO_PORT, &gpio_init_struct);    /* 闁告帗绻傞～鎰板礌閺堟┏DC_BL鐎殿喗娲濋崜?*/
+
+    gpio_init_struct.Pin = LTDC_RST_GPIO_PIN;               /* 濠㈣泛绉崇紞鍛嚕閺団€冲 */
+    HAL_GPIO_Init(LTDC_RST_GPIO_PORT, &gpio_init_struct);   /* 闁告帗绻傞～鎰板礌閺堟┏DC_RST鐎殿喗娲濋崜?*/
+    
+    gpio_init_struct.Pin = LTDC_DE_GPIO_PIN;                /* LTDC_DE鐎殿喗娲濋崜?*/     
+    gpio_init_struct.Mode = GPIO_MODE_AF_PP;                /* 濠㈣泛绉堕弫銈夊箳閵婏箑淇洪弶鍫熸尭閸?*/
+    gpio_init_struct.Pull = GPIO_NOPULL;                    /* 闁哄啰濮崇粭鍌涚▔鐎ｎ偄顎?*/
+    gpio_init_struct.Speed = GPIO_SPEED_HIGH;               /* 濡ゅ倹锕㈤埀?*/
+    gpio_init_struct.Alternate = GPIO_AF14_LTDC;            /* 濠㈣泛绉堕弫銈嗙▔缁℃湦DC */
+    HAL_GPIO_Init(LTDC_DE_GPIO_PORT, &gpio_init_struct);    /* 闁告帗绻傞～鎰板礌閺堟┏DC_DE鐎殿喗娲濋崜?*/
+    
+    gpio_init_struct.Pin = LTDC_VSYNC_GPIO_PIN;             /* LTDC_VSYNC鐎殿喗娲濋崜?*/
+    HAL_GPIO_Init(LTDC_VSYNC_GPIO_PORT, &gpio_init_struct); /* 闁告帗绻傞～鎰板礌閺堟┏DC_VSYNC鐎殿喗娲濋崜?*/
+    
+    gpio_init_struct.Pin = LTDC_HSYNC_GPIO_PIN;             /* LTDC_HSYNC鐎殿喗娲濋崜?*/  
+    HAL_GPIO_Init(LTDC_HSYNC_GPIO_PORT, &gpio_init_struct); /* 闁告帗绻傞～鎰板礌閺堟┏DC_HSYNC鐎殿喗娲濋崜?*/
+    
+    gpio_init_struct.Pin = LTDC_CLK_GPIO_PIN;               /* LTDC_CLK鐎殿喗娲濋崜?*/  
+    HAL_GPIO_Init(LTDC_CLK_GPIO_PORT, &gpio_init_struct);   /* 闁告帗绻傞～鎰板礌閺堟┏DC_CLK鐎殿喗娲濋崜?*/
+
+    /* 濞寸姰鍎扮粭鍛村及閻ゆ考DC 闁轰胶澧楀畵浣割嚕閺団€冲闁汇劌瀚伴崢銈囩磾?*/
+    __HAL_RCC_GPIOA_CLK_ENABLE();                /* 濞达綀鍎婚崗妤狿IOA闁哄啫鐖奸幐?*/
+    __HAL_RCC_GPIOD_CLK_ENABLE();                /* 濞达綀鍎婚崗妤狿IOD闁哄啫鐖奸幐?*/
+    __HAL_RCC_GPIOE_CLK_ENABLE();                /* 濞达綀鍎婚崗妤狿IOE闁哄啫鐖奸幐?*/
+    __HAL_RCC_GPIOG_CLK_ENABLE();                /* 濞达綀鍎婚崗妤狿IOG闁哄啫鐖奸幐?*/
+    __HAL_RCC_GPIOH_CLK_ENABLE();                /* 濞达綀鍎婚崗妤狿IOH闁哄啫鐖奸幐?*/
+    __HAL_RCC_GPIOI_CLK_ENABLE();                /* 濞达綀鍎婚崗妤狿IOI闁哄啫鐖奸幐?*/
+    
+    /* 闁告帗绻傞～鎰板礌閺堢嚄8 */
+    gpio_init_struct.Pin = GPIO_PIN_8;
+    gpio_init_struct.Alternate = GPIO_AF13_LTDC; /* 濠㈣泛绉堕弫銈嗙▔缁℃湦DC */
+    HAL_GPIO_Init(GPIOA, &gpio_init_struct);
+
+    /* 闁告帗绻傞～鎰板礌閺堢嚄2 */
+    gpio_init_struct.Pin = GPIO_PIN_2;
+    gpio_init_struct.Alternate = GPIO_AF14_LTDC; /* 濠㈣泛绉堕弫銈嗙▔缁℃湦DC */
+    HAL_GPIO_Init(GPIOA, &gpio_init_struct);
+
+    /* 闁告帗绻傞～鎰板礌閺堢嚉6 */
+    gpio_init_struct.Pin = GPIO_PIN_6;
+    HAL_GPIO_Init(GPIOD, &gpio_init_struct);
+
+    /* PE5 can be switched between LTDC_G0 and SAI1_SCK_A by LTDC_USE_PE5_G0. */
+#if LTDC_USE_PE5_G0
+    gpio_init_struct.Pin = GPIO_PIN_5 | GPIO_PIN_6;
+#else
+    gpio_init_struct.Pin = GPIO_PIN_6;
+#endif
+    HAL_GPIO_Init(GPIOE, &gpio_init_struct);
+
+    /* 闁告帗绻傞～鎰板礌閺堢嚌6,12,13,14 */
+    gpio_init_struct.Pin = GPIO_PIN_6 | GPIO_PIN_12 | GPIO_PIN_13 | GPIO_PIN_14; 
+    HAL_GPIO_Init(GPIOG, &gpio_init_struct);
+    
+    /* 闁告帗绻傞～鎰板礌閺堢嚍8,9,10,11,12,13,14,15 */
+    gpio_init_struct.Pin = GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | \
+                     GPIO_PIN_12 | GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
+    HAL_GPIO_Init(GPIOH, &gpio_init_struct);
+    
+    /* 闁告帗绻傞～鎰板礌閺堢嚐0,1,2,4,5,6,7 */
+    gpio_init_struct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_4 | GPIO_PIN_5 | \
+                     GPIO_PIN_6 | GPIO_PIN_7;
+    HAL_GPIO_Init(GPIOI, &gpio_init_struct); 
+}
+
+
+
+
+
+
+
+
+
+

@@ -13,6 +13,7 @@
 
 #include "LCD/ltdc.h"
 #include "LCD/lcd.h"
+#include "LCD/dma2d_accel.h"
 #include "LCD/tft_spi.h"
 
 
@@ -69,13 +70,25 @@ volatile uint32_t g_ltdc_dma2d_timeout_count = 0u;
 volatile uint32_t g_ltdc_dma2d_transfer_count = 0u;
 volatile uint32_t g_ltdc_dma2d_sw_fallback_count = 0u;
 volatile uint16_t g_ltdc_panel_id = 0u;
+volatile uint32_t g_ltdc_swap_count = 0u;
+volatile uint32_t g_ltdc_swap_pending_count = 0u;
+volatile uint32_t g_ltdc_swap_error_count = 0u;
+
+static volatile uint8_t s_front_buf_idx = 0u;
+static volatile uint8_t s_back_buf_idx = 0u;
+static volatile uint8_t s_swap_pending = 0u;
 
 #define LTDC_DMA2D_TIMEOUT_LOOP   0X1FFFFFU
+
+static uint32_t *ltdc_draw_buf_ptr(void)
+{
+    return g_ltdc_framebuf[s_back_buf_idx];
+}
 
 static void ltdc_fill_sw_rect(uint32_t psx, uint32_t psy, uint32_t pex, uint32_t pey, uint32_t color)
 {
 #if LTDC_PIXFORMAT == LTDC_PIXFORMAT_ARGB8888
-    uint32_t *base = (uint32_t *)g_ltdc_framebuf[lcdltdc.activelayer];
+    uint32_t *base = (uint32_t *)ltdc_draw_buf_ptr();
     for (uint32_t y = psy; y <= pey; y++)
     {
         uint32_t *row = base + y * lcdltdc.pwidth + psx;
@@ -88,7 +101,7 @@ static void ltdc_fill_sw_rect(uint32_t psx, uint32_t psy, uint32_t pex, uint32_t
     uint8_t r = (uint8_t)((color >> 16) & 0xFFu);
     uint8_t g = (uint8_t)((color >> 8) & 0xFFu);
     uint8_t b = (uint8_t)(color & 0xFFu);
-    uint8_t *base = (uint8_t *)g_ltdc_framebuf[lcdltdc.activelayer];
+    uint8_t *base = (uint8_t *)ltdc_draw_buf_ptr();
     for (uint32_t y = psy; y <= pey; y++)
     {
         uint8_t *row = base + (y * lcdltdc.pwidth + psx) * 3u;
@@ -102,7 +115,7 @@ static void ltdc_fill_sw_rect(uint32_t psx, uint32_t psy, uint32_t pex, uint32_t
     }
 #else
     uint16_t c565 = (uint16_t)color;
-    uint16_t *base = (uint16_t *)g_ltdc_framebuf[lcdltdc.activelayer];
+    uint16_t *base = (uint16_t *)ltdc_draw_buf_ptr();
     for (uint32_t y = psy; y <= pey; y++)
     {
         uint16_t *row = base + y * lcdltdc.pwidth + psx;
@@ -118,7 +131,7 @@ static void ltdc_color_fill_sw_rect(uint32_t psx, uint32_t psy, uint32_t pex, ui
 {
 #if LTDC_PIXFORMAT == LTDC_PIXFORMAT_RGB565
     uint32_t width = pex - psx + 1u;
-    uint16_t *base = (uint16_t *)g_ltdc_framebuf[lcdltdc.activelayer];
+    uint16_t *base = (uint16_t *)ltdc_draw_buf_ptr();
 
     for (uint32_t y = psy; y <= pey; y++)
     {
@@ -136,38 +149,6 @@ static void ltdc_color_fill_sw_rect(uint32_t psx, uint32_t psy, uint32_t pex, ui
     (void)color;
 #endif
 }
-
-static uint8_t ltdc_dma2d_wait_complete(void)
-{
-    uint32_t timeout = 0u;
-
-    while (1)
-    {
-        uint32_t isr = DMA2D->ISR;
-
-        if ((isr & DMA2D_FLAG_TC) != 0u)
-        {
-            DMA2D->IFCR = DMA2D_FLAG_TC;
-            return 0u;
-        }
-
-        if ((isr & (DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE)) != 0u)
-        {
-            g_ltdc_dma2d_timeout_count++;
-            DMA2D->IFCR = DMA2D_FLAG_TC | DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE | DMA2D_FLAG_CTC | DMA2D_FLAG_TW;
-            return 1u;
-        }
-
-        timeout++;
-        if (timeout > LTDC_DMA2D_TIMEOUT_LOOP)
-        {
-            g_ltdc_dma2d_timeout_count++;
-            DMA2D->IFCR = DMA2D_FLAG_TC | DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE | DMA2D_FLAG_CTC | DMA2D_FLAG_TW;
-            return 1u;
-        }
-    }
-}
-
 
 /**
  * @brief       LTDC 总开关
@@ -216,6 +197,33 @@ void ltdc_select_layer(uint8_t layerx)
     lcdltdc.activelayer = layerx;
 }
 
+uint32_t ltdc_get_frontbuf_addr(void)
+{
+    return (uint32_t)g_ltdc_framebuf[s_front_buf_idx];
+}
+
+uint32_t ltdc_get_backbuf_addr(void)
+{
+    return (uint32_t)g_ltdc_framebuf[s_back_buf_idx];
+}
+
+void ltdc_request_swap(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    s_swap_pending = 1u;
+    g_ltdc_swap_pending_count++;
+    if (primask == 0u)
+    {
+        __enable_irq();
+    }
+}
+
+uint8_t ltdc_is_swap_pending(void)
+{
+    return s_swap_pending;
+}
+
 /**
  * @brief       设置显示方向
  * @param       dir        0:竖屏映射 1:横屏映射
@@ -237,6 +245,67 @@ void ltdc_display_dir(uint8_t dir)
     }
 }
 
+static uint8_t ltdc_rect_to_panel(uint16_t sx,
+                                  uint16_t sy,
+                                  uint16_t ex,
+                                  uint16_t ey,
+                                  uint32_t *psx,
+                                  uint32_t *psy,
+                                  uint32_t *pex,
+                                  uint32_t *pey)
+{
+    if ((psx == NULL) || (psy == NULL) || (pex == NULL) || (pey == NULL))
+    {
+        return 0u;
+    }
+
+    if ((lcdltdc.width == 0u) || (lcdltdc.height == 0u))
+    {
+        return 0u;
+    }
+    if ((sx >= lcdltdc.width) || (sy >= lcdltdc.height))
+    {
+        return 0u;
+    }
+    if (ex >= lcdltdc.width)
+    {
+        ex = lcdltdc.width - 1u;
+    }
+    if (ey >= lcdltdc.height)
+    {
+        ey = lcdltdc.height - 1u;
+    }
+    if ((ex < sx) || (ey < sy))
+    {
+        return 0u;
+    }
+
+    if (lcdltdc.dir != 0u)
+    {
+        *psx = sx;
+        *psy = sy;
+        *pex = ex;
+        *pey = ey;
+    }
+    else
+    {
+        if (ex >= lcdltdc.pheight)
+        {
+            ex = lcdltdc.pheight - 1u;
+        }
+        if (sx >= lcdltdc.pheight)
+        {
+            sx = lcdltdc.pheight - 1u;
+        }
+        *psx = sy;
+        *psy = lcdltdc.pheight - ex - 1u;
+        *pex = ey;
+        *pey = lcdltdc.pheight - sx - 1u;
+    }
+
+    return 1u;
+}
+
 /**
  * @brief       画点
  * @param       x, y       坐标
@@ -249,35 +318,35 @@ void ltdc_draw_point(uint16_t x, uint16_t y, uint32_t color)
 
     if (lcdltdc.dir)    /* 横屏 */
     {
-        *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) = color;
+        *(uint32_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) = color;
     }
     else                /* 竖屏 */
     {
-        *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) = color;
+        *(uint32_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) = color;
     }
 
 #elif LTDC_PIXFORMAT == LTDC_PIXFORMAT_RGB888
 
     if (lcdltdc.dir)     /* 横屏 */
     {
-        *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) = color;
-        *(uint8_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x) + 2) = color >> 16;
+        *(uint16_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) = color;
+        *(uint8_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * y + x) + 2) = color >> 16;
     }
     else                /* 竖屏 */
     {
-        *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) = color;
-        *(uint8_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y) + 2) = color >> 16;
+        *(uint16_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) = color;
+        *(uint8_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y) + 2) = color >> 16;
     }
     
 #else
 
     if (lcdltdc.dir)    /* 横屏 */
     {
-        *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) = color;
+        *(uint16_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) = color;
     }
     else                /* 竖屏 */
     {
-        *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) = color;
+        *(uint16_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) = color;
     }
 
 #endif
@@ -294,33 +363,33 @@ uint32_t ltdc_read_point(uint16_t x, uint16_t y)
 
     if (lcdltdc.dir)    /* 横屏 */
     {
-        return *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x));
+        return *(uint32_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * y + x));
     }
     else                /* 竖屏 */
     {
-        return *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y));
+        return *(uint32_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y));
     }
 
 #elif LTDC_PIXFORMAT == LTDC_PIXFORMAT_RGB888
 
     if (lcdltdc.dir)    /* 横屏 */
     {
-        return *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) & 0XFFFFFF;
+        return *(uint32_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * y + x)) & 0XFFFFFF;
     }
     else                /* 竖屏 */
     {
-        return *(uint32_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) & 0XFFFFFF;
+        return *(uint32_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y)) & 0XFFFFFF;
     }
     
 #else
 
     if (lcdltdc.dir)    /* 横屏 */
     {
-        return *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * y + x));
+        return *(uint16_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * y + x));
     }
     else                /* 竖屏 */
     {
-        return *(uint16_t *)((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y));
+        return *(uint16_t *)((uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * (lcdltdc.pheight - x - 1) + y));
     }
 
 #endif
@@ -333,213 +402,214 @@ uint32_t ltdc_read_point(uint16_t x, uint16_t y)
  * @param       color      填充颜色
  * @retval      无
  */
-void ltdc_fill(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint32_t color)
-{ 
-    uint32_t psx, psy, pex, pey;        /* 以LCD面板为基准的坐标系,不随横竖屏变化而变化 */
+uint8_t ltdc_fill_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint32_t color)
+{
+    uint32_t psx;
+    uint32_t psy;
+    uint32_t pex;
+    uint32_t pey;
     uint16_t offline;
-    uint32_t addr; 
+    uint32_t addr;
 
-    if ((lcdltdc.width == 0u) || (lcdltdc.height == 0u))
+    if (ltdc_rect_to_panel(sx, sy, ex, ey, &psx, &psy, &pex, &pey) == 0u)
     {
-        return;
-    }
-    if ((sx >= lcdltdc.width) || (sy >= lcdltdc.height))
-    {
-        return;
-    }
-    if (ex >= lcdltdc.width)
-    {
-        ex = lcdltdc.width - 1u;
-    }
-    if (ey >= lcdltdc.height)
-    {
-        ey = lcdltdc.height - 1u;
-    }
-    if ((ex < sx) || (ey < sy))
-    {
-        return;
-    }
-
-    /* 坐标系转换 */
-    if (lcdltdc.dir)                    /* 横屏 */
-    {
-        psx = sx;
-        psy = sy;
-        pex = ex;
-        pey = ey;
-    }
-    else                                /* 竖屏 */
-    {
-        if (ex >= lcdltdc.pheight)
-        {
-            ex = lcdltdc.pheight - 1;   /* 限制范围 */
-        }
-
-        if (sx >= lcdltdc.pheight)
-        {
-            sx = lcdltdc.pheight - 1;   /* 限制范围 */
-        }
-        
-        psx = sy;
-        psy = lcdltdc.pheight - ex - 1;
-        pex = ey;
-        pey = lcdltdc.pheight - sx - 1;
+        return 0u;
     }
 
 #if (LTDC_ENABLE_DMA2D == 0)
     ltdc_fill_sw_rect(psx, psy, pex, pey, color);
-    return;
-#endif
-
-    offline = lcdltdc.pwidth - (pex - psx + 1);   /* 行偏移:当前行最后一个像素和下一行第一个像素之间的像素数目 */
-    addr = ((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * psy + psx));
-
-    __HAL_RCC_DMA2D_CLK_ENABLE();                             /* 使能DM2D时钟 */
-
-    /* LTDC相关时序: DE/VSYNC/HSYNC/CLK */
-    /* LTDC RGB数据线: R[7:0], G[7:0], B[7:0] */
-
-    DMA2D->CR &= ~(DMA2D_CR_START);                           /* 先停止DMA2D */
-    DMA2D->IFCR = DMA2D_FLAG_TC | DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE | DMA2D_FLAG_CTC | DMA2D_FLAG_TW;
-    DMA2D->CR = DMA2D_R2M;                                    /* 寄存器到存储器模式 */
-    DMA2D->OPFCCR = LTDC_PIXFORMAT;                           /* 设置颜色格式 */
-    DMA2D->OOR = offline;                                     /* 设置行偏移 */
-
-    DMA2D->OMAR = addr;                                       /* 输出存储器地址 */
-    DMA2D->NLR = (pey - psy + 1) | ((pex - psx + 1) << 16);   /* 设定行数寄存器 */
-    DMA2D->OCOLR = color;                                     /* 设定输出颜色寄存器 */
-    g_ltdc_dma2d_transfer_count++;
-    DMA2D->CR |= DMA2D_CR_START;                              /* 启动DMA2D */
-    if (ltdc_dma2d_wait_complete() != 0u)
+    return 1u;
+#else
+    offline = (uint16_t)(lcdltdc.pwidth - (pex - psx + 1u));
+    addr = (uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * psy + psx);
+    if (DMA2D_Accel_EnqueueFill(addr,
+                                (uint16_t)(pex - psx + 1u),
+                                (uint16_t)(pey - psy + 1u),
+                                offline,
+                                color) == 0u)
     {
-        /* DMA2D error/timeout: force software path so init can still paint framebuffer. */
         g_ltdc_dma2d_sw_fallback_count++;
         ltdc_fill_sw_rect(psx, psy, pex, pey, color);
+        return 0u;
     }
+    return 1u;
+#endif
 }
-//void ltdc_fill(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint32_t color)
-//{
-//    uint32_t timeout = 0; 
-//    uint16_t offline;
-//    uint32_t addr;  
-//
-//    if (ex >= lcdltdc.width)
-//    {
-//        ex = lcdltdc.width - 1;
-//    }
-//
-//    if (ey >= lcdltdc.height)
-//    {
-//        ey = lcdltdc.height - 1;
-//    }
-//
-//    {
-//        psx = sx; 
-//        psy = sy;
-//        pex = ex;
-//        pey = ey;
-//    }
-//    {
-//        psx = sy;
-//        psy = lcdltdc.pheight - ex - 1;
-//        pex = ey;
-//        pey = lcdltdc.pheight - sx - 1;
-//    }
 
-//    offline = lcdltdc.pwidth - (pex - psx + 1);
-//    addr =((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * psy + psx));
-//
-//    {
-//        color = ((color & 0X0000F800) << 8) | ((color & 0X000007E0) << 5 ) | ((color & 0X0000001F) << 3);
-//    }
-//
-//    g_dma2d_handle.Instance = DMA2D;
-//
-//
-//    {
-//        timeout++;
-//    }
-//}
-
-/**
- * @brief       区域填充点阵颜色
- * @param       sx, sy     起始坐标
- * @param       ex, ey     结束坐标
- * @param       color      颜色数组指针
- * @retval      无
- */
-void ltdc_color_fill(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint16_t *color)
+uint8_t ltdc_color_fill_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint16_t *color)
 {
-    uint32_t psx, psy, pex, pey;   /* 以LCD面板为基准的坐标系,不随横竖屏变化而变化 */
+    uint32_t psx;
+    uint32_t psy;
+    uint32_t pex;
+    uint32_t pey;
     uint16_t offline;
     uint32_t addr;
 
-    if ((lcdltdc.width == 0u) || (lcdltdc.height == 0u) || (color == NULL))
+    if ((color == NULL) || (ltdc_rect_to_panel(sx, sy, ex, ey, &psx, &psy, &pex, &pey) == 0u))
     {
-        return;
-    }
-    if ((sx >= lcdltdc.width) || (sy >= lcdltdc.height))
-    {
-        return;
-    }
-    if (ex >= lcdltdc.width)
-    {
-        ex = lcdltdc.width - 1u;
-    }
-    if (ey >= lcdltdc.height)
-    {
-        ey = lcdltdc.height - 1u;
-    }
-    if ((ex < sx) || (ey < sy))
-    {
-        return;
-    }
-  
-    /* 坐标系转换 */
-    if (lcdltdc.dir)               /* 横屏 */
-    {
-        psx = sx;
-        psy = sy;
-        pex = ex;
-        pey = ey;
-    }
-    else                           /* 竖屏 */
-    {
-        psx = sy;
-        psy = lcdltdc.pheight - ex - 1;
-        pex = ey;
-        pey = lcdltdc.pheight - sx - 1;
+        return 0u;
     }
 
 #if (LTDC_ENABLE_DMA2D == 0)
     ltdc_color_fill_sw_rect(psx, psy, pex, pey, color);
-    return;
-#endif
-
-    offline = lcdltdc.pwidth - (pex - psx + 1);   /* 行偏移:当前行最后一个像素和下一行第一个像素之间的像素数目 */
-    addr = ((uint32_t)g_ltdc_framebuf[lcdltdc.activelayer] + lcdltdc.pixsize * (lcdltdc.pwidth * psy + psx));
-
-    __HAL_RCC_DMA2D_CLK_ENABLE();                             /* 使能DM2D时钟 */
-
-    DMA2D->CR &= ~(DMA2D_CR_START);                           /* 先停止DMA2D */
-    DMA2D->IFCR = DMA2D_FLAG_TC | DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE | DMA2D_FLAG_CTC | DMA2D_FLAG_TW;
-    DMA2D->CR = DMA2D_M2M;                                    /* 存储器到存储器模式 */
-    DMA2D->FGPFCCR = LTDC_PIXFORMAT;                          /* 设置前景层颜色格式 */
-    DMA2D->FGOR = 0;                                          /* 前景层行偏移为0 */
-    DMA2D->OOR = offline;                                     /* 设置行偏移 */
-
-    DMA2D->FGMAR = (uint32_t)color;                           /* 源地址 */
-    DMA2D->OMAR = addr;                                       /* 输出存储器地址 */
-    DMA2D->NLR = (pey - psy + 1) | ((pex - psx + 1) << 16);   /* 设定行数寄存器 */
-    g_ltdc_dma2d_transfer_count++;
-    DMA2D->CR |= DMA2D_CR_START;                              /* 启动DMA2D */
-    if (ltdc_dma2d_wait_complete() != 0u)
+    return 1u;
+#else
+    offline = (uint16_t)(lcdltdc.pwidth - (pex - psx + 1u));
+    addr = (uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * psy + psx);
+    if (DMA2D_Accel_EnqueueCopy((uint32_t)color,
+                                addr,
+                                (uint16_t)(pex - psx + 1u),
+                                (uint16_t)(pey - psy + 1u),
+                                0u,
+                                offline) == 0u)
     {
-        /* DMA2D error/timeout: force software path so init can still paint framebuffer. */
         g_ltdc_dma2d_sw_fallback_count++;
         ltdc_color_fill_sw_rect(psx, psy, pex, pey, color);
+        return 0u;
     }
-}  
+    return 1u;
+#endif
+}
+
+uint8_t ltdc_l8_fill_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, const uint8_t *src_l8, uint16_t src_stride)
+{
+    uint32_t psx;
+    uint32_t psy;
+    uint32_t pex;
+    uint32_t pey;
+    uint16_t offline;
+    uint32_t addr;
+    uint16_t width;
+    uint16_t height;
+
+    if ((src_l8 == NULL) || (ltdc_rect_to_panel(sx, sy, ex, ey, &psx, &psy, &pex, &pey) == 0u))
+    {
+        return 0u;
+    }
+
+    width = (uint16_t)(pex - psx + 1u);
+    height = (uint16_t)(pey - psy + 1u);
+    if (src_stride < width)
+    {
+        return 0u;
+    }
+
+#if (LTDC_ENABLE_DMA2D == 0)
+    (void)src_l8;
+    (void)src_stride;
+    return 0u;
+#else
+    offline = (uint16_t)(lcdltdc.pwidth - width);
+    addr = (uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * psy + psx);
+    if (DMA2D_Accel_EnqueueBlitL8((uint32_t)src_l8,
+                                  addr,
+                                  width,
+                                  height,
+                                  (uint16_t)(src_stride - width),
+                                  offline) == 0u)
+    {
+        g_ltdc_dma2d_sw_fallback_count++;
+        return 0u;
+    }
+    return 1u;
+#endif
+}
+
+uint8_t ltdc_a8_blend_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, const uint8_t *src_a8, uint16_t src_stride, uint16_t color565)
+{
+    uint32_t psx;
+    uint32_t psy;
+    uint32_t pex;
+    uint32_t pey;
+    uint16_t offline;
+    uint32_t addr;
+    uint16_t width;
+    uint16_t height;
+
+    if ((src_a8 == NULL) || (ltdc_rect_to_panel(sx, sy, ex, ey, &psx, &psy, &pex, &pey) == 0u))
+    {
+        return 0u;
+    }
+
+    width = (uint16_t)(pex - psx + 1u);
+    height = (uint16_t)(pey - psy + 1u);
+    if (src_stride < width)
+    {
+        return 0u;
+    }
+
+#if (LTDC_ENABLE_DMA2D == 0)
+    (void)src_a8;
+    (void)src_stride;
+    (void)color565;
+    return 0u;
+#else
+    offline = (uint16_t)(lcdltdc.pwidth - width);
+    addr = (uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * psy + psx);
+    if (DMA2D_Accel_EnqueueBlendA8((uint32_t)src_a8,
+                                   addr,
+                                   width,
+                                   height,
+                                   (uint16_t)(src_stride - width),
+                                   offline,
+                                   color565) == 0u)
+    {
+        g_ltdc_dma2d_sw_fallback_count++;
+        return 0u;
+    }
+    return 1u;
+#endif
+}
+
+uint8_t ltdc_draw_flush(uint32_t timeout_loop)
+{
+#if (LTDC_ENABLE_DMA2D == 0)
+    (void)timeout_loop;
+    return 0u;
+#else
+    return DMA2D_Accel_Flush(timeout_loop);
+#endif
+}
+
+void ltdc_fill(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint32_t color)
+{
+    if (ltdc_fill_async(sx, sy, ex, ey, color) == 0u)
+    {
+        return;
+    }
+    if (ltdc_draw_flush(LTDC_DMA2D_TIMEOUT_LOOP) != 0u)
+    {
+        uint32_t psx;
+        uint32_t psy;
+        uint32_t pex;
+        uint32_t pey;
+        if (ltdc_rect_to_panel(sx, sy, ex, ey, &psx, &psy, &pex, &pey) != 0u)
+        {
+            g_ltdc_dma2d_sw_fallback_count++;
+            ltdc_fill_sw_rect(psx, psy, pex, pey, color);
+        }
+    }
+}
+
+void ltdc_color_fill(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint16_t *color)
+{
+    if (ltdc_color_fill_async(sx, sy, ex, ey, color) == 0u)
+    {
+        return;
+    }
+    if (ltdc_draw_flush(LTDC_DMA2D_TIMEOUT_LOOP) != 0u)
+    {
+        uint32_t psx;
+        uint32_t psy;
+        uint32_t pex;
+        uint32_t pey;
+        if (ltdc_rect_to_panel(sx, sy, ex, ey, &psx, &psy, &pex, &pey) != 0u)
+        {
+            g_ltdc_dma2d_sw_fallback_count++;
+            ltdc_color_fill_sw_rect(psx, psy, pex, pey, color);
+        }
+    }
+}
 
 /**
  * @brief       清屏
@@ -823,6 +893,14 @@ void ltdc_init(void)
         lcddev.height = 0U;
         return;
     }
+    if ((lcdltdc.pwidth != LTDC_TARGET_WIDTH) || (lcdltdc.pheight != LTDC_TARGET_HEIGHT))
+    {
+        g_ltdc_init_stage = 0xE302u;
+        lcddev.id = 0U;
+        lcddev.width = 0U;
+        lcddev.height = 0U;
+        return;
+    }
 
     lcddev.id = lcdid;
 
@@ -838,8 +916,27 @@ void ltdc_init(void)
     lcdltdc.pixsize = 2;    /* bytes per pixel */
 #endif
 
-    g_ltdc_framebuf[0] = (uint32_t *)LTDC_FRAME_BUF_ADDR;
+    {
+        uint32_t frame_bytes = lcdltdc.pwidth * lcdltdc.pheight * lcdltdc.pixsize;
+        uint32_t limit_end = LTDC_FRAME_BUF_ADDR + 0x00200000u; /* MPU non-cacheable window size */
+        if ((LTDC_FRAME_BUF_ADDR + frame_bytes * 2u) > limit_end)
+        {
+            g_ltdc_init_stage = 0xE303u;
+            lcddev.id = 0U;
+            lcddev.width = 0U;
+            lcddev.height = 0U;
+            return;
+        }
+        g_ltdc_framebuf[0] = (uint32_t *)LTDC_FRAME_BUF_ADDR;
+        g_ltdc_framebuf[1] = (uint32_t *)(LTDC_FRAME_BUF_ADDR + frame_bytes);
+    }
     lcdltdc.activelayer = 0u;
+    s_front_buf_idx = 0u;
+    s_back_buf_idx = 1u;
+    s_swap_pending = 0u;
+    g_ltdc_swap_count = 0u;
+    g_ltdc_swap_pending_count = 0u;
+    g_ltdc_swap_error_count = 0u;
     
     /* LTDC参数初始化 */
     g_ltdc_handle.Instance = LTDC;
@@ -879,15 +976,22 @@ void ltdc_init(void)
     g_ltdc_handle.Init.Backcolor.Blue = 0;                                                          /* 背景颜色蓝色部分 */
     g_ltdc_init_stage = 4u;
     HAL_LTDC_Init(&g_ltdc_handle);
+    DMA2D_Accel_Init();
     g_ltdc_init_stage = 5u;
 
     /* LTDC层参数配置 */
-    ltdc_layer_parameter_config(0, (uint32_t)g_ltdc_framebuf[0], LTDC_PIXFORMAT, 255, 0, 6, 7, 0X000000);   /* 配置layer0 */
+    ltdc_layer_parameter_config(0, (uint32_t)g_ltdc_framebuf[s_front_buf_idx], LTDC_PIXFORMAT, 255, 0, 6, 7, 0X000000);   /* 配置layer0 */
     ltdc_layer_window_config(0, 0, 0, lcdltdc.pwidth, lcdltdc.pheight);                                     /* 配置窗口 */
     g_ltdc_init_stage = 6u;
     ltdc_select_layer(0);                  /* 选择layer0 */
-    /* Force a first-frame software clear so old SDRAM image is overwritten even if DMA2D is unstable. */
+    /* Clear both buffers to a known value before first swap. */
+    s_back_buf_idx = s_front_buf_idx;
     ltdc_fill_sw_rect(0u, 0u, lcdltdc.pwidth - 1u, lcdltdc.pheight - 1u, 0u);
+    s_back_buf_idx = (uint8_t)(s_front_buf_idx ^ 1u);
+    ltdc_fill_sw_rect(0u, 0u, lcdltdc.pwidth - 1u, lcdltdc.pheight - 1u, 0u);
+
+    __HAL_LTDC_ENABLE_IT(&g_ltdc_handle, LTDC_IT_LI);
+    HAL_LTDC_ProgramLineEvent(&g_ltdc_handle, 0u);
 
     /* Turn on backlight early for visibility, even if panel reset sequence stalls. */
     LTDC_BL(1);
@@ -916,6 +1020,38 @@ void ltdc_init(void)
     g_ltdc_init_stage = 70u;
 }
 
+void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *hltdc)
+{
+    (void)hltdc;
+
+    if (s_swap_pending != 0u)
+    {
+        uint8_t next_front = s_back_buf_idx;
+        uint8_t next_back = s_front_buf_idx;
+
+        if (HAL_LTDC_SetAddress_NoReload(&g_ltdc_handle, (uint32_t)g_ltdc_framebuf[next_front], 0) == HAL_OK)
+        {
+            if (HAL_LTDC_Reload(&g_ltdc_handle, LTDC_RELOAD_VERTICAL_BLANKING) == HAL_OK)
+            {
+                s_front_buf_idx = next_front;
+                s_back_buf_idx = next_back;
+                s_swap_pending = 0u;
+                g_ltdc_swap_count++;
+            }
+            else
+            {
+                g_ltdc_swap_error_count++;
+            }
+        }
+        else
+        {
+            g_ltdc_swap_error_count++;
+        }
+    }
+
+    HAL_LTDC_ProgramLineEvent(&g_ltdc_handle, 0u);
+}
+
 /**
  * @brief       LTDC 底层 MSP 初始化
  * @param       hltdc      LTDC 句柄
@@ -924,9 +1060,17 @@ void ltdc_init(void)
 void HAL_LTDC_MspInit(LTDC_HandleTypeDef *hltdc)
 {
     GPIO_InitTypeDef gpio_init_struct;
+    (void)hltdc;
 
     __HAL_RCC_LTDC_CLK_ENABLE();       /* 使能LTDC时钟 */
     __HAL_RCC_DMA2D_CLK_ENABLE();      /* 使能DM2D时钟 */
+
+    HAL_NVIC_SetPriority(LTDC_IRQn, 6, 0);
+    HAL_NVIC_EnableIRQ(LTDC_IRQn);
+    HAL_NVIC_SetPriority(LTDC_ER_IRQn, 6, 0);
+    HAL_NVIC_EnableIRQ(LTDC_ER_IRQn);
+    HAL_NVIC_SetPriority(DMA2D_IRQn, 6, 0);
+    HAL_NVIC_EnableIRQ(DMA2D_IRQn);
 
     /* LTDC RGB数据线映射说明 */
     /* LTDC_R7(PG6)...LTDC_B0(PG14) */
