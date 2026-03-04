@@ -55,6 +55,8 @@ extern LTDC_HandleTypeDef g_ltdc_handle;      /* LTDC鍙ユ焺 */
 extern DMA2D_HandleTypeDef g_dma2d_handle;    /* DMA2D鍙ユ焺 */
 extern volatile uint32_t g_ltdc_init_stage;
 extern volatile uint32_t g_ltdc_dma2d_timeout_count;
+extern volatile uint32_t g_ltdc_dma2d_transfer_count;
+extern volatile uint32_t g_ltdc_dma2d_sw_fallback_count;
 extern volatile uint16_t g_ltdc_panel_id;
 
 

@@ -38,3 +38,8 @@ Output/
 
 # User-specific files
 .claude/settings.local.json
+
+# Keep core project memory/linker configs under version control.
+!START/MDK/START.sct
+!START/MDK-ARM/START/START.sct
+!START/MDK-ARM/START.uvprojx

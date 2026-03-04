@@ -32,6 +32,7 @@
 #include "app_data_stream.h"
 
 #include <math.h>
+#include <string.h>
 
 /* ============================================================================
  * 全局诊断变量 (Global Diagnostic Variables)
@@ -48,6 +49,8 @@ volatile float32_t g_srp_last_contrast = 0.0f;
 
 /** @brief 上次计算的质量指标 (用于调试) */
 volatile float32_t g_srp_last_quality = 0.0f;
+static volatile uint32_t s_srp_last_peak_idx = 0u;
+static volatile float32_t s_srp_last_peak_value = 0.0f;
 
 /* ============================================================================
  * 静态变量 (Static Variables)
@@ -594,6 +597,8 @@ void AI_SRP_PHAT_Init(void)
     g_srp_low_contrast_count = 0u;
     g_srp_last_contrast = 0.0f;
     g_srp_last_quality = 0.0f;
+    s_srp_last_peak_idx = 0u;
+    s_srp_last_peak_value = 0.0f;
 
     /* 重置历史状态 */
     s_has_last_valid = 0u;
@@ -653,7 +658,7 @@ void AI_SRP_PHAT_Process(Sound_Pos_t *result)
 
     /* 临时变量 */
     float32_t tau_buf[SRP_PAIR_COUNT];  /* TDOA 缓冲区 */
-    static const float32_t fine_offsets[FINE_GRID_SIZE] = {-7.5f, -2.5f, 2.5f, 7.5f};  /* 精搜偏移 */
+    const float32_t fine_step = (2.0f * FINE_SPAN_DEG) / (float32_t)FINE_GRID_SIZE;
     const float32_t inv_c = 1.0f / SPEED_OF_SOUND;  /* 声速倒数 (预计算) */
 
     /* ========== 步骤 1: GCC-PHAT 计算 ========== */
@@ -689,7 +694,7 @@ void AI_SRP_PHAT_Process(Sound_Pos_t *result)
         for (uint32_t fi = 0u; fi < FINE_GRID_SIZE; fi++)
         {
             /* 计算精搜水平角 */
-            float32_t theta_h = center_theta + fine_offsets[fi];
+            float32_t theta_h = center_theta + (-FINE_SPAN_DEG + ((float32_t)fi + 0.5f) * fine_step);
             float32_t sin_th, cos_th_unused;
             arm_sin_cos_f32(theta_h, &sin_th, &cos_th_unused);
 
@@ -700,7 +705,7 @@ void AI_SRP_PHAT_Process(Sound_Pos_t *result)
                 uint32_t global_idx = t * FINE_TOTAL_PER_TOP + local_idx;
 
                 /* 计算精搜垂直角 */
-                float32_t theta_v = center_phi + fine_offsets[fj];
+                float32_t theta_v = center_phi + (-FINE_SPAN_DEG + ((float32_t)fj + 0.5f) * fine_step);
                 float32_t sin_tv, cos_tv;
                 arm_sin_cos_f32(theta_v, &sin_tv, &cos_tv);
 
@@ -727,6 +732,8 @@ void AI_SRP_PHAT_Process(Sound_Pos_t *result)
     float32_t max_val;
     uint32_t max_idx;
     arm_max_f32(SRP_Power, SRP_GRID_TOTAL, &max_val, &max_idx);
+    s_srp_last_peak_idx = max_idx;
+    s_srp_last_peak_value = max_val;
 
     /* ========== 步骤 6: 异常处理 ========== */
     /* 检查结果是否有效 (NaN 或索引越界) */
@@ -736,6 +743,8 @@ void AI_SRP_PHAT_Process(Sound_Pos_t *result)
         g_srp_invalid_count++;
         g_srp_last_contrast = 0.0f;
         g_srp_last_quality = 0.0f;
+        s_srp_last_peak_idx = 0u;
+        s_srp_last_peak_value = 0.0f;
 
         /* 如果有上次有效结果，衰减输出；否则输出零 */
         if (s_has_last_valid != 0u)
@@ -851,5 +860,39 @@ void AI_SRP_PHAT_Process(Sound_Pos_t *result)
         s_last_valid.y_angle = cand_y;
         s_last_valid.energy = result->energy;
         s_has_last_valid = 1u;
+    }
+}
+
+void AI_SRP_CopyVisualizationFrame(SRP_VisFrame_t *frame)
+{
+    uint32_t i;
+
+    if (frame == NULL)
+    {
+        return;
+    }
+
+    memcpy(frame->power, SRP_Power, sizeof(float32_t) * SRP_GRID_TOTAL);
+
+    for (i = 0u; i < COARSE_TOTAL; i++)
+    {
+        uint32_t ti = i / COARSE_GRID_SIZE;
+        uint32_t pi = i % COARSE_GRID_SIZE;
+        frame->theta_deg[i] = coarse_theta_deg[ti];
+        frame->phi_deg[i] = coarse_phi_deg[pi];
+    }
+
+    for (i = 0u; i < FINE_TOTAL; i++)
+    {
+        frame->theta_deg[COARSE_TOTAL + i] = s_fine_theta_table[i];
+        frame->phi_deg[COARSE_TOTAL + i] = s_fine_phi_table[i];
+    }
+
+    frame->peak_idx = (uint32_t)s_srp_last_peak_idx;
+    frame->peak_value = (float32_t)s_srp_last_peak_value;
+
+    if ((!isfinite(frame->peak_value)) || (frame->peak_idx >= SRP_GRID_TOTAL))
+    {
+        arm_max_f32(frame->power, SRP_GRID_TOTAL, &frame->peak_value, &frame->peak_idx);
     }
 }

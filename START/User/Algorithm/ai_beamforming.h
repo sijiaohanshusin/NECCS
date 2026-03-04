@@ -17,6 +17,7 @@
 #define AI_BEAMFORMING_H
 
 #include "arm_math.h"
+#include "ai_config.h"
 #include "app_main_task.h"
 
 #ifdef __cplusplus
@@ -94,6 +95,17 @@ void AI_SRP_PHAT_Init(void);
  * @note    必须在 AI_FFT_Process() 完成后调用
  */
 void AI_SRP_PHAT_Process(Sound_Pos_t *result);
+
+typedef struct
+{
+    float32_t power[SRP_GRID_TOTAL];
+    float32_t theta_deg[SRP_GRID_TOTAL];
+    float32_t phi_deg[SRP_GRID_TOTAL];
+    uint32_t peak_idx;
+    float32_t peak_value;
+} SRP_VisFrame_t;
+
+void AI_SRP_CopyVisualizationFrame(SRP_VisFrame_t *frame);
 
 /* ============================================================================
  * 诊断统计变量 (Diagnostic Statistics)

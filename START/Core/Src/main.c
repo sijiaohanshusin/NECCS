@@ -69,7 +69,7 @@
 volatile int16_t found_val = 0;
 
 /** @brief ISR 帧事件序号：用于估算队列覆盖导致的丢帧 */
-static volatile uint32_t s_audio_frame_seq = 0u;
+volatile uint32_t g_audio_frame_seq_isr = 0u;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -375,7 +375,7 @@ static void Audio_FrameEvent_Push_FromISR(uint8_t half_id)
     event.reserved[0] = 0u;         /* 预留字段 (对齐) */
     event.reserved[1] = 0u;
     event.reserved[2] = 0u;
-    event.seq = ++s_audio_frame_seq;  /* 单调递增序号 */
+    event.seq = ++g_audio_frame_seq_isr;  /* 单调递增序号 */
 
     /* 检查队列是否已创建 */
     if (xAudioFrameQueue != NULL)

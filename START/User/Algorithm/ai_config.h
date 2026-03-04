@@ -82,6 +82,8 @@
  *  9×9 网格，覆盖 ±60° 范围，步长 15°
  */
 #define COARSE_GRID_SIZE    9u
+#define COARSE_ANGLE_MIN_DEG    (-60.0f)
+#define COARSE_ANGLE_MAX_DEG    (60.0f)
 
 /** @brief 粗搜总点数
  *  计算：9 × 9 = 81 个扫描点
@@ -97,6 +99,7 @@
  *  4×4 网格，覆盖 ±10° 范围，步长 5°
  */
 #define FINE_GRID_SIZE      4u
+#define FINE_SPAN_DEG       (10.0f)
 
 /** @brief 每个 Top-K 峰值的精搜点数
  *  计算：4 × 4 = 16 个扫描点
@@ -112,6 +115,14 @@
  *  计算：81 (粗搜) + 48 (精搜) = 129 个扫描点
  */
 #define SRP_GRID_TOTAL      (COARSE_TOTAL + FINE_TOTAL)
+
+#if (COARSE_GRID_SIZE < 2u)
+#error "COARSE_GRID_SIZE must be >= 2"
+#endif
+
+#if (FINE_GRID_SIZE < 1u)
+#error "FINE_GRID_SIZE must be >= 1"
+#endif
 
 /* ============================================================================
  * 数值稳定性参数 (Numerical Stability)
@@ -197,6 +208,17 @@
  * 输出角度重映射 (Output Angle Remap)
  * ============================================================================ */
 
+/* Orientation remap preset:
+ * 0: custom (use SRP_OUTPUT_SWAP_XY / SRP_OUTPUT_INVERT_X / SRP_OUTPUT_INVERT_Y)
+ * 1: rotate 90 deg CW
+ * 2: rotate 90 deg CCW
+ * 3: rotate 180 deg
+ * 4: mirror X only
+ * 5: mirror Y only
+ */
+#define SRP_OUTPUT_REMAP_PRESET 0u
+
+#if (SRP_OUTPUT_REMAP_PRESET == 0u)
 /** @brief 是否交换 X/Y 角度 (0=不交换, 1=交换)
  *  用于适配不同的安装方向
  */
@@ -211,5 +233,34 @@
  *  用于镜像翻转
  */
 #define SRP_OUTPUT_INVERT_Y 0u
+
+#elif (SRP_OUTPUT_REMAP_PRESET == 1u) /* rotate 90 deg CW */
+#define SRP_OUTPUT_SWAP_XY  1u
+#define SRP_OUTPUT_INVERT_X 0u
+#define SRP_OUTPUT_INVERT_Y 1u
+
+#elif (SRP_OUTPUT_REMAP_PRESET == 2u) /* rotate 90 deg CCW */
+#define SRP_OUTPUT_SWAP_XY  1u
+#define SRP_OUTPUT_INVERT_X 1u
+#define SRP_OUTPUT_INVERT_Y 0u
+
+#elif (SRP_OUTPUT_REMAP_PRESET == 3u) /* rotate 180 deg */
+#define SRP_OUTPUT_SWAP_XY  0u
+#define SRP_OUTPUT_INVERT_X 1u
+#define SRP_OUTPUT_INVERT_Y 1u
+
+#elif (SRP_OUTPUT_REMAP_PRESET == 4u) /* mirror X */
+#define SRP_OUTPUT_SWAP_XY  0u
+#define SRP_OUTPUT_INVERT_X 1u
+#define SRP_OUTPUT_INVERT_Y 0u
+
+#elif (SRP_OUTPUT_REMAP_PRESET == 5u) /* mirror Y */
+#define SRP_OUTPUT_SWAP_XY  0u
+#define SRP_OUTPUT_INVERT_X 0u
+#define SRP_OUTPUT_INVERT_Y 1u
+
+#else
+#error "Invalid SRP_OUTPUT_REMAP_PRESET"
+#endif
 
 #endif /* __AI_CONFIG_H */

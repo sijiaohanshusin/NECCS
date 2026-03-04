@@ -24,8 +24,13 @@
 #include "app_data_stream.h"
 #include "app_main_task.h"
 #include "LCD/lcd.h"
+#include "LCD/ltdc.h"
+#include "usart.h"
 
+#include <ctype.h>
+#include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 /* ============================================================================
  * 外部变量 (External Variables)
@@ -85,6 +90,9 @@ volatile uint32_t g_ui_queue_timeout_count = 0u;
 #define UI_RETRY_INIT_MS        1000u  /**< UI 初始化重试间隔 (ms) */
 #define UI_RENDER_PERIOD_MS     33u    /**< UI 渲染周期 (ms)，约 30 FPS */
 #define UI_DEBUG_LOG            0u     /**< UI 调试日志开关 */
+#define UI_CLI_ENABLE           1u
+#define UI_CLI_LINE_MAX         96u
+#define UI_CLI_RX_DRAIN_MAX     32u
 
 /* ============================================================================
  * 任务优先级 (Task Priorities)
@@ -114,6 +122,413 @@ volatile uint32_t g_ui_queue_timeout_count = 0u;
  *
  * @note    在 FreeRTOS 启动前调用 (freertos.c 中)
  */
+/* ============================================================================
+ * UI CLI (Runtime Tuning via UART)
+ * ============================================================================ */
+
+#if (UI_CLI_ENABLE != 0u)
+static int ui_cli_stricmp(const char *a, const char *b)
+{
+    unsigned char ca;
+    unsigned char cb;
+
+    if ((a == NULL) || (b == NULL))
+    {
+        return -1;
+    }
+
+    while ((*a != '\0') && (*b != '\0'))
+    {
+        ca = (unsigned char)tolower((unsigned char)*a);
+        cb = (unsigned char)tolower((unsigned char)*b);
+        if (ca != cb)
+        {
+            return (int)ca - (int)cb;
+        }
+        a++;
+        b++;
+    }
+
+    return (int)(unsigned char)*a - (int)(unsigned char)*b;
+}
+
+static uint8_t ui_cli_parse_float(const char *s, float *out)
+{
+    char *endptr;
+    float v;
+
+    if ((s == NULL) || (out == NULL))
+    {
+        return 0u;
+    }
+
+    while (isspace((unsigned char)*s) != 0)
+    {
+        s++;
+    }
+    if (*s == '\0')
+    {
+        return 0u;
+    }
+
+    v = strtof(s, &endptr);
+    if (s == endptr)
+    {
+        return 0u;
+    }
+
+    while (isspace((unsigned char)*endptr) != 0)
+    {
+        endptr++;
+    }
+    if (*endptr != '\0')
+    {
+        return 0u;
+    }
+
+    *out = v;
+    return 1u;
+}
+
+static uint8_t ui_cli_parse_u32(const char *s, uint32_t *out)
+{
+    char *endptr;
+    unsigned long v;
+
+    if ((s == NULL) || (out == NULL))
+    {
+        return 0u;
+    }
+
+    while (isspace((unsigned char)*s) != 0)
+    {
+        s++;
+    }
+    if (*s == '\0')
+    {
+        return 0u;
+    }
+
+    v = strtoul(s, &endptr, 10);
+    if (s == endptr)
+    {
+        return 0u;
+    }
+
+    while (isspace((unsigned char)*endptr) != 0)
+    {
+        endptr++;
+    }
+    if (*endptr != '\0')
+    {
+        return 0u;
+    }
+
+    *out = (uint32_t)v;
+    return 1u;
+}
+
+static void ui_cli_print_help(void)
+{
+    printf("\r\n");
+    printf("cfg help\r\n");
+    printf("cfg status\r\n");
+    printf("cfg mode fast|balanced|clean\r\n");
+    printf("cfg contrast <db_floor>\r\n");
+    printf("cfg gamma <0.5..2.5>\r\n");
+    printf("cfg noise <0..0.6>\r\n");
+    printf("cfg adapt <0..6>\r\n");
+    printf("cfg smooth <0..3>\r\n");
+    printf("cfg fine <0..3>\r\n");
+    printf("cfg bilinear <0|1>\r\n");
+    printf("cfg textdiv <1..20>\r\n");
+    printf("cfg blit <1..8>\r\n");
+}
+
+static void ui_cli_print_status(void)
+{
+    App_Display_RuntimeCfg_t cfg;
+    App_Display_Mode_t mode;
+
+    App_Display_GetConfig(&cfg);
+    mode = App_Display_GetMode();
+
+    printf("cfg mode=%s\r\n", App_Display_ModeName(mode));
+    printf("cfg db=%.1f gamma=%.2f noise=%.3f adapt=%.2f\r\n",
+           (double)cfg.db_floor,
+           (double)cfg.gamma,
+           (double)cfg.noise_gate_ratio,
+           (double)cfg.noise_adapt_gain);
+    printf("cfg smooth=%u fine=%.2f bilinear=%u textdiv=%u blit=%u\r\n",
+           (unsigned int)cfg.smooth_passes,
+           (double)cfg.fine_gain,
+           (unsigned int)cfg.bilinear_sampling,
+           (unsigned int)cfg.text_refresh_div,
+           (unsigned int)cfg.blit_rows);
+    printf("dma2d transfer=%lu timeout=%lu fallback=%lu\r\n",
+           (unsigned long)g_ltdc_dma2d_transfer_count,
+           (unsigned long)g_ltdc_dma2d_timeout_count,
+           (unsigned long)g_ltdc_dma2d_sw_fallback_count);
+}
+
+static void ui_cli_apply_line(char *line)
+{
+    char *cursor;
+    char *arg = NULL;
+    App_Display_RuntimeCfg_t cfg;
+    float fv;
+    uint32_t uv;
+
+    if (line == NULL)
+    {
+        return;
+    }
+
+    cursor = line;
+    while (isspace((unsigned char)*cursor) != 0)
+    {
+        cursor++;
+    }
+    if (*cursor == '\0')
+    {
+        return;
+    }
+
+    if ((ui_cli_stricmp(cursor, "help") == 0) ||
+        (ui_cli_stricmp(cursor, "cfg help") == 0))
+    {
+        ui_cli_print_help();
+        return;
+    }
+    if (ui_cli_stricmp(cursor, "cfg status") == 0)
+    {
+        ui_cli_print_status();
+        return;
+    }
+
+    if ((tolower((unsigned char)cursor[0]) != 'c') ||
+        (tolower((unsigned char)cursor[1]) != 'f') ||
+        (tolower((unsigned char)cursor[2]) != 'g') ||
+        (isspace((unsigned char)cursor[3]) == 0))
+    {
+        printf("CLI: unknown command, type 'cfg help'\r\n");
+        return;
+    }
+
+    cursor += 3;
+    while (isspace((unsigned char)*cursor) != 0)
+    {
+        cursor++;
+    }
+    if (*cursor == '\0')
+    {
+        ui_cli_print_help();
+        return;
+    }
+
+    arg = cursor;
+    while ((*arg != '\0') && (isspace((unsigned char)*arg) == 0))
+    {
+        arg++;
+    }
+    if (*arg != '\0')
+    {
+        *arg++ = '\0';
+        while (isspace((unsigned char)*arg) != 0)
+        {
+            arg++;
+        }
+        if (*arg == '\0')
+        {
+            arg = NULL;
+        }
+    }
+    else
+    {
+        arg = NULL;
+    }
+
+    if (ui_cli_stricmp(cursor, "mode") == 0)
+    {
+        if (arg == NULL)
+        {
+            printf("CLI: cfg mode fast|balanced|clean\r\n");
+            return;
+        }
+        if (ui_cli_stricmp(arg, "fast") == 0)
+        {
+            App_Display_SetMode(APP_DISPLAY_MODE_FAST);
+        }
+        else if ((ui_cli_stricmp(arg, "balanced") == 0) || (ui_cli_stricmp(arg, "bal") == 0))
+        {
+            App_Display_SetMode(APP_DISPLAY_MODE_BALANCED);
+        }
+        else if (ui_cli_stricmp(arg, "clean") == 0)
+        {
+            App_Display_SetMode(APP_DISPLAY_MODE_CLEAN);
+        }
+        else
+        {
+            printf("CLI: invalid mode\r\n");
+            return;
+        }
+        ui_cli_print_status();
+        return;
+    }
+
+    App_Display_GetConfig(&cfg);
+
+    if (ui_cli_stricmp(cursor, "contrast") == 0)
+    {
+        if ((arg == NULL) || (ui_cli_parse_float(arg, &fv) == 0u))
+        {
+            printf("CLI: cfg contrast <-6..-80>\r\n");
+            return;
+        }
+        if (fv > 0.0f)
+        {
+            fv = -fv;
+        }
+        cfg.db_floor = fv;
+    }
+    else if (ui_cli_stricmp(cursor, "gamma") == 0)
+    {
+        if ((arg == NULL) || (ui_cli_parse_float(arg, &fv) == 0u))
+        {
+            printf("CLI: cfg gamma <0.5..2.5>\r\n");
+            return;
+        }
+        cfg.gamma = fv;
+    }
+    else if (ui_cli_stricmp(cursor, "noise") == 0)
+    {
+        if ((arg == NULL) || (ui_cli_parse_float(arg, &fv) == 0u))
+        {
+            printf("CLI: cfg noise <0..0.6>\r\n");
+            return;
+        }
+        cfg.noise_gate_ratio = fv;
+    }
+    else if (ui_cli_stricmp(cursor, "adapt") == 0)
+    {
+        if ((arg == NULL) || (ui_cli_parse_float(arg, &fv) == 0u))
+        {
+            printf("CLI: cfg adapt <0..6>\r\n");
+            return;
+        }
+        cfg.noise_adapt_gain = fv;
+    }
+    else if (ui_cli_stricmp(cursor, "smooth") == 0)
+    {
+        if ((arg == NULL) || (ui_cli_parse_u32(arg, &uv) == 0u))
+        {
+            printf("CLI: cfg smooth <0..3>\r\n");
+            return;
+        }
+        cfg.smooth_passes = (uint8_t)uv;
+    }
+    else if (ui_cli_stricmp(cursor, "fine") == 0)
+    {
+        if ((arg == NULL) || (ui_cli_parse_float(arg, &fv) == 0u))
+        {
+            printf("CLI: cfg fine <0..3>\r\n");
+            return;
+        }
+        cfg.fine_gain = fv;
+    }
+    else if (ui_cli_stricmp(cursor, "bilinear") == 0)
+    {
+        if ((arg == NULL) || (ui_cli_parse_u32(arg, &uv) == 0u))
+        {
+            printf("CLI: cfg bilinear <0|1>\r\n");
+            return;
+        }
+        cfg.bilinear_sampling = (uv != 0u) ? 1u : 0u;
+    }
+    else if (ui_cli_stricmp(cursor, "textdiv") == 0)
+    {
+        if ((arg == NULL) || (ui_cli_parse_u32(arg, &uv) == 0u))
+        {
+            printf("CLI: cfg textdiv <1..20>\r\n");
+            return;
+        }
+        cfg.text_refresh_div = (uint8_t)uv;
+    }
+    else if (ui_cli_stricmp(cursor, "blit") == 0)
+    {
+        if ((arg == NULL) || (ui_cli_parse_u32(arg, &uv) == 0u))
+        {
+            printf("CLI: cfg blit <1..8>\r\n");
+            return;
+        }
+        cfg.blit_rows = (uint8_t)uv;
+    }
+    else
+    {
+        printf("CLI: unknown cfg key\r\n");
+        return;
+    }
+
+    App_Display_SetConfig(&cfg);
+    ui_cli_print_status();
+}
+
+static void ui_cli_poll(void)
+{
+    static char line_buf[UI_CLI_LINE_MAX];
+    static uint16_t line_len = 0u;
+    static uint8_t banner_printed = 0u;
+    uint32_t i;
+    uint8_t ch;
+
+    if (banner_printed == 0u)
+    {
+        banner_printed = 1u;
+        printf("UI CLI ready, type 'cfg help'\r\n");
+    }
+
+    for (i = 0u; i < UI_CLI_RX_DRAIN_MAX; i++)
+    {
+        if (HAL_UART_Receive(&huart1, &ch, 1u, 0u) != HAL_OK)
+        {
+            break;
+        }
+
+        if ((ch == '\r') || (ch == '\n'))
+        {
+            if (line_len != 0u)
+            {
+                line_buf[line_len] = '\0';
+                ui_cli_apply_line(line_buf);
+                line_len = 0u;
+            }
+            continue;
+        }
+
+        if ((ch == 0x08u) || (ch == 0x7Fu))
+        {
+            if (line_len != 0u)
+            {
+                line_len--;
+            }
+            continue;
+        }
+
+        if ((ch >= 32u) && (ch <= 126u))
+        {
+            if (line_len < (uint16_t)(UI_CLI_LINE_MAX - 1u))
+            {
+                line_buf[line_len++] = (char)ch;
+            }
+        }
+    }
+}
+#else
+static void ui_cli_poll(void)
+{
+}
+#endif
+
 void App_Task_Init(void)
 {
     BaseType_t task_ok;
@@ -323,8 +738,10 @@ void UI_Display_Task(void *pvParameters)
     /* 局部变量 */
     Sound_Pos_t draw_pos = {0.0f, 0.0f, 0.0f};  /* 当前接收的位置 */
     Sound_Pos_t last_pos = {0.0f, 0.0f, 0.0f};  /* 上次有效位置 */
-    float32_t coarse_snapshot[COARSE_TOTAL];    /* SRP 功率快照 */
+    SRP_VisFrame_t vis_snapshot;                /* SRP 粗搜+精搜可视化快照 */
     uint32_t ui_frame_seq = 0u;                 /* UI 帧序号 */
+    uint32_t last_audio_isr_seq = 0u;           /* 上次观测到的 SAI DMA ISR 序号 */
+    uint8_t audio_idle_frames = 0xFFu;          /* SAI DMA 空闲帧计数 */
 
     TickType_t next_render_wake;                /* 下次唤醒时间 */
     TickType_t last_init_try = 0u;              /* 上次初始化尝试时间 */
@@ -342,6 +759,7 @@ void UI_Display_Task(void *pvParameters)
     for (;;)
     {
         /* ========== 步骤 1: 检查显示模块是否就绪 ========== */
+        ui_cli_poll();
         if (App_Display_IsReady() == 0u)
         {
             /* 显示模块未就绪，定期重试初始化 */
@@ -350,7 +768,7 @@ void UI_Display_Task(void *pvParameters)
             {
 #if UI_DEBUG_LOG
                 /* 调试日志：输出初始化状态 */
-                printf(“UI: retry init (app=0x%08lX err=%lu lcd=%lu ltdc=%lu)\r\n”,
+                printf("UI: retry init (app=0x%08lX err=%lu lcd=%lu ltdc=%lu)\r\n",
                        (unsigned long)g_display_init_stage,
                        (unsigned long)g_display_init_error,
                        (unsigned long)g_lcd_init_stage,
@@ -389,20 +807,32 @@ void UI_Display_Task(void *pvParameters)
         /* UI 帧序号递增 */
         ui_frame_seq++;
 
+        uint8_t sai_dma_active;
+        {
+            uint32_t audio_seq = g_audio_frame_seq_isr;
+            if (audio_seq != last_audio_isr_seq)
+            {
+                last_audio_isr_seq = audio_seq;
+                audio_idle_frames = 0u;
+            }
+            else if (audio_idle_frames < 0xFFu)
+            {
+                audio_idle_frames++;
+            }
+            sai_dma_active = (audio_idle_frames <= APP_DISPLAY_SAI_ACTIVE_HOLD_FRAMES) ? 1u : 0u;
+        }
+
         /* ========== 步骤 3: 临界区快照 SRP 功率数据 ========== */
         /* SRP_Power 同时被音频任务写入 */
-        /* 这里做一次短临界区快照，避免 UI 读到”半更新”数据 */
+        /* 这里做一次短临界区快照，避免 UI 读到"半更新"数据 */
         taskENTER_CRITICAL();
-        for (uint32_t i = 0u; i < COARSE_TOTAL; i++)
-        {
-            coarse_snapshot[i] = SRP_Power[i];
-        }
+        AI_SRP_CopyVisualizationFrame(&vis_snapshot);
         taskEXIT_CRITICAL();
 
         /* ========== 步骤 4: 渲染 UI ========== */
         /* 渲染热力图 + 十字光标 + 诊断信息 */
         /* 耗时：约 10ms (包含 DMA2D 传输) */
-        App_Display_Render(&last_pos, coarse_snapshot, ui_frame_seq);
+        App_Display_Render(&last_pos, &vis_snapshot, ui_frame_seq, sai_dma_active);
         g_ui_render_count++;
 
         /* ========== 步骤 5: 检查 DMA2D 超时 ========== */
@@ -410,7 +840,7 @@ void UI_Display_Task(void *pvParameters)
         {
 #if UI_DEBUG_LOG
             /* 调试日志：输出 DMA2D 超时信息 */
-            printf(“UI: DMA2D timeout=%lu panel=0x%04X\r\n”,
+            printf("UI: DMA2D timeout=%lu panel=0x%04X\r\n",
                    (unsigned long)g_ltdc_dma2d_timeout_count,
                    (unsigned int)g_ltdc_panel_id);
 #endif
