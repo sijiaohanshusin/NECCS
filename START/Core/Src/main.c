@@ -83,6 +83,20 @@ void MX_FREERTOS_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+static void cpu_cache_enable(void)
+{
+  if ((SCB->CCR & SCB_CCR_IC_Msk) == 0u)
+  {
+    SCB_EnableICache();
+  }
+  if ((SCB->CCR & SCB_CCR_DC_Msk) == 0u)
+  {
+    SCB_EnableDCache();
+  }
+  __DSB();
+  __ISB();
+}
+
 /**
  * @brief   SDRAM 读写冒烟测试
  * @details 在 32MB SDRAM 上按采样步长写入并回读校验
@@ -219,6 +233,7 @@ int main(void)
   /* 覆盖默认 MPU 配置，使用工程自定义内存布局 */
   /* 配置 3 个区域：SRAM1 (Non-Cacheable), SDRAM (Cacheable), 帧缓冲 (Non-Cacheable) */
   App_MPU_Config();
+  cpu_cache_enable();
   /* USER CODE END Init */
 
   /* ========== 步骤 4: 系统时钟配置 ========== */

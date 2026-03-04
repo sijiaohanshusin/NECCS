@@ -23,6 +23,7 @@
 #define APP_DISPLAY_FINE_KERNEL_LEN   (2u * APP_DISPLAY_FINE_KERNEL_RADIUS + 1u)
 #define APP_DISPLAY_DYNAMIC_MIN_PEAK  (1.0e-9f)
 #define APP_DISPLAY_HEAT_LUT_SIZE     256u
+#define APP_DISPLAY_NORM_RATIO_LUT_SIZE 1024u
 #define APP_DISPLAY_DMA2D_TIMEOUT     0x1FFFFFu
 
 static uint8_t s_ready = 0u;
@@ -38,15 +39,29 @@ static uint16_t s_text_x = 0u;
 static float s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
 static float s_last_noise_floor = 0.0f;
 static uint8_t s_kernel_ready = 0u;
+static uint8_t s_norm_lut_valid = 0u;
+static float s_norm_lut_db_floor = APP_DISPLAY_DYNAMIC_DB_FLOOR;
+static float s_norm_lut_gamma = APP_DISPLAY_DYNAMIC_GAMMA;
 static uint32_t s_last_text_refresh_frame[2] = {0u, 0u};
 static uint32_t s_fb_addr_a = 0u;
 static uint32_t s_fb_addr_b = 0u;
+static uint16_t s_cache_map_w = 0u;
+static uint16_t s_cache_map_h = 0u;
 
 __SECTION_AXI_SRAM static float s_field_a[APP_DISPLAY_FIELD_PIXELS];
 __SECTION_AXI_SRAM static float s_field_b[APP_DISPLAY_FIELD_PIXELS];
 __SECTION_AXI_SRAM static uint8_t s_field_norm_u8[APP_DISPLAY_FIELD_PIXELS];
 __SECTION_D2_SRAM static uint16_t s_blit_buf[APP_DISPLAY_MAX_LINE_PIXELS * APP_DISPLAY_BLIT_ROWS_MAX];
 __SECTION_D2_SRAM static uint8_t s_blit_l8_buf[APP_DISPLAY_MAX_LINE_PIXELS * APP_DISPLAY_BLIT_ROWS_MAX];
+static uint8_t s_norm_ratio_lut[APP_DISPLAY_NORM_RATIO_LUT_SIZE + 1u];
+static uint16_t s_row_near_cache[APP_DISPLAY_MAX_LINE_PIXELS];
+static uint16_t s_row_y0_cache[APP_DISPLAY_MAX_LINE_PIXELS];
+static uint16_t s_row_y1_cache[APP_DISPLAY_MAX_LINE_PIXELS];
+static uint16_t s_row_wy256_cache[APP_DISPLAY_MAX_LINE_PIXELS];
+static uint16_t s_col_near_cache[APP_DISPLAY_MAX_LINE_PIXELS];
+static uint16_t s_col_x0_cache[APP_DISPLAY_MAX_LINE_PIXELS];
+static uint16_t s_col_x1_cache[APP_DISPLAY_MAX_LINE_PIXELS];
+static uint16_t s_col_wx256_cache[APP_DISPLAY_MAX_LINE_PIXELS];
 
 static float s_blur_kernel[APP_DISPLAY_BLUR_KERNEL_LEN];
 static float s_fine_kernel[APP_DISPLAY_FINE_KERNEL_LEN * APP_DISPLAY_FINE_KERNEL_LEN];
@@ -65,9 +80,12 @@ static App_Display_RuntimeCfg_t s_cfg = {
     APP_DISPLAY_FINE_FUSION_ENABLE,
     APP_DISPLAY_DRAW_COARSE_GRID,
     (APP_DISPLAY_BILINEAR_SAMPLING != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST,
+    APP_DISPLAY_NORM_FAST,
     APP_DISPLAY_TEXT_REFRESH_DIV,
     APP_DISPLAY_BLIT_ROWS_MAX
 };
+
+void s_refresh_render_map_cache(uint16_t map_w, uint16_t map_h);
 
 static float s_clamp_f32(float v, float lo, float hi)
 {
@@ -234,6 +252,15 @@ const char *App_Display_InterpName(App_Display_Interp_t interp)
     return "NEAR";
 }
 
+const char *App_Display_NormName(App_Display_Norm_t norm)
+{
+    if (norm == APP_DISPLAY_NORM_FULL)
+    {
+        return "FULL";
+    }
+    return "FAST";
+}
+
 static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg_t *cfg)
 {
     if (cfg == NULL)
@@ -255,6 +282,7 @@ static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg
             cfg->fine_fusion_enable = 0u;
             cfg->draw_coarse_grid = 0u;
             cfg->interp_mode = APP_DISPLAY_INTERP_NEAREST;
+            cfg->norm_mode = APP_DISPLAY_NORM_FAST;
             cfg->text_refresh_div = 4u;
             cfg->blit_rows = APP_DISPLAY_BLIT_ROWS_MAX;
             break;
@@ -271,6 +299,7 @@ static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg
             cfg->fine_fusion_enable = 1u;
             cfg->draw_coarse_grid = 0u;
             cfg->interp_mode = APP_DISPLAY_INTERP_BILINEAR;
+            cfg->norm_mode = APP_DISPLAY_NORM_FULL;
             cfg->text_refresh_div = 2u;
             cfg->blit_rows = 6u;
             break;
@@ -288,6 +317,7 @@ static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg
             cfg->fine_fusion_enable = APP_DISPLAY_FINE_FUSION_ENABLE;
             cfg->draw_coarse_grid = APP_DISPLAY_DRAW_COARSE_GRID;
             cfg->interp_mode = (APP_DISPLAY_BILINEAR_SAMPLING != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST;
+            cfg->norm_mode = APP_DISPLAY_NORM_FAST;
             cfg->text_refresh_div = APP_DISPLAY_TEXT_REFRESH_DIV;
             cfg->blit_rows = APP_DISPLAY_BLIT_ROWS_MAX;
             break;
@@ -312,8 +342,10 @@ void App_Display_SetConfig(const App_Display_RuntimeCfg_t *cfg)
     s_cfg.fine_fusion_enable = (cfg->fine_fusion_enable != 0u) ? 1u : 0u;
     s_cfg.draw_coarse_grid = (cfg->draw_coarse_grid != 0u) ? 1u : 0u;
     s_cfg.interp_mode = (cfg->interp_mode == APP_DISPLAY_INTERP_BILINEAR) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST;
+    s_cfg.norm_mode = (cfg->norm_mode == APP_DISPLAY_NORM_FULL) ? APP_DISPLAY_NORM_FULL : APP_DISPLAY_NORM_FAST;
     s_cfg.text_refresh_div = s_clamp_u8(cfg->text_refresh_div, 1u, 20u);
     s_cfg.blit_rows = s_clamp_u8(cfg->blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
+    s_norm_lut_valid = 0u;
 }
 
 void App_Display_GetConfig(App_Display_RuntimeCfg_t *cfg)
@@ -431,6 +463,9 @@ void App_Display_Init(void)
     s_last_text_refresh_frame[1] = 0u;
     s_fb_addr_a = 0u;
     s_fb_addr_b = 0u;
+    s_cache_map_w = 0u;
+    s_cache_map_h = 0u;
+    s_norm_lut_valid = 0u;
     App_Display_SetMode(APP_DISPLAY_MODE_FAST);
 
     g_display_init_stage = 2u;
@@ -469,6 +504,8 @@ void App_Display_Init(void)
     s_map_x1 = (uint16_t)(s_map_x0 + map_size - 1u);
     s_map_y1 = (uint16_t)(s_map_y0 + map_size - 1u);
     s_text_x = (uint16_t)(s_map_x1 + APP_DISPLAY_MARGIN_PX);
+    s_refresh_render_map_cache((uint16_t)(s_map_x1 - s_map_x0 + 1u),
+                               (uint16_t)(s_map_y1 - s_map_y0 + 1u));
 
     g_display_init_stage = 4u;
     s_fb_addr_a = ltdc_get_frontbuf_addr();
@@ -764,6 +801,161 @@ static float s_prepare_field(const SRP_VisFrame_t *vis_frame)
     return peak;
 }
 
+static uint8_t s_compute_norm_full(float ratio)
+{
+    float db;
+    float t;
+    uint32_t q;
+
+    db = 20.0f * log10f(s_clamp_f32(ratio, 1.0e-9f, 1.0f));
+    if (db <= s_cfg.db_floor)
+    {
+        return 0u;
+    }
+    if (db >= 0.0f)
+    {
+        return 255u;
+    }
+
+    t = s_clamp_f32((db - s_cfg.db_floor) / (-s_cfg.db_floor), 0.0f, 1.0f);
+    if (fabsf(s_cfg.gamma - 1.0f) > 0.02f)
+    {
+        t = powf(t, s_cfg.gamma);
+    }
+    q = (uint32_t)(t * 255.0f + 0.5f);
+    return (q > 255u) ? 255u : (uint8_t)q;
+}
+
+static void s_refresh_norm_lut(void)
+{
+    uint32_t i;
+    float gamma;
+    float db_floor;
+
+    if (s_cfg.norm_mode != APP_DISPLAY_NORM_FAST)
+    {
+        return;
+    }
+
+    gamma = s_cfg.gamma;
+    db_floor = s_cfg.db_floor;
+    if ((s_norm_lut_valid != 0u) &&
+        (fabsf(gamma - s_norm_lut_gamma) < 1.0e-4f) &&
+        (fabsf(db_floor - s_norm_lut_db_floor) < 1.0e-4f))
+    {
+        return;
+    }
+
+    for (i = 0u; i <= APP_DISPLAY_NORM_RATIO_LUT_SIZE; i++)
+    {
+        float ratio = (float)i / (float)APP_DISPLAY_NORM_RATIO_LUT_SIZE;
+        if (ratio < 1.0e-9f)
+        {
+            ratio = 1.0e-9f;
+        }
+        s_norm_ratio_lut[i] = s_compute_norm_full(ratio);
+    }
+
+    s_norm_lut_gamma = gamma;
+    s_norm_lut_db_floor = db_floor;
+    s_norm_lut_valid = 1u;
+}
+
+static uint8_t s_norm_fast_lookup(float ratio)
+{
+    uint32_t idx;
+
+    if (ratio <= 0.0f)
+    {
+        return 0u;
+    }
+
+    ratio = s_clamp_f32(ratio, 0.0f, 1.0f);
+    idx = (uint32_t)(ratio * (float)APP_DISPLAY_NORM_RATIO_LUT_SIZE + 0.5f);
+    if (idx > APP_DISPLAY_NORM_RATIO_LUT_SIZE)
+    {
+        idx = APP_DISPLAY_NORM_RATIO_LUT_SIZE;
+    }
+    return s_norm_ratio_lut[idx];
+}
+
+void s_refresh_render_map_cache(uint16_t map_w, uint16_t map_h)
+{
+    uint16_t x;
+    uint16_t y;
+
+    if ((map_w == 0u) || (map_h == 0u) ||
+        (map_w > APP_DISPLAY_MAX_LINE_PIXELS) ||
+        (map_h > APP_DISPLAY_MAX_LINE_PIXELS))
+    {
+        return;
+    }
+
+    if ((s_cache_map_w == map_w) && (s_cache_map_h == map_h))
+    {
+        return;
+    }
+
+    for (x = 0u; x < map_w; x++)
+    {
+        float fx;
+        uint16_t x0;
+        uint16_t x1;
+        uint16_t wx;
+
+        fx = (map_w > 1u)
+           ? ((float)x * (float)(APP_DISPLAY_FIELD_W - 1u) / (float)(map_w - 1u))
+           : 0.0f;
+        x0 = (uint16_t)fx;
+        if (x0 >= APP_DISPLAY_FIELD_W)
+        {
+            x0 = APP_DISPLAY_FIELD_W - 1u;
+        }
+        x1 = (x0 + 1u < APP_DISPLAY_FIELD_W) ? (uint16_t)(x0 + 1u) : x0;
+        wx = (uint16_t)((fx - (float)x0) * 256.0f + 0.5f);
+        if (wx > 256u)
+        {
+            wx = 256u;
+        }
+
+        s_col_x0_cache[x] = x0;
+        s_col_x1_cache[x] = x1;
+        s_col_wx256_cache[x] = wx;
+        s_col_near_cache[x] = (wx >= 128u) ? x1 : x0;
+    }
+
+    for (y = 0u; y < map_h; y++)
+    {
+        float fy;
+        uint16_t y0;
+        uint16_t y1;
+        uint16_t wy;
+
+        fy = (map_h > 1u)
+           ? ((float)y * (float)(APP_DISPLAY_FIELD_H - 1u) / (float)(map_h - 1u))
+           : 0.0f;
+        y0 = (uint16_t)fy;
+        if (y0 >= APP_DISPLAY_FIELD_H)
+        {
+            y0 = APP_DISPLAY_FIELD_H - 1u;
+        }
+        y1 = (y0 + 1u < APP_DISPLAY_FIELD_H) ? (uint16_t)(y0 + 1u) : y0;
+        wy = (uint16_t)((fy - (float)y0) * 256.0f + 0.5f);
+        if (wy > 256u)
+        {
+            wy = 256u;
+        }
+
+        s_row_y0_cache[y] = y0;
+        s_row_y1_cache[y] = y1;
+        s_row_wy256_cache[y] = wy;
+        s_row_near_cache[y] = (wy >= 128u) ? y1 : y0;
+    }
+
+    s_cache_map_w = map_w;
+    s_cache_map_h = map_h;
+}
+
 static void s_update_norm_field(float field_peak, uint32_t frame_seq)
 {
     uint32_t i;
@@ -815,92 +1007,32 @@ static void s_update_norm_field(float field_peak, uint32_t frame_seq)
     floor_linear = s_clamp_f32(floor_linear, 0.0f, field_peak);
     s_last_noise_floor = floor_linear;
 
+    if (s_cfg.norm_mode == APP_DISPLAY_NORM_FAST)
+    {
+        s_refresh_norm_lut();
+        for (i = 0u; i < APP_DISPLAY_FIELD_PIXELS; i++)
+        {
+            float v = s_field_a[i] - floor_linear;
+            if (v <= 0.0f)
+            {
+                s_field_norm_u8[i] = 0u;
+                continue;
+            }
+            s_field_norm_u8[i] = s_norm_fast_lookup(v / ref);
+        }
+        return;
+    }
+
     for (i = 0u; i < APP_DISPLAY_FIELD_PIXELS; i++)
     {
         float v = s_field_a[i] - floor_linear;
-        float ratio;
-        float db;
-        float t;
-        uint32_t q;
         if (v <= 0.0f)
         {
             s_field_norm_u8[i] = 0u;
             continue;
         }
-        ratio = s_clamp_f32(v / ref, 1.0e-9f, 1.0f);
-        db = 20.0f * log10f(ratio);
-        if (db <= s_cfg.db_floor)
-        {
-            s_field_norm_u8[i] = 0u;
-            continue;
-        }
-        if (db >= 0.0f)
-        {
-            s_field_norm_u8[i] = 255u;
-            continue;
-        }
-        t = s_clamp_f32((db - s_cfg.db_floor) / (-s_cfg.db_floor), 0.0f, 1.0f);
-        if (fabsf(s_cfg.gamma - 1.0f) > 0.02f)
-        {
-            t = powf(t, s_cfg.gamma);
-        }
-        q = (uint32_t)(t * 255.0f + 0.5f);
-        s_field_norm_u8[i] = (q > 255u) ? 255u : (uint8_t)q;
+        s_field_norm_u8[i] = s_compute_norm_full(v / ref);
     }
-}
-
-static uint8_t s_sample_norm_nearest(float fx, float fy)
-{
-    uint32_t x;
-    uint32_t y;
-    fx = s_clamp_f32(fx, 0.0f, (float)(APP_DISPLAY_FIELD_W - 1u));
-    fy = s_clamp_f32(fy, 0.0f, (float)(APP_DISPLAY_FIELD_H - 1u));
-    x = (uint32_t)(fx + 0.5f);
-    y = (uint32_t)(fy + 0.5f);
-    if (x >= APP_DISPLAY_FIELD_W)
-    {
-        x = APP_DISPLAY_FIELD_W - 1u;
-    }
-    if (y >= APP_DISPLAY_FIELD_H)
-    {
-        y = APP_DISPLAY_FIELD_H - 1u;
-    }
-    return s_field_norm_u8[y * APP_DISPLAY_FIELD_W + x];
-}
-
-static uint8_t s_sample_norm_bilinear(float fx, float fy)
-{
-    uint32_t x0;
-    uint32_t y0;
-    uint32_t x1;
-    uint32_t y1;
-    float wx;
-    float wy;
-    float v00;
-    float v01;
-    float v10;
-    float v11;
-    float vx0;
-    float vx1;
-    uint32_t q;
-
-    fx = s_clamp_f32(fx, 0.0f, (float)(APP_DISPLAY_FIELD_W - 1u));
-    fy = s_clamp_f32(fy, 0.0f, (float)(APP_DISPLAY_FIELD_H - 1u));
-    x0 = (uint32_t)fx;
-    y0 = (uint32_t)fy;
-    x1 = (x0 + 1u < APP_DISPLAY_FIELD_W) ? (x0 + 1u) : x0;
-    y1 = (y0 + 1u < APP_DISPLAY_FIELD_H) ? (y0 + 1u) : y0;
-    wx = fx - (float)x0;
-    wy = fy - (float)y0;
-
-    v00 = (float)s_field_norm_u8[y0 * APP_DISPLAY_FIELD_W + x0];
-    v01 = (float)s_field_norm_u8[y0 * APP_DISPLAY_FIELD_W + x1];
-    v10 = (float)s_field_norm_u8[y1 * APP_DISPLAY_FIELD_W + x0];
-    v11 = (float)s_field_norm_u8[y1 * APP_DISPLAY_FIELD_W + x1];
-    vx0 = v00 * (1.0f - wx) + v01 * wx;
-    vx1 = v10 * (1.0f - wx) + v11 * wx;
-    q = (uint32_t)(vx0 * (1.0f - wy) + vx1 * wy + 0.5f);
-    return (q > 255u) ? 255u : (uint8_t)q;
 }
 
 static uint16_t s_angle_to_x(float angle)
@@ -943,10 +1075,14 @@ static void s_render_field_rows(void)
     uint8_t use_bilinear = (s_cfg.interp_mode == APP_DISPLAY_INTERP_BILINEAR) ? 1u : 0u;
     uint16_t y_blk;
 
-    if ((map_w == 0u) || (map_h == 0u) || (map_w > APP_DISPLAY_MAX_LINE_PIXELS))
+    if ((map_w == 0u) ||
+        (map_h == 0u) ||
+        (map_w > APP_DISPLAY_MAX_LINE_PIXELS) ||
+        (map_h > APP_DISPLAY_MAX_LINE_PIXELS))
     {
         return;
     }
+    s_refresh_render_map_cache(map_w, map_h);
 
     for (y_blk = 0u; y_blk < map_h; y_blk = (uint16_t)(y_blk + blit_rows))
     {
@@ -961,15 +1097,42 @@ static void s_render_field_rows(void)
         for (row = 0u; row < rows; row++)
         {
             uint16_t y = (uint16_t)(y_blk + row);
-            float fy = (map_h > 1u) ? ((float)y * (float)(APP_DISPLAY_FIELD_H - 1u) / (float)(map_h - 1u)) : 0.0f;
             uint16_t x;
             uint8_t *dst = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];
 
-            for (x = 0u; x < map_w; x++)
+            if (use_bilinear != 0u)
             {
-                float fx = (map_w > 1u) ? ((float)x * (float)(APP_DISPLAY_FIELD_W - 1u) / (float)(map_w - 1u)) : 0.0f;
-                uint8_t q = (use_bilinear != 0u) ? s_sample_norm_bilinear(fx, fy) : s_sample_norm_nearest(fx, fy);
-                dst[x] = q;
+                uint16_t y0 = s_row_y0_cache[y];
+                uint16_t y1 = s_row_y1_cache[y];
+                uint16_t wy = s_row_wy256_cache[y];
+                uint16_t wy0 = (uint16_t)(256u - wy);
+                const uint8_t *src0 = &s_field_norm_u8[(uint32_t)y0 * APP_DISPLAY_FIELD_W];
+                const uint8_t *src1 = &s_field_norm_u8[(uint32_t)y1 * APP_DISPLAY_FIELD_W];
+
+                for (x = 0u; x < map_w; x++)
+                {
+                    uint16_t x0 = s_col_x0_cache[x];
+                    uint16_t x1 = s_col_x1_cache[x];
+                    uint16_t wx = s_col_wx256_cache[x];
+                    uint16_t wx0 = (uint16_t)(256u - wx);
+                    uint32_t v00 = src0[x0];
+                    uint32_t v01 = src0[x1];
+                    uint32_t v10 = src1[x0];
+                    uint32_t v11 = src1[x1];
+                    uint32_t vx0 = v00 * wx0 + v01 * wx;
+                    uint32_t vx1 = v10 * wx0 + v11 * wx;
+                    uint32_t q = (vx0 * wy0 + vx1 * wy + 32768u) >> 16;
+                    dst[x] = (q > 255u) ? 255u : (uint8_t)q;
+                }
+            }
+            else
+            {
+                uint16_t y_idx = s_row_near_cache[y];
+                const uint8_t *src = &s_field_norm_u8[(uint32_t)y_idx * APP_DISPLAY_FIELD_W];
+                for (x = 0u; x < map_w; x++)
+                {
+                    dst[x] = src[s_col_near_cache[x]];
+                }
             }
         }
 
@@ -1048,12 +1211,12 @@ static void s_draw_overlay(const Sound_Pos_t *pos,
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 96u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, WHITE);
     (void)snprintf(line,
                    sizeof(line),
-                   "Mode:%s/%s dB:%0.0f",
+                   "Mode:%s/%s/%s",
                    App_Display_ModeName(s_mode),
                    App_Display_InterpName((App_Display_Interp_t)s_cfg.interp_mode),
-                   (double)s_cfg.db_floor);
+                   App_Display_NormName((App_Display_Norm_t)s_cfg.norm_mode));
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 114u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, CYAN);
-    (void)snprintf(line, sizeof(line), "Nf:%0.2e G:%0.2f", (double)s_last_noise_floor, (double)s_cfg.gamma);
+    (void)snprintf(line, sizeof(line), "Nf:%0.2e G:%0.2f dB:%0.0f", (double)s_last_noise_floor, (double)s_cfg.gamma, (double)s_cfg.db_floor);
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 132u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, YELLOW);
 #if (APP_DISPLAY_DIAG_OVERLAY != 0u)
     (void)snprintf(line, sizeof(line), "PkE:%0.2e EMA:%0.2e", (double)field_peak, (double)s_peak_ema);
@@ -1073,6 +1236,19 @@ static void s_draw_overlay(const Sound_Pos_t *pos,
                    (unsigned long)g_ltdc_swap_error_count,
                    (sai_dma_active != 0u) ? "ON" : "OFF");
     lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 186u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, LIGHTBLUE);
+    (void)snprintf(line,
+                   sizeof(line),
+                   "UART RX:%lu ERR:%lu %s",
+                   (unsigned long)g_ui_cli_rx_ok_count,
+                   (unsigned long)g_ui_cli_rx_err_count,
+                   (g_ui_cli_rx_alive != 0u) ? "OK" : "NO-RX");
+    lcd_show_string(s_text_x,
+                    (uint16_t)(APP_DISPLAY_MARGIN_PX + 204u),
+                    (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX),
+                    16,
+                    16,
+                    line,
+                    RED);
 #endif
 }
 
@@ -1082,6 +1258,7 @@ void App_Display_Render(const Sound_Pos_t *pos,
                         uint8_t sai_dma_active)
 {
     float field_peak;
+    uint32_t t_perf;
     uint32_t peak_idx = 0u;
     float peak_theta = 0.0f;
     float peak_phi = 0.0f;
@@ -1097,7 +1274,9 @@ void App_Display_Render(const Sound_Pos_t *pos,
         return;
     }
 
+    t_perf = App_Perf_BeginCycles();
     field_peak = s_prepare_field(vis_frame);
+    App_Perf_EndCycles(APP_PERF_SEC_DISP_PREPARE, t_perf);
     if (field_peak > s_peak_ema)
     {
         s_peak_ema += s_cfg.ema_attack * (field_peak - s_peak_ema);
@@ -1111,7 +1290,11 @@ void App_Display_Render(const Sound_Pos_t *pos,
         s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
     }
 
+    t_perf = App_Perf_BeginCycles();
     s_update_norm_field(field_peak, frame_seq);
+    App_Perf_EndCycles(APP_PERF_SEC_DISP_NORM, t_perf);
+
+    t_perf = App_Perf_BeginCycles();
     s_render_field_rows();
     {
         uint16_t bx0 = (s_map_x0 > 0u) ? (uint16_t)(s_map_x0 - 1u) : s_map_x0;
@@ -1153,6 +1336,7 @@ void App_Display_Render(const Sound_Pos_t *pos,
         uint16_t y1 = ((uint32_t)py + r < s_map_y1) ? (uint16_t)(py + r) : s_map_y1;
         s_draw_rect_async(x0, y0, x1, y1, WHITE);
     }
+    App_Perf_EndCycles(APP_PERF_SEC_DISP_RENDER, t_perf);
 
     back_slot = s_backbuf_slot();
     refresh_text = 0u;
@@ -1174,8 +1358,12 @@ void App_Display_Render(const Sound_Pos_t *pos,
         {
             s_last_text_refresh_frame[back_slot] = frame_seq;
         }
+        t_perf = App_Perf_BeginCycles();
         s_draw_overlay(pos, frame_seq, peak_idx, peak_theta, peak_phi, field_peak, sai_dma_active);
+        App_Perf_EndCycles(APP_PERF_SEC_DISP_OVERLAY, t_perf);
     }
 
+    t_perf = App_Perf_BeginCycles();
     s_commit_frame();
+    App_Perf_EndCycles(APP_PERF_SEC_DISP_COMMIT, t_perf);
 }
