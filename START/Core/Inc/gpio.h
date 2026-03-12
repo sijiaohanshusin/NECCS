@@ -1,9 +1,9 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
   * @file    gpio.h
-  * @brief   This file contains all the function prototypes for
-  *          the gpio.c file
+  * @brief   GPIO 初始化接口声明
+  * @details 负责基础 IO 时钟和引脚模式初始化。
+  *          包含软件 I2C 引脚（PE2/PE3）和板级控制引脚默认电平设置。
   ******************************************************************************
   * @attention
   *
@@ -36,6 +36,9 @@ extern "C" {
 
 /* USER CODE END Private defines */
 
+/**
+ * @brief 初始化工程使用到的 GPIO 端口与引脚配置。
+ */
 void MX_GPIO_Init(void);
 
 /* USER CODE BEGIN Prototypes */

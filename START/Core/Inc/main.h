@@ -2,8 +2,9 @@
 /**
   ******************************************************************************
   * @file           : main.h
-  * @brief          : Header for main.c file.
-  *                   This file contains the common defines of the application.
+  * @brief          : Application-level common header.
+  * @details        : Provides global includes and shared declarations used by
+  *                   `main.c` and low-level initialization modules.
   ******************************************************************************
   * @attention
   *

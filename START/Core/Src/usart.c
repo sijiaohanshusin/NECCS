@@ -2,8 +2,7 @@
 /**
   ******************************************************************************
   * @file    usart.c
-  * @brief   This file provides code for the configuration
-  *          of the USART instances.
+  * @brief   USART1 initialization and stdio redirection implementation.
   ******************************************************************************
   * @attention
   *
@@ -24,18 +23,16 @@
 #include <stdio.h>
 #include "FreeRTOS.h"
 #include "semphr.h"
-#include "usart.h" // 确保包含 huart1 定义
 
+/* TX mutex used by fputc()/printf redirection in task context. */
 SemaphoreHandle_t txMutex = NULL;
 /* USER CODE END 0 */
 
 UART_HandleTypeDef huart1;
 
 /* USART1 init function */
-
 void MX_USART1_UART_Init(void)
 {
-
   /* USER CODE BEGIN USART1_Init 0 */
 
   /* USER CODE END USART1_Init 0 */
@@ -73,22 +70,19 @@ void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
-
 }
 
 void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 {
-
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
-  if(uartHandle->Instance==USART1)
+  if (uartHandle->Instance == USART1)
   {
   /* USER CODE BEGIN USART1_MspInit 0 */
 
   /* USER CODE END USART1_MspInit 0 */
 
-  /** Initializes the peripherals clock
-  */
+    /* Configure USART1 kernel clock. */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USART1;
     PeriphClkInitStruct.Usart16ClockSelection = RCC_USART16CLKSOURCE_D2PCLK2;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
@@ -102,7 +96,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     /**USART1 GPIO Configuration
     PA9     ------> USART1_TX
-    PA10     ------> USART1_RX
+    PA10    ------> USART1_RX
     */
     GPIO_InitStruct.Pin = GPIO_PIN_9|GPIO_PIN_10;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -114,15 +108,13 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
   /* USER CODE BEGIN USART1_MspInit 1 */
     HAL_NVIC_SetPriority(USART1_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(USART1_IRQn);
-
   /* USER CODE END USART1_MspInit 1 */
   }
 }
 
 void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 {
-
-  if(uartHandle->Instance==USART1)
+  if (uartHandle->Instance == USART1)
   {
   /* USER CODE BEGIN USART1_MspDeInit 0 */
 
@@ -132,42 +124,40 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 
     /**USART1 GPIO Configuration
     PA9     ------> USART1_TX
-    PA10     ------> USART1_RX
+    PA10    ------> USART1_RX
     */
     HAL_GPIO_DeInit(GPIOA, GPIO_PIN_9|GPIO_PIN_10);
 
   /* USER CODE BEGIN USART1_MspDeInit 1 */
     HAL_NVIC_DisableIRQ(USART1_IRQn);
-
   /* USER CODE END USART1_MspDeInit 1 */
   }
 }
 
 /* USER CODE BEGIN 1 */
-// 声明外部的串口句柄，确保这是你CubeMX里配置的那个（如 huart1）
+/* Use the CubeMX-generated USART1 handle for stdio redirection. */
 extern UART_HandleTypeDef huart1;
 
-// 重写 fputc 函数
+/* Redirect `printf` output to USART1 with mutex protection in task context. */
 int fputc(int ch, FILE *f)
 {
-    // 如果是在中断中调用，绝不能使用阻塞式发送！
-    // 直接放弃发送或使用特殊处理，防止系统死锁
+    (void)f;
+
+    /* Never block inside ISR context. */
     if (xPortIsInsideInterrupt()) {
-        return ch; // 这里的策略是：中断里禁止打印，防止卡死
+        return ch;
     }
 
-    // 确保互斥量已创建
     if (txMutex != NULL) {
-        // 获取锁，等待时间设为最大，或者设为一个合理值比如 100ms
         if (xSemaphoreTake(txMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 100);
-            xSemaphoreGive(txMutex); // 发送完释放锁
+            xSemaphoreGive(txMutex);
         }
     } else {
-        // 互斥量未初始化时的备选方案（慎用，可能还是会有冲突）
+        /* Early-boot fallback before mutex creation. */
         HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 100);
     }
-    
+
     return ch;
 }
 /* USER CODE END 1 */

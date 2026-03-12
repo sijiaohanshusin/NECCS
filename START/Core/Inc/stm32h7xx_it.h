@@ -2,7 +2,9 @@
 /**
   ******************************************************************************
   * @file    stm32h7xx_it.h
-  * @brief   This file contains the headers of the interrupt handlers.
+  * @brief   Interrupt service routine declarations.
+  * @details Declares Cortex exception handlers and project-used peripheral IRQ
+  *          handlers routed by the startup vector table.
   ******************************************************************************
   * @attention
   *

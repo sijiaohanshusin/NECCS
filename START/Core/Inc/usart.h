@@ -2,8 +2,9 @@
 /**
   ******************************************************************************
   * @file    usart.h
-  * @brief   This file contains all the function prototypes for
-  *          the usart.c file
+  * @brief   USART1 initialization interface.
+  * @details Exposes `huart1` and `MX_USART1_UART_Init()` for debug logging and
+  *          host communication.
   ******************************************************************************
   * @attention
   *
@@ -38,6 +39,9 @@ extern UART_HandleTypeDef huart1;
 
 /* USER CODE END Private defines */
 
+/**
+ * @brief Initialize USART1 peripheral and GPIO/NVIC dependencies.
+ */
 void MX_USART1_UART_Init(void);
 
 /* USER CODE BEGIN Prototypes */

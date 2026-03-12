@@ -1,20 +1,19 @@
 /**
  * @file    app_main_task.c
- * @brief   FreeRTOS 浠诲姟璋冨害瀹炵幇
- * @details 瀹炵幇闊抽澶勭悊娴佹按绾垮拰 UI 鏄剧ず浠诲姟
+ * @brief   FreeRTOS 任务调度实现
+ * @details 实现音频处理任务与 UI 显示任务，负责从 DMA 事件到声源显示的整条运行链路。
  *
- * 浠诲姟鏋舵瀯锛?
- * - Audio_Pipeline_Task: 闊抽閲囬泦 鈫?棰勫鐞?鈫?FFT 鈫?SRP-PHAT 鈫?鍙戦€佺粨鏋?
- * - UI_Display_Task: 鎺ユ敹缁撴灉 鈫?娓叉煋鐑姏鍥?鈫?鍒锋柊鏄剧ず
+ * 任务架构：
+ * - `Audio_Pipeline_Task`: 解交织 -> FFT -> SRP-PHAT -> 位置结果输出。
+ * - `UI_Display_Task`: 拉取位置与可视化快照 -> 渲染 -> 刷新 LCD。
  *
- * 鏁版嵁娴侊細
- * - SAI DMA ISR 鈫?xAudioFrameQueue 鈫?Audio_Pipeline_Task
- * - Audio_Pipeline_Task 鈫?xPositionQueue 鈫?UI_Display_Task
+ * 数据流：
+ * - SAI DMA ISR -> `xAudioFrameQueue` -> `Audio_Pipeline_Task`
+ * - `Audio_Pipeline_Task` -> `xPositionQueue` -> `UI_Display_Task`
  *
- * 闃熷垪鏈哄埗锛?
- * - 闃熷垪闀垮害涓?1 (浠呬繚鐣欐渶鏂版暟鎹?
- * - ISR 浣跨敤 xQueueOverwrite (瑕嗙洊鏃ф暟鎹?
- * - 浠诲姟浣跨敤 xQueueReceive (闃诲绛夊緟)
+ * 队列策略：
+ * - 两个队列长度均为 1，仅保留最新帧，避免累积延迟。
+ * - ISR 与任务端统一使用覆盖写入策略，优先保证实时性。
  */
 
 #include "ai_beamforming.h"
@@ -34,45 +33,45 @@
 #include <string.h>
 
 /* ============================================================================
- * 澶栭儴鍙橀噺 (External Variables)
+ * 外部变量 (External Variables)
  * ============================================================================ */
 
-/** @brief 璋冭瘯璁℃暟锛氶煶棰戜换鍔℃瘡澶勭悊涓€甯у姞 1 */
+/** @brief 调试计数：每处理一帧音频递增一次 */
 extern int16_t found_val;
 
 /* ============================================================================
- * FreeRTOS 鍙ユ焺 (FreeRTOS Handles)
+ * FreeRTOS 句柄 (FreeRTOS Handles)
  * ============================================================================ */
 
-/** @brief 闊抽澶勭悊娴佹按绾夸换鍔″彞鏌?*/
+/** @brief 音频处理任务句柄 */
 TaskHandle_t xAudioPipelineTaskHandle = NULL;
 
-/** @brief UI 鏄剧ず浠诲姟鍙ユ焺 */
+/** @brief UI 显示任务句柄 */
 TaskHandle_t xUITaskHandle = NULL;
 
-/** @brief 闊抽甯т簨浠堕槦鍒楀彞鏌?*/
+/** @brief 音频帧事件队列句柄 */
 QueueHandle_t xAudioFrameQueue = NULL;
 
-/** @brief 澹版簮浣嶇疆闃熷垪鍙ユ焺 */
+/** @brief 声源位置队列句柄 */
 QueueHandle_t xPositionQueue = NULL;
 
 /* ============================================================================
- * 杩愯鏃惰瘖鏂鏁板櫒 (Runtime Diagnostic Counters)
+ * 运行时诊断计数器 (Runtime Diagnostic Counters)
  * ============================================================================ */
 
-/** @brief 闊抽浠诲姟涓㈠抚璁℃暟 (闃熷垪瑕嗙洊瀵艰嚧) */
+/** @brief 音频帧事件序号跳变计数（用于估算丢帧） */
 volatile uint32_t g_audio_both_flags_count = 0u;
 
-/** @brief 闊抽浠诲姟鏈敹鍒版爣蹇楄鏁?(寮傚父鎯呭喌) */
+/** @brief 音频任务收到非法 half_id 的次数 */
 volatile uint32_t g_audio_no_flag_count = 0u;
 
-/** @brief UI 浠诲姟娓叉煋甯ц鏁?*/
+/** @brief UI 渲染帧计数 */
 volatile uint32_t g_ui_render_count = 0u;
 
-/** @brief UI 浠诲姟鎴愬姛鎺ユ敹闃熷垪鏁版嵁鐨勬鏁?*/
+/** @brief UI 成功接收位置队列数据次数 */
 volatile uint32_t g_ui_queue_rx_count = 0u;
 
-/** @brief UI 浠诲姟闃熷垪鎺ユ敹瓒呮椂鐨勬鏁?*/
+/** @brief UI 轮询位置队列未取到数据次数 */
 volatile uint32_t g_ui_queue_timeout_count = 0u;
 
 volatile uint32_t g_ui_cli_rx_ok_count = 0u;
@@ -80,20 +79,20 @@ volatile uint32_t g_ui_cli_rx_err_count = 0u;
 volatile uint8_t g_ui_cli_rx_alive = 0u;
 
 /* ============================================================================
- * 璋冭瘯閰嶇疆 (Debug Configuration)
+ * 调试配置 (Debug Configuration)
  * ============================================================================ */
 
-/* #define DEBUG_ENABLE */  /**< 鍚敤璋冭瘯杈撳嚭 (VOFA+) */
-#define DEBUG_THROTTLE_FRAMES   20u  /**< 璋冭瘯杈撳嚭鑺傛祦 (姣?20 甯ц緭鍑轰竴娆? */
-#define DEBUG_MODE              3    /**< 璋冭瘯妯″紡锛?=RMS, 1=FFT, 3=SRP */
-#define DEBUG_SPECTRUM_CHANNEL  0u   /**< FFT 璋冭瘯閫氶亾 */
+/* #define DEBUG_ENABLE */  /**< 启用 VOFA 调试输出 */
+#define DEBUG_THROTTLE_FRAMES   20u  /**< 调试输出节流：每 N 帧输出一次 */
+#define DEBUG_MODE              3    /**< 调试模式：0=RMS, 1=FFT, 3=SRP */
+#define DEBUG_SPECTRUM_CHANNEL  0u   /**< FFT 调试输出通道 */
 
 /* ============================================================================
- * UI 鍒锋柊鍙傛暟 (UI Refresh Parameters)
+ * UI 刷新参数 (UI Refresh Parameters)
  * ============================================================================ */
 
-#define UI_RETRY_INIT_MS         1000u  /**< UI 鍒濆鍖栭噸璇曢棿闅?(ms) */
-#define UI_DEBUG_LOG             0u     /**< UI 璋冭瘯鏃ュ織寮€鍏?*/
+#define UI_RETRY_INIT_MS         1000u  /**< UI 初始化失败后的重试周期 (ms) */
+#define UI_DEBUG_LOG             0u     /**< UI 调试日志开关 */
 #define UI_CLI_ENABLE            1u
 #define UI_CLI_LINE_MAX          96u
 #define UI_CLI_RX_DRAIN_MAX      256u
@@ -108,32 +107,26 @@ volatile uint8_t g_ui_cli_rx_alive = 0u;
 #define PERF_RATE_PERIOD_MS      1000u
 
 /* ============================================================================
- * 浠诲姟浼樺厛绾?(Task Priorities)
+ * 任务优先级 (Task Priorities)
  * ============================================================================ */
 
-#define APP_AUDIO_TASK_PRIO     4u  /**< 闊抽浠诲姟浼樺厛绾?(楂? */
-#define APP_UI_TASK_PRIO        4u  /**< UI 浠诲姟浼樺厛绾?(鍚岀骇) */
+#define APP_AUDIO_TASK_PRIO     4u  /**< 音频任务优先级 */
+#define APP_UI_TASK_PRIO        4u  /**< UI 任务优先级 */
 
 /* ============================================================================
- * 鍒濆鍖栧嚱鏁?(Initialization Functions)
+ * 初始化函数 (Initialization Functions)
  * ============================================================================ */
 
 /**
- * @brief   搴旂敤浠诲姟鍜岄槦鍒楀垵濮嬪寲
- * @details 鍒涘缓 FreeRTOS 浠诲姟鍜岄槦鍒?
+ * @brief   应用任务与队列初始化
+ * @details 创建音频队列、位置队列、音频任务与 UI 任务，并同步运行时配置。
  *
- * 鍒濆鍖栨祦绋嬶細
- * 1. 鍒涘缓闊抽甯т簨浠堕槦鍒?(闀垮害 1, 瑕嗙洊妯″紡)
- * 2. 鍒涘缓澹版簮浣嶇疆闃熷垪 (闀垮害 1, 瑕嗙洊妯″紡)
- * 3. 鍒涘缓闊抽澶勭悊浠诲姟 (浼樺厛绾?4, 鍫嗘爤 2304 瀛楄妭)
- * 4. 鍒涘缓 UI 鏄剧ず浠诲姟 (浼樺厛绾?4, 鍫嗘爤 2048 瀛楄妭)
+ * 初始化顺序：
+ * 1. 初始化渲染后端与性能统计模块。
+ * 2. 创建长度为 1 的音频事件队列和位置队列。
+ * 3. 创建 `Audio_Pipeline_Task` 与 `UI_Display_Task`。
  *
- * 闃熷垪闀垮害涓?1 鐨勫師鍥狅細
- * - 瀹炴椂绯荤粺锛屽彧鍏冲績鏈€鏂版暟鎹?
- * - 閬垮厤闃熷垪绉帇瀵艰嚧寤惰繜
- * - 涓㈠抚绛栫暐锛氫涪寮冩棫甯э紝澶勭悊鏂板抚
- *
- * @note    鍦?FreeRTOS 鍚姩鍓嶈皟鐢?(freertos.c 涓?
+ * @note 队列长度为 1 是实时策略设计：旧帧可丢，优先处理最新帧。
  */
 /* ============================================================================
  * UI CLI (Runtime Tuning via UART)
@@ -143,8 +136,55 @@ volatile uint8_t g_ui_cli_rx_alive = 0u;
  * Runtime Knobs
  * ============================================================================ */
 
-static volatile uint32_t s_ui_target_fps = UI_FPS_DEFAULT;
-static volatile uint32_t s_audio_algo_decim = AUDIO_ALGO_DECIM_DEFAULT;
+typedef struct
+{
+    uint8_t (*is_ready)(void);
+    void (*init)(void);
+    void (*render)(const Sound_Pos_t *pos,
+                   const SRP_VisFrame_t *vis_frame,
+                   uint32_t frame_seq,
+                   uint8_t sai_dma_active);
+} App_UiRendererOps_t;
+
+static App_Runtime_Config_t s_runtime_cfg = {
+    UI_FPS_DEFAULT,
+    AUDIO_ALGO_DECIM_DEFAULT,
+    0u,
+    {0u, 0u, 0u},
+    APP_RUNTIME_DISP_MODE_BALANCED,
+    {
+        APP_DISPLAY_EMA_ATTACK,
+        APP_DISPLAY_EMA_DECAY,
+        APP_DISPLAY_DYNAMIC_DB_FLOOR,
+        APP_DISPLAY_FINE_GAIN,
+        APP_DISPLAY_DYNAMIC_GAMMA,
+        APP_DISPLAY_NOISE_GATE_RATIO,
+        APP_DISPLAY_NOISE_ADAPT_GAIN,
+        APP_DISPLAY_SMOOTH_PASSES,
+        APP_DISPLAY_FINE_FUSION_ENABLE,
+        APP_DISPLAY_DRAW_COARSE_GRID,
+        (APP_DISPLAY_BILINEAR_SAMPLING != 0u) ? APP_RUNTIME_DISP_INTERP_BILINEAR : APP_RUNTIME_DISP_INTERP_NEAREST,
+        APP_RUNTIME_DISP_NORM_FAST,
+        APP_DISPLAY_TEXT_REFRESH_DIV,
+        APP_DISPLAY_BLIT_ROWS_MAX
+    }
+};
+
+static uint8_t s_ui_legacy_is_ready(void);
+static void s_ui_legacy_init(void);
+static void s_ui_legacy_render(const Sound_Pos_t *pos,
+                               const SRP_VisFrame_t *vis_frame,
+                               uint32_t frame_seq,
+                               uint8_t sai_dma_active);
+
+static const App_UiRendererOps_t s_ui_renderer_legacy_ops = {
+    s_ui_legacy_is_ready,
+    s_ui_legacy_init,
+    s_ui_legacy_render
+};
+
+static const App_UiRendererOps_t *s_ui_renderer = &s_ui_renderer_legacy_ops;
+static volatile App_UiRenderBackend_t s_ui_backend = APP_UI_RENDER_BACKEND_LEGACY;
 
 /* ============================================================================
  * Performance Profiler
@@ -199,6 +239,250 @@ static uint32_t s_clamp_u32(uint32_t v, uint32_t lo, uint32_t hi)
         return hi;
     }
     return v;
+}
+
+static App_Runtime_DisplayMode_t s_runtime_mode_from_display(App_Display_Mode_t mode)
+{
+    switch (mode)
+    {
+        case APP_DISPLAY_MODE_FAST:
+            return APP_RUNTIME_DISP_MODE_FAST;
+        case APP_DISPLAY_MODE_CLEAN:
+            return APP_RUNTIME_DISP_MODE_CLEAN;
+        case APP_DISPLAY_MODE_BALANCED:
+        default:
+            return APP_RUNTIME_DISP_MODE_BALANCED;
+    }
+}
+
+static App_Display_Mode_t s_runtime_mode_to_display(App_Runtime_DisplayMode_t mode)
+{
+    switch (mode)
+    {
+        case APP_RUNTIME_DISP_MODE_FAST:
+            return APP_DISPLAY_MODE_FAST;
+        case APP_RUNTIME_DISP_MODE_CLEAN:
+            return APP_DISPLAY_MODE_CLEAN;
+        case APP_RUNTIME_DISP_MODE_BALANCED:
+        default:
+            return APP_DISPLAY_MODE_BALANCED;
+    }
+}
+
+static void s_runtime_displaycfg_from_display(const App_Display_RuntimeCfg_t *src,
+                                              App_Runtime_DisplayCfg_t *dst)
+{
+    if ((src == NULL) || (dst == NULL))
+    {
+        return;
+    }
+
+    dst->ema_attack = src->ema_attack;
+    dst->ema_decay = src->ema_decay;
+    dst->db_floor = src->db_floor;
+    dst->fine_gain = src->fine_gain;
+    dst->gamma = src->gamma;
+    dst->noise_gate_ratio = src->noise_gate_ratio;
+    dst->noise_adapt_gain = src->noise_adapt_gain;
+    dst->smooth_passes = src->smooth_passes;
+    dst->fine_fusion_enable = src->fine_fusion_enable;
+    dst->draw_coarse_grid = src->draw_coarse_grid;
+    dst->interp_mode = (src->interp_mode == APP_DISPLAY_INTERP_BILINEAR)
+                           ? APP_RUNTIME_DISP_INTERP_BILINEAR
+                           : APP_RUNTIME_DISP_INTERP_NEAREST;
+    dst->norm_mode = (src->norm_mode == APP_DISPLAY_NORM_FULL)
+                         ? APP_RUNTIME_DISP_NORM_FULL
+                         : APP_RUNTIME_DISP_NORM_FAST;
+    dst->text_refresh_div = src->text_refresh_div;
+    dst->blit_rows = src->blit_rows;
+}
+
+static void s_runtime_displaycfg_to_display(const App_Runtime_DisplayCfg_t *src,
+                                            App_Display_RuntimeCfg_t *dst)
+{
+    if ((src == NULL) || (dst == NULL))
+    {
+        return;
+    }
+
+    dst->ema_attack = src->ema_attack;
+    dst->ema_decay = src->ema_decay;
+    dst->db_floor = src->db_floor;
+    dst->fine_gain = src->fine_gain;
+    dst->gamma = src->gamma;
+    dst->noise_gate_ratio = src->noise_gate_ratio;
+    dst->noise_adapt_gain = src->noise_adapt_gain;
+    dst->smooth_passes = src->smooth_passes;
+    dst->fine_fusion_enable = src->fine_fusion_enable;
+    dst->draw_coarse_grid = src->draw_coarse_grid;
+    dst->interp_mode = (src->interp_mode == APP_RUNTIME_DISP_INTERP_BILINEAR)
+                           ? APP_DISPLAY_INTERP_BILINEAR
+                           : APP_DISPLAY_INTERP_NEAREST;
+    dst->norm_mode = (src->norm_mode == APP_RUNTIME_DISP_NORM_FULL)
+                         ? APP_DISPLAY_NORM_FULL
+                         : APP_DISPLAY_NORM_FAST;
+    dst->text_refresh_div = src->text_refresh_div;
+    dst->blit_rows = src->blit_rows;
+}
+
+static void s_runtime_sync_from_display(void)
+{
+    App_Display_RuntimeCfg_t display_cfg;
+    App_Display_Mode_t display_mode;
+
+    App_Display_GetConfig(&display_cfg);
+    display_mode = App_Display_GetMode();
+
+    taskENTER_CRITICAL();
+    s_runtime_cfg.display_mode = s_runtime_mode_from_display(display_mode);
+    s_runtime_displaycfg_from_display(&display_cfg, &s_runtime_cfg.display_cfg);
+    taskEXIT_CRITICAL();
+}
+
+void App_RuntimeConfig_Get(App_Runtime_Config_t *cfg)
+{
+    if (cfg == NULL)
+    {
+        return;
+    }
+
+    taskENTER_CRITICAL();
+    *cfg = s_runtime_cfg;
+    taskEXIT_CRITICAL();
+}
+
+void App_RuntimeConfig_SetUiTargetFps(uint32_t fps)
+{
+    fps = s_clamp_u32(fps, UI_FPS_MIN, UI_FPS_MAX);
+    taskENTER_CRITICAL();
+    s_runtime_cfg.ui_target_fps = fps;
+    taskEXIT_CRITICAL();
+}
+
+uint32_t App_RuntimeConfig_GetUiTargetFps(void)
+{
+    uint32_t fps;
+    taskENTER_CRITICAL();
+    fps = s_runtime_cfg.ui_target_fps;
+    taskEXIT_CRITICAL();
+    return fps;
+}
+
+void App_RuntimeConfig_SetAudioAlgoDecim(uint32_t decim)
+{
+    decim = s_clamp_u32(decim, AUDIO_ALGO_DECIM_MIN, AUDIO_ALGO_DECIM_MAX);
+    taskENTER_CRITICAL();
+    s_runtime_cfg.audio_algo_decim = decim;
+    taskEXIT_CRITICAL();
+}
+
+uint32_t App_RuntimeConfig_GetAudioAlgoDecim(void)
+{
+    uint32_t decim;
+    taskENTER_CRITICAL();
+    decim = s_runtime_cfg.audio_algo_decim;
+    taskEXIT_CRITICAL();
+    return decim;
+}
+
+void App_RuntimeConfig_SetPerfEnabled(uint8_t enable)
+{
+    App_Perf_SetEnabled(enable);
+    taskENTER_CRITICAL();
+    s_runtime_cfg.perf_enabled = (App_Perf_IsEnabled() != 0u) ? 1u : 0u;
+    taskEXIT_CRITICAL();
+}
+
+uint8_t App_RuntimeConfig_GetPerfEnabled(void)
+{
+    uint8_t enabled;
+    taskENTER_CRITICAL();
+    enabled = s_runtime_cfg.perf_enabled;
+    taskEXIT_CRITICAL();
+    return enabled;
+}
+
+void App_RuntimeConfig_SetDisplayMode(App_Runtime_DisplayMode_t mode)
+{
+    App_Display_Mode_t display_mode = s_runtime_mode_to_display(mode);
+    App_Display_SetMode(display_mode);
+    s_runtime_sync_from_display();
+}
+
+App_Runtime_DisplayMode_t App_RuntimeConfig_GetDisplayMode(void)
+{
+    App_Runtime_DisplayMode_t mode;
+    taskENTER_CRITICAL();
+    mode = s_runtime_cfg.display_mode;
+    taskEXIT_CRITICAL();
+    return mode;
+}
+
+void App_RuntimeConfig_SetDisplayCfg(const App_Runtime_DisplayCfg_t *cfg)
+{
+    App_Display_RuntimeCfg_t display_cfg;
+
+    if (cfg == NULL)
+    {
+        return;
+    }
+
+    s_runtime_displaycfg_to_display(cfg, &display_cfg);
+    App_Display_SetConfig(&display_cfg);
+    s_runtime_sync_from_display();
+}
+
+void App_RuntimeConfig_GetDisplayCfg(App_Runtime_DisplayCfg_t *cfg)
+{
+    if (cfg == NULL)
+    {
+        return;
+    }
+
+    taskENTER_CRITICAL();
+    *cfg = s_runtime_cfg.display_cfg;
+    taskEXIT_CRITICAL();
+}
+
+void App_UiRenderer_SetBackend(App_UiRenderBackend_t backend)
+{
+    taskENTER_CRITICAL();
+    switch (backend)
+    {
+        case APP_UI_RENDER_BACKEND_LEGACY:
+        default:
+            s_ui_renderer = &s_ui_renderer_legacy_ops;
+            s_ui_backend = APP_UI_RENDER_BACKEND_LEGACY;
+            break;
+    }
+    taskEXIT_CRITICAL();
+}
+
+App_UiRenderBackend_t App_UiRenderer_GetBackend(void)
+{
+    App_UiRenderBackend_t backend;
+    taskENTER_CRITICAL();
+    backend = s_ui_backend;
+    taskEXIT_CRITICAL();
+    return backend;
+}
+
+static uint8_t s_ui_legacy_is_ready(void)
+{
+    return App_Display_IsReady();
+}
+
+static void s_ui_legacy_init(void)
+{
+    App_Display_Init();
+}
+
+static void s_ui_legacy_render(const Sound_Pos_t *pos,
+                               const SRP_VisFrame_t *vis_frame,
+                               uint32_t frame_seq,
+                               uint8_t sai_dma_active)
+{
+    App_Display_Render(pos, vis_frame, frame_seq, sai_dma_active);
 }
 
 static int s_u32_cmp(const void *a, const void *b)
@@ -400,8 +684,8 @@ void App_Perf_Dump(void)
     printf("perf cfg enabled=%u dwt=%u uifps=%lu decim=%lu core=%lu\r\n",
            (unsigned int)s_perf_enabled,
            (unsigned int)s_perf_dwt_ready,
-           (unsigned long)s_ui_target_fps,
-           (unsigned long)s_audio_algo_decim,
+           (unsigned long)App_RuntimeConfig_GetUiTargetFps(),
+           (unsigned long)App_RuntimeConfig_GetAudioAlgoDecim(),
            (unsigned long)core_hz);
 
     for (i = 0u; i < APP_PERF_SEC_COUNT; i++)
@@ -460,7 +744,7 @@ void App_Perf_Dump(void)
 
 static uint32_t s_ui_period_ticks(void)
 {
-    uint32_t fps = s_clamp_u32(s_ui_target_fps, UI_FPS_MIN, UI_FPS_MAX);
+    uint32_t fps = s_clamp_u32(App_RuntimeConfig_GetUiTargetFps(), UI_FPS_MIN, UI_FPS_MAX);
     uint32_t period_ms = (1000u + (fps / 2u)) / fps;
     TickType_t ticks = pdMS_TO_TICKS(period_ms);
     if (ticks == 0u)
@@ -695,13 +979,13 @@ static void ui_cli_print_help(void)
 
 static void ui_cli_print_status(void)
 {
-    App_Display_RuntimeCfg_t cfg;
-    App_Display_Mode_t mode;
+    App_Runtime_DisplayCfg_t cfg;
+    App_Runtime_DisplayMode_t mode;
 
-    App_Display_GetConfig(&cfg);
-    mode = App_Display_GetMode();
+    App_RuntimeConfig_GetDisplayCfg(&cfg);
+    mode = App_RuntimeConfig_GetDisplayMode();
 
-    printf("cfg mode=%s\r\n", App_Display_ModeName(mode));
+    printf("cfg mode=%s\r\n", App_Display_ModeName(s_runtime_mode_to_display(mode)));
     printf("cfg db=%.1f gamma=%.2f noise=%.3f adapt=%.2f\r\n",
            (double)cfg.db_floor,
            (double)cfg.gamma,
@@ -710,14 +994,18 @@ static void ui_cli_print_status(void)
     printf("cfg smooth=%u fine=%.2f interp=%s norm=%s textdiv=%u blit=%u\r\n",
            (unsigned int)cfg.smooth_passes,
            (double)cfg.fine_gain,
-           App_Display_InterpName((App_Display_Interp_t)cfg.interp_mode),
-           App_Display_NormName((App_Display_Norm_t)cfg.norm_mode),
+           App_Display_InterpName((cfg.interp_mode == APP_RUNTIME_DISP_INTERP_BILINEAR)
+                                      ? APP_DISPLAY_INTERP_BILINEAR
+                                      : APP_DISPLAY_INTERP_NEAREST),
+           App_Display_NormName((cfg.norm_mode == APP_RUNTIME_DISP_NORM_FULL)
+                                    ? APP_DISPLAY_NORM_FULL
+                                    : APP_DISPLAY_NORM_FAST),
            (unsigned int)cfg.text_refresh_div,
            (unsigned int)cfg.blit_rows);
     printf("cfg uifps=%lu algodecim=%lu perf=%s\r\n",
-           (unsigned long)s_ui_target_fps,
-           (unsigned long)s_audio_algo_decim,
-           (App_Perf_IsEnabled() != 0u) ? "on" : "off");
+           (unsigned long)App_RuntimeConfig_GetUiTargetFps(),
+           (unsigned long)App_RuntimeConfig_GetAudioAlgoDecim(),
+           (App_RuntimeConfig_GetPerfEnabled() != 0u) ? "on" : "off");
     printf("dma2d tx=%lu timeout=%lu fallback=%lu qpk=%lu qov=%lu qerr=%lu\r\n",
            (unsigned long)g_ltdc_dma2d_transfer_count,
            (unsigned long)g_ltdc_dma2d_timeout_count,
@@ -744,7 +1032,7 @@ static void ui_cli_apply_line(char *line)
     char *cursor;
     char *arg = NULL;
     char *tail;
-    App_Display_RuntimeCfg_t cfg;
+    App_Runtime_DisplayCfg_t cfg;
     float fv;
     uint32_t uv;
 
@@ -842,15 +1130,15 @@ static void ui_cli_apply_line(char *line)
         }
         if (ui_cli_stricmp(arg, "fast") == 0)
         {
-            App_Display_SetMode(APP_DISPLAY_MODE_FAST);
+            App_RuntimeConfig_SetDisplayMode(APP_RUNTIME_DISP_MODE_FAST);
         }
         else if ((ui_cli_stricmp(arg, "balanced") == 0) || (ui_cli_stricmp(arg, "bal") == 0))
         {
-            App_Display_SetMode(APP_DISPLAY_MODE_BALANCED);
+            App_RuntimeConfig_SetDisplayMode(APP_RUNTIME_DISP_MODE_BALANCED);
         }
         else if (ui_cli_stricmp(arg, "clean") == 0)
         {
-            App_Display_SetMode(APP_DISPLAY_MODE_CLEAN);
+            App_RuntimeConfig_SetDisplayMode(APP_RUNTIME_DISP_MODE_CLEAN);
         }
         else
         {
@@ -862,7 +1150,7 @@ static void ui_cli_apply_line(char *line)
     }
     if (ui_cli_stricmp(cursor, "interp") == 0)
     {
-        App_Display_GetConfig(&cfg);
+        App_RuntimeConfig_GetDisplayCfg(&cfg);
         if (arg == NULL)
         {
             printf("CLI: cfg interp nearest|bilinear\r\n");
@@ -870,24 +1158,24 @@ static void ui_cli_apply_line(char *line)
         }
         if ((ui_cli_stricmp(arg, "nearest") == 0) || (ui_cli_stricmp(arg, "near") == 0))
         {
-            cfg.interp_mode = APP_DISPLAY_INTERP_NEAREST;
+            cfg.interp_mode = APP_RUNTIME_DISP_INTERP_NEAREST;
         }
         else if ((ui_cli_stricmp(arg, "bilinear") == 0) || (ui_cli_stricmp(arg, "bil") == 0))
         {
-            cfg.interp_mode = APP_DISPLAY_INTERP_BILINEAR;
+            cfg.interp_mode = APP_RUNTIME_DISP_INTERP_BILINEAR;
         }
         else
         {
             printf("CLI: cfg interp nearest|bilinear\r\n");
             return;
         }
-        App_Display_SetConfig(&cfg);
+        App_RuntimeConfig_SetDisplayCfg(&cfg);
         ui_cli_print_status();
         return;
     }
     if (ui_cli_stricmp(cursor, "norm") == 0)
     {
-        App_Display_GetConfig(&cfg);
+        App_RuntimeConfig_GetDisplayCfg(&cfg);
         if (arg == NULL)
         {
             printf("CLI: cfg norm fast|full\r\n");
@@ -895,18 +1183,18 @@ static void ui_cli_apply_line(char *line)
         }
         if (ui_cli_stricmp(arg, "fast") == 0)
         {
-            cfg.norm_mode = APP_DISPLAY_NORM_FAST;
+            cfg.norm_mode = APP_RUNTIME_DISP_NORM_FAST;
         }
         else if (ui_cli_stricmp(arg, "full") == 0)
         {
-            cfg.norm_mode = APP_DISPLAY_NORM_FULL;
+            cfg.norm_mode = APP_RUNTIME_DISP_NORM_FULL;
         }
         else
         {
             printf("CLI: cfg norm fast|full\r\n");
             return;
         }
-        App_Display_SetConfig(&cfg);
+        App_RuntimeConfig_SetDisplayCfg(&cfg);
         ui_cli_print_status();
         return;
     }
@@ -917,7 +1205,7 @@ static void ui_cli_apply_line(char *line)
             printf("CLI: cfg uifps <5..30>\r\n");
             return;
         }
-        s_ui_target_fps = s_clamp_u32(uv, UI_FPS_MIN, UI_FPS_MAX);
+        App_RuntimeConfig_SetUiTargetFps(uv);
         ui_cli_print_status();
         return;
     }
@@ -928,7 +1216,7 @@ static void ui_cli_apply_line(char *line)
             printf("CLI: cfg algodecim <1..8>\r\n");
             return;
         }
-        s_audio_algo_decim = s_clamp_u32(uv, AUDIO_ALGO_DECIM_MIN, AUDIO_ALGO_DECIM_MAX);
+        App_RuntimeConfig_SetAudioAlgoDecim(uv);
         ui_cli_print_status();
         return;
     }
@@ -941,11 +1229,11 @@ static void ui_cli_apply_line(char *line)
         }
         if (ui_cli_stricmp(arg, "on") == 0)
         {
-            App_Perf_SetEnabled(1u);
+            App_RuntimeConfig_SetPerfEnabled(1u);
         }
         else if (ui_cli_stricmp(arg, "off") == 0)
         {
-            App_Perf_SetEnabled(0u);
+            App_RuntimeConfig_SetPerfEnabled(0u);
         }
         else if (ui_cli_stricmp(arg, "reset") == 0)
         {
@@ -984,7 +1272,7 @@ static void ui_cli_apply_line(char *line)
         return;
     }
 
-    App_Display_GetConfig(&cfg);
+    App_RuntimeConfig_GetDisplayCfg(&cfg);
 
     if (ui_cli_stricmp(cursor, "contrast") == 0)
     {
@@ -1051,7 +1339,7 @@ static void ui_cli_apply_line(char *line)
             printf("CLI: cfg bilinear <0|1>\r\n");
             return;
         }
-        cfg.interp_mode = (uv != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST;
+        cfg.interp_mode = (uv != 0u) ? APP_RUNTIME_DISP_INTERP_BILINEAR : APP_RUNTIME_DISP_INTERP_NEAREST;
     }
     else if (ui_cli_stricmp(cursor, "textdiv") == 0)
     {
@@ -1077,7 +1365,7 @@ static void ui_cli_apply_line(char *line)
         return;
     }
 
-    App_Display_SetConfig(&cfg);
+    App_RuntimeConfig_SetDisplayCfg(&cfg);
     ui_cli_print_status();
 }
 
@@ -1191,53 +1479,43 @@ static void ui_cli_poll(void)
 void App_Task_Init(void)
 {
     BaseType_t task_ok;
+    App_UiRenderer_SetBackend(APP_UI_RENDER_BACKEND_LEGACY);
     App_Perf_Init();
+    taskENTER_CRITICAL();
+    s_runtime_cfg.perf_enabled = (App_Perf_IsEnabled() != 0u) ? 1u : 0u;
+    taskEXIT_CRITICAL();
+    s_runtime_sync_from_display();
 
-    /* 鍒涘缓闃熷垪锛氶暱搴︿负 1锛屼繚鐣欐渶鏂板抚/鏈€鏂板畾浣嶇粨鏋滐紝闄嶄綆绔埌绔欢杩?*/
+    /* 创建长度为 1 的覆盖队列，确保端到端低延迟。 */
     xAudioFrameQueue = xQueueCreate(1, sizeof(Audio_FrameEvent_t));
     xPositionQueue = xQueueCreate(1, sizeof(Sound_Pos_t));
     configASSERT(xAudioFrameQueue != NULL);
     configASSERT(xPositionQueue != NULL);
 
-    /* 鍒涘缓闊抽澶勭悊浠诲姟 */
-    /* 鍫嗘爤锛?304 瀛楄妭 (瓒冲瀹圭撼灞€閮ㄥ彉閲忓拰鍑芥暟璋冪敤鏍? */
+    /* 创建音频处理任务（2304 字节栈）。 */
     task_ok = xTaskCreate(Audio_Pipeline_Task, "Audio_Pipe", 2304, NULL, APP_AUDIO_TASK_PRIO, &xAudioPipelineTaskHandle);
     configASSERT(task_ok == pdPASS);
 
-    /* 鍒涘缓 UI 鏄剧ず浠诲姟 */
-    /* 鍫嗘爤锛?048 瀛楄妭 */
+    /* 创建 UI 显示任务（2048 字节栈）。 */
     task_ok = xTaskCreate(UI_Display_Task, "UI_Disp", 2048, NULL, APP_UI_TASK_PRIO, &xUITaskHandle);
     configASSERT(task_ok == pdPASS);
 }
 
 /**
- * @brief   闊抽澶勭悊娴佹按绾夸换鍔?
- * @details 澶勭悊闊抽鏁版嵁娴佹按绾匡細DMA 鈫?棰勫鐞?鈫?FFT 鈫?SRP-PHAT 鈫?杈撳嚭
+ * @brief   音频处理主任务
+ * @details 处理流程：DMA 半缓冲事件 -> 解交织 -> FFT -> SRP-PHAT -> 结果投递。
  *
- * 浠诲姟娴佺▼锛?
- * 1. 绛夊緟 DMA 涓柇浜嬩欢 (xQueueReceive, 鏃犻檺绛夊緟)
- * 2. 妫€娴嬩涪甯?(閫氳繃搴忓彿鏂眰鍒ゆ柇)
- * 3. 瑙ｄ氦缁?+ 绫诲瀷杞崲 (Deinterleave_Using_Matrix)
- * 4. FFT 棰戝煙鍙樻崲 (AI_FFT_Process)
- * 5. SRP-PHAT 澹版簮瀹氫綅 (AI_SRP_PHAT_Process)
- * 6. 鍙戦€佺粨鏋滃埌 UI 浠诲姟 (xQueueOverwrite)
- * 7. 涓诲姩璁╁嚭 CPU (taskYIELD)
+ * 关键点：
+ * - 通过 `event.seq` 检测事件跳变并累计异常计数。
+ * - 使用 `audio_algo_decim` 实现算法降采样，非执行帧复用上次定位结果。
+ * - 复用 `Mic_Freq_Buffer` 作为临时 q15 平面缓冲，减少额外 RAM 占用。
  *
- * 鍐呭瓨浼樺寲锛?
- * - 澶嶇敤 Mic_Freq_Buffer 浣滀负涓存椂 q15 骞抽潰缂撳啿
- * - 閬垮厤棰濆鍒嗛厤 16KB 鍐呭瓨
- * - 璇ョ紦鍐插湪 FFT 鍓嶄娇鐢紝FFT 鍚庤瑕嗙洊
+ * 调试输出：
+ * - `DEBUG_MODE=0`: 输出 RMS。
+ * - `DEBUG_MODE=1`: 输出 FFT。
+ * - `DEBUG_MODE=3`: 输出 SRP 结果。
  *
- * 璋冭瘯杈撳嚭锛?
- * - DEBUG_MODE=0: 杈撳嚭 RMS (鏈夋晥鍊?
- * - DEBUG_MODE=1: 杈撳嚭 FFT 棰戣氨
- * - DEBUG_MODE=3: 杈撳嚭 SRP 缁撴灉
- *
- * @param   pvParameters  FreeRTOS 浠诲姟鍙傛暟 (鏈娇鐢?
- *
- * @note    浠诲姟浼樺厛绾э細4 (楂樹簬 UI 浠诲姟)
- * @note    浠诲姟鍫嗘爤锛?304 瀛楄妭
- * @note    浠诲姟鍛ㄦ湡锛?.33ms (48kHz, 256 鐐?
+ * @param   pvParameters  FreeRTOS 任务参数（未使用）
  */
 void Audio_Pipeline_Task(void *pvParameters)
 {
@@ -1282,7 +1560,9 @@ void Audio_Pipeline_Task(void *pvParameters)
         }
 
         {
-            uint32_t decim = s_clamp_u32(s_audio_algo_decim, AUDIO_ALGO_DECIM_MIN, AUDIO_ALGO_DECIM_MAX);
+            uint32_t decim = s_clamp_u32(App_RuntimeConfig_GetAudioAlgoDecim(),
+                                         AUDIO_ALGO_DECIM_MIN,
+                                         AUDIO_ALGO_DECIM_MAX);
             uint8_t run_algo = (has_last_algo == 0u) ? 1u : ((s_decim_phase == 0u) ? 1u : 0u);
 
             s_decim_phase++;
@@ -1359,33 +1639,15 @@ void Audio_Pipeline_Task(void *pvParameters)
 }
 
 /**
- * @brief   UI 鏄剧ず浠诲姟
- * @details 鎺ユ敹澹版簮浣嶇疆鏁版嵁锛屾覆鏌撶儹鍔涘浘鍜屽崄瀛楀厜鏍?
+ * @brief   UI 显示任务
+ * @details 轮询位置队列并刷新显示：取最新位置 -> 快照 SRP 可视化数据 -> 渲染输出。
  *
- * 浠诲姟娴佺▼锛?
- * 1. 妫€鏌ユ樉绀烘ā鍧楁槸鍚﹀氨缁?(App_Display_IsReady)
- * 2. 濡傛灉鏈氨缁紝瀹氭湡閲嶈瘯鍒濆鍖?(1 绉掗棿闅?
- * 3. 闈為樆濉炴帴鏀跺０婧愪綅缃暟鎹?(xQueueReceive, 0 瓒呮椂)
- * 4. 濡傛灉鏈夊甯хН鍘嬶紝浠呬繚鐣欐渶鍚庝竴甯?
- * 5. 涓寸晫鍖哄揩鐓?SRP 鍔熺巼鏁版嵁 (閬垮厤璇诲埌鍗婃洿鏂版暟鎹?
- * 6. 娓叉煋 UI (App_Display_Render)
- * 7. 鍛ㄦ湡鎬у欢杩?(vTaskDelayUntil, 33ms)
+ * 关键点：
+ * - 显示未就绪时按 `UI_RETRY_INIT_MS` 周期重试初始化。
+ * - 每帧仅使用队列中的最后一条位置数据，避免 UI 堆积。
+ * - 在临界区内复制 SRP 可视化快照，避免读写竞争。
  *
- * 鍒濆鍖栭噸璇曟満鍒讹細
- * - 鏄剧ず妯″潡鍒濆鍖栧彲鑳藉け璐?(LCD 纭欢闂)
- * - 姣?1 绉掗噸璇曚竴娆★紝鐩村埌鎴愬姛
- * - 閲嶈瘯鏈熼棿璁╁嚭 CPU锛岄伩鍏嶉樆濉炲叾浠栦换鍔?
- *
- * 鏁版嵁鍚屾锛?
- * - SRP_Power 琚煶棰戜换鍔″啓鍏ワ紝UI 浠诲姟璇诲彇
- * - 浣跨敤涓寸晫鍖哄揩鐓э紝閬垮厤鏁版嵁绔炰簤
- * - 涓寸晫鍖烘椂闂寸煭 (绾?0.1ms)锛屼笉褰卞搷瀹炴椂鎬?
- *
- * @param   pvParameters  FreeRTOS 浠诲姟鍙傛暟 (鏈娇鐢?
- *
- * @note    浠诲姟浼樺厛绾э細4 (涓庨煶棰戜换鍔″悓绾?
- * @note    浠诲姟鍫嗘爤锛?048 瀛楄妭
- * @note    浠诲姟鍛ㄦ湡锛?3ms (30 FPS)
+ * @param   pvParameters  FreeRTOS 任务参数（未使用）
  */
 void UI_Display_Task(void *pvParameters)
 {
@@ -1402,9 +1664,9 @@ void UI_Display_Task(void *pvParameters)
     TickType_t last_init_try = 0u;
     uint32_t last_dma2d_timeout = 0u;
 
-    if (App_Display_IsReady() == 0u)
+    if ((s_ui_renderer != NULL) && (s_ui_renderer->is_ready() == 0u))
     {
-        App_Display_Init();
+        s_ui_renderer->init();
     }
     last_init_try = xTaskGetTickCount();
     next_render_wake = last_init_try;
@@ -1415,7 +1677,7 @@ void UI_Display_Task(void *pvParameters)
         uint8_t sai_dma_active;
 
         ui_cli_poll();
-        if (App_Display_IsReady() == 0u)
+        if ((s_ui_renderer != NULL) && (s_ui_renderer->is_ready() == 0u))
         {
             TickType_t now = xTaskGetTickCount();
             if ((now - last_init_try) >= pdMS_TO_TICKS(UI_RETRY_INIT_MS))
@@ -1427,7 +1689,7 @@ void UI_Display_Task(void *pvParameters)
                        (unsigned long)g_lcd_init_stage,
                        (unsigned long)g_ltdc_init_stage);
 #endif
-                App_Display_Init();
+                s_ui_renderer->init();
                 last_init_try = now;
             }
             taskYIELD();
@@ -1480,7 +1742,7 @@ void UI_Display_Task(void *pvParameters)
 
         {
             uint32_t t_sec = App_Perf_BeginCycles();
-            App_Display_Render(&last_pos, &vis_snapshot, ui_frame_seq, sai_dma_active);
+            s_ui_renderer->render(&last_pos, &vis_snapshot, ui_frame_seq, sai_dma_active);
             App_Perf_EndCycles(APP_PERF_SEC_UI_RENDER, t_sec);
         }
         g_ui_render_count++;

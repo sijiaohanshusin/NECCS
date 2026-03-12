@@ -2,8 +2,7 @@
 /**
   ******************************************************************************
   * File Name          : SAI.c
-  * Description        : This file provides code for the configuration
-  *                      of the SAI instances.
+  * Description        : SAI1 + DMA low-level initialization for audio capture.
   ******************************************************************************
   * @attention
   *
@@ -28,7 +27,7 @@
 SAI_HandleTypeDef hsai_BlockA1;
 DMA_HandleTypeDef hdma_sai1_a;
 
-/* SAI1 init function */
+/* SAI1 init function: TDM16 master-receive at 48 kHz */
 void MX_SAI1_Init(void)
 {
 
@@ -88,8 +87,7 @@ void HAL_SAI_MspInit(SAI_HandleTypeDef* saiHandle)
     {
     /* SAI1 clock enable */
 
-  /** Initializes the peripherals clock
-  */
+  /** Configure dedicated SAI1 kernel clock (PLL2). */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SAI1;
     PeriphClkInitStruct.PLL2.PLL2M = 5;
     PeriphClkInitStruct.PLL2.PLL2N = 108;
@@ -139,7 +137,7 @@ void HAL_SAI_MspInit(SAI_HandleTypeDef* saiHandle)
     GPIO_InitStruct.Alternate = GPIO_AF6_SAI1;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-    /* Peripheral DMA init*/
+    /* Peripheral DMA init */
 
     hdma_sai1_a.Instance = DMA1_Stream0;
     hdma_sai1_a.Init.Request = DMA_REQUEST_SAI1_A;
@@ -156,8 +154,7 @@ void HAL_SAI_MspInit(SAI_HandleTypeDef* saiHandle)
       Error_Handler();
     }
 
-    /* Several peripheral DMA handle pointers point to the same DMA handle.
-     Be aware that there is only one channel to perform all the requested DMAs. */
+    /* RX/TX links point to the same stream because this block is RX-only here. */
     __HAL_LINKDMA(saiHandle,hdmarx,hdma_sai1_a);
     __HAL_LINKDMA(saiHandle,hdmatx,hdma_sai1_a);
     }
