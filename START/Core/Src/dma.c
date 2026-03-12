@@ -2,8 +2,9 @@
 /**
   ******************************************************************************
   * @file    dma.c
-  * @brief   This file provides code for the configuration
-  *          of all the requested memory to memory DMA transfers.
+  * @brief   DMA controller initialization.
+  * @details Enables DMA1 clock and configures the interrupt line used by SAI1
+  *          circular receive (DMA1 Stream0).
   ******************************************************************************
   * @attention
   *
@@ -34,7 +35,7 @@
 /* USER CODE END 1 */
 
 /**
-  * Enable DMA controller clock
+  * @brief Enable DMA controller clock and NVIC route.
   */
 void MX_DMA_Init(void)
 {
@@ -42,7 +43,7 @@ void MX_DMA_Init(void)
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
 
-  /* DMA interrupt init */
+  /* DMA interrupt init: SAI1 RX DMA stream */
   /* DMA1_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);

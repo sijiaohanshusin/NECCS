@@ -1,3 +1,9 @@
+/**
+ * @file    dma2d_accel.c
+ * @brief   DMA2D 异步命令队列加速实现
+ * @details 通过环形队列 + 中断驱动将 DMA2D 操作与 UI 渲染主流程解耦。
+ *          目标是降低 `ltdc_*` 绘制函数的阻塞时间，稳定帧周期。
+ */
 #include "LCD/dma2d_accel.h"
 #include "LCD/ltdc.h"
 
@@ -42,6 +48,7 @@ volatile uint32_t g_dma2d_queue_depth_peak = 0u;
 extern volatile uint32_t g_ltdc_dma2d_timeout_count;
 extern volatile uint32_t g_ltdc_dma2d_transfer_count;
 
+/* 从队首弹出一条命令。调用者需确保在受保护上下文中使用。 */
 static uint8_t s_pop_cmd(DMA2D_Cmd_t *cmd)
 {
     if ((cmd == NULL) || (s_queue_count == 0u))
@@ -62,6 +69,7 @@ static void s_start_cmd(const DMA2D_Cmd_t *cmd)
         return;
     }
 
+    /* 清理上一条命令状态并清中断标志，避免脏状态串扰。 */
     DMA2D->CR &= ~DMA2D_CR_START;
     DMA2D->IFCR = DMA2D_FLAG_TC | DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE | DMA2D_FLAG_CTC | DMA2D_FLAG_TW;
 
@@ -146,6 +154,7 @@ static uint8_t s_enqueue_cmd(const DMA2D_Cmd_t *cmd)
         return 0u;
     }
 
+    /* 队列与 busy 状态在中断和任务上下文共享，使用短临界区保护。 */
     primask = __get_PRIMASK();
     __disable_irq();
     if (s_dma2d_ready != 0u)
@@ -219,6 +228,7 @@ void DMA2D_Accel_IRQHandler(void)
     uint32_t isr = DMA2D->ISR;
     uint32_t primask;
 
+    /* 错误优先处理：统计后清标志，并推进队列继续执行后续命令。 */
     if ((isr & (DMA2D_FLAG_TE | DMA2D_FLAG_CE | DMA2D_FLAG_CAE)) != 0u)
     {
         g_dma2d_queue_error_count++;
@@ -326,6 +336,7 @@ uint8_t DMA2D_Accel_EnqueueBlendA8(uint32_t src_addr,
 
 uint8_t DMA2D_Accel_Flush(uint32_t timeout_loop)
 {
+    /* 轮询等待 busy=0 且队列为空。用于帧提交前的同步点。 */
     while (timeout_loop > 0u)
     {
         uint8_t busy;

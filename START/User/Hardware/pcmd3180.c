@@ -1,32 +1,39 @@
 /**
  * @file    pcmd3180.c
  * @brief   PCMD3180 PDM 转 TDM 芯片驱动实现
- * @details 8 通道 PDM 麦克风接口 → TDM16 输出
+ * @details TI PCMD3180 是 8 通道 PDM 麦克风接口转 TDM 输出芯片。
+ *          本工程使用两颗芯片，共接入 16 路 PDM 麦克风，通过 TDM16 输出到 SAI2。
  *
  * 硬件配置：
- * - Chip A (0x4C): TDM Slot 0-7
- * - Chip B (0x4D): TDM Slot 8-15
- * - I2C: 软件模拟 (soft_i2c.c)
- * - PDM 时钟：3.072 MHz (由 SAI 提供)
+ * - 芯片 A (地址 0x4C): TDM Slot 0-7  (麦克风 0-7)
+ * - 芯片 B (地址 0x4D): TDM Slot 8-15 (麦克风 8-15)
+ * - 控制接口：软件模拟 I2C (soft_i2c.c, PE2=SCL, PE3=SDA)
+ * - PDM 时钟：3.072 MHz (由 SAI 的 BCLK 分频提供)
  * - TDM 输出：16-bit, 48 kHz, 16 通道
  *
- * 初始化流程：
- * 1. 软复位
- * 2. 唤醒设备 (写 0x81 到 Reg 0x02)
- * 3. 配置 ASI 格式 (TDM, Offset=1)
- * 4. 配置 TDM 槽位
- * 5. 配置 PDM 接口 (High Drive)
- * 6. 配置 DSP (HPF 96Hz)
- * 7. 配置输入源 (PDM)
- * 8. 配置时钟模式 (Slave, Auto Clock)
- * 9. 启动 ASI 输出
+ * 初始化流程（每颗芯片独立执行）：
+ * 1. 软复位 (写 0x01 到 Reg 0x01)
+ * 2. 唤醒设备 (写 0x81 到 Reg 0x02，使能 PLL)
+ * 3. 配置 ASI 格式 (TDM 模式，MSB 偏移 1 个 BCLK)
+ * 4. 配置 TDM 槽位 (Chip A 从 slot 0 起，Chip B 从 slot 8 起)
+ * 5. 配置 PDM 接口 (GPO 输出 PDM CLK，High Drive 模式)
+ * 6. 配置 DSP (启用 HPF，截止频率 96Hz，去除直流偏置)
+ * 7. 配置输入源 (所有通道设为 PDM 输入)
+ * 8. 配置时钟模式 (Slave 模式，BCLK/FSYNC 由 SAI 提供)
+ * 9. 使能输入通道、ASI 输出，上电 PLL 和 PDM 转换器
  *
  * 关键寄存器：
- * - 0x02: 睡眠控制 (0x81=唤醒, 0x82=睡眠)
- * - 0x07-0x09: ASI 格式配置
- * - 0x0B-0x12: TDM 槽位分配
- * - 0x3B: PDM 接口配置 (0x41=High Drive)
- * - 0x74: ASI 输出使能
+ * - 0x01: 软件复位 (写 0x01 触发复位)
+ * - 0x02: 睡眠控制 (0x81=唤醒并使能 PLL, 0x80=睡眠)
+ * - 0x07-0x09: ASI 格式配置 (TDM 模式、偏移、其他)
+ * - 0x0B-0x12: TDM 槽位分配 (Ch1-Ch8 各占一个槽)
+ * - 0x13-0x16: 时钟架构配置 (主从模式、时钟源)
+ * - 0x1F-0x2C: PDM 接口与 GPIO 配置
+ * - 0x3C+: 输入通道配置 (每通道 5 个寄存器)
+ * - 0x6B: DSP 配置 (HPF 使能)
+ * - 0x73: 输入通道使能 (0xFF = 全部使能)
+ * - 0x74: ASI 输出使能 (0xFF = 全部使能)
+ * - 0x75: 上电配置 (0x60 = PLL + PDM 转换器上电)
  */
 
 #include "pcmd3180.h"
@@ -36,49 +43,69 @@
 /* ==================== 内部辅助函数 ==================== */
 
 /**
- * @brief  写入寄存器的简单封装 (建议实现)
- * @note   这一层封装方便后续如果换硬件I2C，只需改这里
+ * @brief   写寄存器封装
+ * @details 对 PCMD_WriteReg 的简单包装，便于后续切换到硬件 I2C 时只需修改此处。
+ * @param   devAddr  7-bit 设备地址 (0x4C 或 0x4D)
+ * @param   reg      寄存器地址 (8-bit)
+ * @param   val      写入值 (8-bit)
  */
 static void Write_Reg(uint8_t devAddr, uint8_t reg, uint8_t val)
 {
-    // TODO: 调用 soft_i2c.c 中的 PCMD_WriteReg(devAddr, reg, val);
     PCMD_WriteReg(devAddr, reg, val);
 }
 
-// ==========================================
-// 核心流程控制
-// ==========================================
+/* ==================== 核心流程控制 ==================== */
 
-// 核心配置逻辑：Wakeup -> Wait -> Config (High Drive) -> Enable
+/**
+ * @brief   初始化单颗 PCMD3180 设备
+ * @details 按照 TI 数据手册推荐流程完成完整初始化：
+ *          复位 → 唤醒 → 配置 ASI/TDM/PDM/DSP/时钟 → 使能输出
+ *
+ * 初始化顺序说明：
+ * - 复位后必须等待 10ms，让内部 POR 电路稳定
+ * - 唤醒后必须等待 10ms，让 PLL 锁定
+ * - 所有配置必须在 PLL 锁定后进行，否则时钟域可能不稳定
+ * - 最后一步上电 (PCMD_Enable_Blocks) 才真正启动 PDM 采样
+ *
+ * @param   devAddr    7-bit I2C 设备地址 (0x4C=芯片A, 0x4D=芯片B)
+ * @param   startSlot  TDM 起始槽位 (芯片A=0, 芯片B=8)
+ * @return  0: 初始化成功
+ */
 uint8_t PCMD3180_Init_Device(uint8_t devAddr, uint8_t startSlot)
 {
-    // 0. 软复位
+    /* 步骤 0: 软复位，清除所有寄存器到默认值 */
     PCMD_Ctrl_Reset(devAddr);
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(10));  /* 等待内部 POR 电路稳定 */
 
-    // 1. 唤醒设备 (关键：写 0x81 到 Reg 0x02)
-    PCMD_Ctrl_Sleep(devAddr, 0); 
-    vTaskDelay(pdMS_TO_TICKS(10));
+    /* 步骤 1: 唤醒设备，使能内部 PLL */
+    /* 写 0x81 到 Reg 0x02：bit7=1 表示唤醒，bit0=1 表示使能 PLL */
+    PCMD_Ctrl_Sleep(devAddr, 0);
+    vTaskDelay(pdMS_TO_TICKS(10));  /* 等待 PLL 锁定 */
 
-    // --- 配置阶段 ---
-    // ASI 格式 (Offset=1, TDM Mode)
+    /* ---- 配置阶段（顺序不可随意调换）---- */
+
+    /* 步骤 2: 配置 ASI 音频格式 (TDM 模式，MSB 偏移 1 个 BCLK) */
     PCMD_Config_ASI_Format(devAddr);
-    // TDM 槽位 (Chip A=0, Chip B=8)
+
+    /* 步骤 3: 配置 TDM 槽位映射 (芯片A从slot 0起，芯片B从slot 8起) */
     PCMD_Config_TDM_Slots(devAddr, startSlot);
-    
-    // PDM 接口与驱动能力
-    // 建议保留 0x41 (High Drive) 以获得最佳波形边沿
-    PCMD_Config_PDM_IO(devAddr); 
-    
-    // DSP (HPF Enabled 96Hz)
+
+    /* 步骤 4: 配置 PDM 接口与 GPIO 复用
+     * GPO1-4 输出 PDM CLK，High Drive 模式保证边沿质量 */
+    PCMD_Config_PDM_IO(devAddr);
+
+    /* 步骤 5: 配置 DSP 信号处理链 (启用 HPF，截止频率 96Hz @ 48kHz) */
     PCMD_Config_DSP(devAddr);
-    // 输入源设为 PDM
+
+    /* 步骤 6: 配置输入通道源 (所有 8 路通道设为 PDM 输入) */
     PCMD_Config_Channels(devAddr);
-    // 时钟架构 (Slave Mode, Auto Clock)
+
+    /* 步骤 7: 配置时钟架构 (Slave 模式，BCLK/FSYNC 由 SAI 主机提供) */
     PCMD_Config_Clock_Mode(devAddr);
 
-    // --- 启动阶段 ---
-    // 全局使能 (PWR_CFG=0x60: Ext Mic Power, PLL ON)
+    /* ---- 启动阶段 ---- */
+
+    /* 步骤 8: 使能输入通道、ASI 输出，上电 PLL 和 PDM 转换器核心 */
     PCMD_Enable_Blocks(devAddr);
 
     return 0;
@@ -90,16 +117,18 @@ uint8_t PCMD3180_Init_Device(uint8_t devAddr, uint8_t startSlot)
  */
 uint8_t PCMD3180_Check_ID(uint8_t devAddr)
 {
-    // TODO: 读取某个只读寄存器 (如 Page 0 Reg 0x00 应返回 0x00，或读取 Checksum)
-    // 如果 I2C 读取失败，返回错误代码
+    /* 当前工程仅保留接口；上线前建议读取只读寄存器做在线检查。 */
+    (void)devAddr;
     return 0;
 }
 
 /* ==================== 子功能模块实现 ==================== */
 
 /**
- * @brief  软件复位设备
- * @param  devAddr  I2C 设备地址 (7-bit)
+ * @brief   软件复位设备
+ * @details 向 Reg 0x01 写入 0x01 触发内部软复位，所有寄存器恢复默认值。
+ *          复位后需等待至少 10ms 让内部 POR 电路完成初始化。
+ * @param   devAddr  7-bit I2C 设备地址 (0x4C 或 0x4D)
  */
 void PCMD_Ctrl_Reset(uint8_t devAddr)
 {
@@ -107,59 +136,78 @@ void PCMD_Ctrl_Reset(uint8_t devAddr)
 }
 
 /**
- * @brief  控制设备睡眠/唤醒
- * @param  devAddr  I2C 设备地址 (7-bit)
- * @param  enable   1=进入睡眠, 0=唤醒
- * @note   唤醒后需等待 10ms 让 PLL 稳定
+ * @brief   控制设备睡眠/唤醒
+ * @details 通过 Reg 0x02 (SLEEP_CFG) 控制设备工作状态：
+ *          - 唤醒 (0x81)：bit7=1 退出睡眠，bit0=1 使能 PLL
+ *          - 睡眠 (0x80)：bit7=1 进入睡眠，PLL 关闭以节省功耗
+ *          唤醒后需等待约 10ms 让 PLL 完成锁定，再进行后续配置。
+ * @param   devAddr  7-bit I2C 设备地址 (0x4C 或 0x4D)
+ * @param   enable   1=进入睡眠模式, 0=唤醒设备
  */
 void PCMD_Ctrl_Sleep(uint8_t devAddr, uint8_t enable)
 {
-    if (enable==1 )
+    if (enable == 1u)
     {
-        Write_Reg(devAddr, PCMD_REG_SLEEP_CFG, 0x80); // Sleep mode
+        Write_Reg(devAddr, PCMD_REG_SLEEP_CFG, 0x80);  /* 进入睡眠：bit7=1, PLL 关闭 */
     }
     else
     {
-        Write_Reg(devAddr, PCMD_REG_SLEEP_CFG, 0x81); // Wake up
+        Write_Reg(devAddr, PCMD_REG_SLEEP_CFG, 0x81);  /* 唤醒：bit7=1 退出睡眠，bit0=1 使能 PLL */
     }
 }
 
 /**
- * @brief  配置 ASI (Audio Serial Interface) 格式
- * @param  devAddr  I2C 设备地址 (7-bit)
- * @note   配置为 TDM 模式，MSB 偏移 1 个 BCLK 周期
- *         其他时隙保持高阻态 (不影响其他设备)
+ * @brief   配置 ASI (Audio Serial Interface) 格式
+ * @details 配置 TDM 音频总线格式，使 PCMD3180 输出与 SAI 主机时序匹配：
+ *          - ASI_CFG0 (0x07) = 0x01：非本芯片占用的时隙保持高阻态，避免总线冲突
+ *          - ASI_CFG1 (0x08) = 0x01：数据 MSB 相对 FSYNC 偏移 1 个 BCLK 周期
+ *            (符合 TDM 标准，STM32 SAI 默认也是此偏移)
+ *          - ASI_CFG2 (0x09) = 0x00：其他 ASI 参数保持默认
+ * @param   devAddr  7-bit I2C 设备地址 (0x4C 或 0x4D)
  */
 void PCMD_Config_ASI_Format(uint8_t devAddr)
 {
-    //SAI_CFG0: 其他时隙保持输出高阻态
+    /* ASI_CFG0: 非本芯片时隙输出高阻态，防止多芯片共享 TDM 总线时冲突 */
     Write_Reg(devAddr, PCMD_REG_ASI_CFG0, 0x01);
-    //SAI_CFG1: ASI数据MSB偏移一个BCLK周期
+    /* ASI_CFG1: 数据 MSB 相对 FSYNC 偏移 1 个 BCLK，符合 TDM 标准时序 */
     Write_Reg(devAddr, PCMD_REG_ASI_CFG1, 0x01);
-    //SAI_CFG2
+    /* ASI_CFG2: 其他 ASI 参数保持默认值 */
     Write_Reg(devAddr, PCMD_REG_ASI_CFG2, 0x00);
 }
 
 /**
- * @brief  配置 TDM 时隙分配
- * @param  devAddr    I2C 设备地址 (7-bit)
- * @param  startSlot  起始时隙 (Chip A=0, Chip B=8)
- * @note   将 8 个通道依次映射到 startSlot ~ startSlot+7
+ * @brief   配置 TDM 时隙分配
+ * @details 将芯片内部 8 个通道依次映射到 TDM 总线的连续时隙上。
+ *          寄存器 0x0B-0x12 (PCMD_REG_ASI_CH1 ~ CH8) 分别对应通道 1-8，
+ *          写入值即为该通道在 TDM 帧中的槽位编号 (0-15)。
+ *
+ * 本工程映射关系：
+ * - 芯片 A (startSlot=0): Ch1→slot0, Ch2→slot1, ..., Ch8→slot7
+ * - 芯片 B (startSlot=8): Ch1→slot8, Ch2→slot9, ..., Ch8→slot15
+ *
+ * @param   devAddr    7-bit I2C 设备地址 (0x4C 或 0x4D)
+ * @param   startSlot  起始时隙编号 (芯片A=0, 芯片B=8)
  */
 void PCMD_Config_TDM_Slots(uint8_t devAddr, uint8_t startSlot)
 {
-    // 将 Ch1 - Ch8 (Reg 0x0B - 0x12) 分别映射到 startSlot, startSlot+1 ...
-    for (uint8_t i = 0; i < 8; i++)
+    /* 将 Ch1-Ch8 (Reg 0x0B-0x12) 依次映射到 startSlot, startSlot+1, ..., startSlot+7 */
+    for (uint8_t i = 0u; i < 8u; i++)
     {
         Write_Reg(devAddr, PCMD_REG_ASI_CH1 + i, startSlot + i);
     }
 }
 
 /**
- * @brief  配置时钟架构 (Slave 模式)
- * @param  devAddr  I2C 设备地址 (7-bit)
- * @note   配置为 Slave 模式，BCLK/FSYNC 由 SAI 提供
- *         Auto Clock 模式自动检测时钟频率
+ * @brief   配置时钟架构 (Slave 模式)
+ * @details 将 PCMD3180 配置为时钟从机，BCLK 和 FSYNC 均由 STM32 SAI 主机提供。
+ *          Auto Clock 模式下芯片自动检测输入时钟频率，无需手动配置分频比。
+ *
+ * 寄存器配置：
+ * - MST_CFG0 (0x13) = 0x00：Slave 模式，BCLK/FSYNC 方向为输入
+ * - MST_CFG1 (0x14) = 0x00：Auto Clock 模式，自动适配时钟频率
+ * - CLK_SRC  (0x16) = 0x00：时钟源选择 BCLK 引脚 (外部输入)
+ *
+ * @param   devAddr  7-bit I2C 设备地址 (0x4C 或 0x4D)
  */
 void PCMD_Config_Clock_Mode(uint8_t devAddr)
 {
@@ -173,7 +221,7 @@ void PCMD_Config_Clock_Mode(uint8_t devAddr)
 /**
  * @brief  配置 PDM 接口与 GPIO
  * @param  devAddr  I2C 设备地址 (7-bit)
- * @note   GPO1-4 配置为 PDM CLK 输出 (High Drive, 0x41)
+ * @note   GPO1-4 配置为 PDM CLK 输出 (High Drive)
  *         GPI 配置为 PDM 数据输入
  */
 void PCMD_Config_PDM_IO(uint8_t devAddr)
@@ -187,7 +235,6 @@ void PCMD_Config_PDM_IO(uint8_t devAddr)
     PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG1, 0x41);
     PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG2, 0x41);
     PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG3, 0x41);
-    // TODO: 3. (可选) 显式配置 GPI 映射 (如果默认映射不对)
     //GPO_VAL Register跳过
     //GPIO_MON Register跳过
     //GPI配置
@@ -198,14 +245,13 @@ void PCMD_Config_PDM_IO(uint8_t devAddr)
 /**
  * @brief  配置 DSP 处理链
  * @param  devAddr  I2C 设备地址 (7-bit)
- * @note   启用 HPF (高通滤波器)，截止频率 96Hz @ 48kHz
+ * @note   启用 HPF (高通滤波器)，当前配置对应 96Hz @ 48kHz
  *         用于去除直流偏置和低频噪声
  */
 void PCMD_Config_DSP(uint8_t devAddr)
 {
     //启用 HPF (Reg 0x6B) -> 0x02 (96Hz for 48k)
     PCMD_WriteReg(devAddr, PCMD_REG_DSP_CFG0, 0x02);//可在图形界面配置
-    // TODO: 2. (可选) 设置输入增益 (Volume)
     PCMD_WriteReg(devAddr, PCMD_REG_DSP_CFG1, 0x00);
 }
 
@@ -240,8 +286,8 @@ void PCMD_Config_Channels(uint8_t devAddr)
 /**
  * @brief  使能所有功能模块并上电
  * @param  devAddr  I2C 设备地址 (7-bit)
- * @note   按顺序：使能输入通道 → 使能 ASI 输出 → 上电 PLL+PDM
- *         PWR_CFG=0x60: 外部麦克风供电 + PLL 开启
+ * @note   按顺序：使能输入通道 -> 使能 ASI 输出 -> 上电 PLL+PDM
+ *         本工程 `PWR_CFG` 配置值为 `0x60`。
  */
 void PCMD_Enable_Blocks(uint8_t devAddr)
 {
@@ -277,7 +323,7 @@ void PCMD_Check_Health(uint8_t devAddr)
     
     // 2. 检查电源配置是否掉线
     PCMD_ReadReg(devAddr, PCMD_REG_PWR_CFG, &status_pwr);   // Reg 0x75
-    if (status_pwr != 0xE0) printf("[Error] Power Config Lost (Read: 0x%02X)!\r\n", status_pwr);
+    if (status_pwr != 0x60) printf("[Error] Power Config Lost (Read: 0x%02X)!\r\n", status_pwr);
     // 3. (可选) 检查 GPI1 实时状态
     // 如果你在调试麦克风连接，可以取消注释下面这段
     
@@ -336,7 +382,7 @@ void PCMD_Dump_Registers(uint8_t devAddr)
     // --- 8. 全局使能与电源 (Enable & Power) ---
     PCMD_ReadReg(devAddr, 0x73, &val); printf("[0x73] IN_CH_EN    : 0x%02X (Expect 0xFF)\r\n", val);
     PCMD_ReadReg(devAddr, 0x74, &val); printf("[0x74] ASI_OUT_EN  : 0x%02X (Expect 0xFF)\r\n", val);
-    PCMD_ReadReg(devAddr, 0x75, &val); printf("[0x75] PWR_CFG     : 0x%02X (Expect 0xE0)\r\n", val);
+    PCMD_ReadReg(devAddr, 0x75, &val); printf("[0x75] PWR_CFG     : 0x%02X (Expect 0x60)\r\n", val);
     
     printf("========================================\r\n\r\n");
 }

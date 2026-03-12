@@ -80,7 +80,7 @@ float32_t GCC_PHAT_Buffer[SRP_PAIR_COUNT * SRP_FREQ_BINS * 2u] = {0.0f};
  * @brief   SRP 功率网格缓冲区
  * @note    - 内存区域：AXI SRAM (全局最大值搜索，顺序访问)
  *          - 对齐：32 字节 (缓存行对齐)
- *          - 布局：[粗搜索 64 点 | 精细搜索 48 点]
+ *          - 布局：[粗搜索 81 点 | 精细搜索 48 点]
  */
 __SECTION_AXI_SRAM __attribute__((aligned(32)))
 float32_t SRP_Power[SRP_GRID_TOTAL] = {0.0f};
@@ -114,4 +114,3 @@ void App_Stream_Init(void)
     /* 清零诊断计数器，重置上次有效定位结果 */
     AI_SRP_PHAT_Init();
 }
-

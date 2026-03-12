@@ -1,14 +1,8 @@
 /**
- ****************************************************************************************************
- * @file        tft_spi.c
- * @version     V1.0
- * @brief       TFTLCD(RGB屏) SPI接口 驱动代码
- ****************************************************************************************************
- * @attention   Waiken-Smart 慧勤智远
- *
- * 实验平台:    STM32H743IIT6小系统板
- *
- ****************************************************************************************************
+ * @file    tft_spi.c
+ * @brief   RGB 面板初始化 SPI（GPIO Bit-Bang）实现
+ * @details 通过软件 SPI 向面板驱动 IC 写寄存器。
+ *          该链路只用于初始化控制，不参与 LTDC 帧数据传输。
  */
  
 #include "LCD/tft_spi.h"
@@ -20,6 +14,7 @@ static void tft_delay_ms(uint32_t ms)
 
 static void tft_delay_us(uint32_t us)
 {
+    /* 粗粒度忙等延时，用于初始化序列时序，精度需求不高。 */
     uint32_t loops = (SystemCoreClock / 1000000u / 5u) * us;
     while (loops-- > 0u)
     {
@@ -144,7 +139,7 @@ void tft_spi_init(void)
 	  TFT_SPI_RST(1); 
 		delay_ms(200); 
 
-//---------------------NV3052CGRB+HSD5.46(HSD055BHW5-C) Initial---
+    /* NV3052CGRB + HSD055BHW5-C 初始化寄存器序列。 */
     tft_spi_write_reg(0xFF, 0x30);
     tft_spi_write_reg(0xFF, 0x52);
     tft_spi_write_reg(0xFF, 0x01);

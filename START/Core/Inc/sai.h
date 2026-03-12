@@ -2,8 +2,9 @@
 /**
   ******************************************************************************
   * @file    sai.h
-  * @brief   This file contains all the function prototypes for
-  *          the sai.c file
+  * @brief   SAI1 audio interface initialization interface.
+  * @details Exposes the `hsai_BlockA1` handle and `MX_SAI1_Init()` used by
+  *          the audio capture pipeline (TDM16 + DMA circular receive).
   ******************************************************************************
   * @attention
   *
@@ -38,6 +39,9 @@ extern SAI_HandleTypeDef hsai_BlockA1;
 
 /* USER CODE END Private defines */
 
+/**
+ * @brief Initialize SAI1 Block A for microphone TDM capture.
+ */
 void MX_SAI1_Init(void);
 
 /* USER CODE BEGIN Prototypes */

@@ -2,7 +2,9 @@
 /**
   ******************************************************************************
   * @file    stm32h7xx_it.c
-  * @brief   Interrupt Service Routines.
+  * @brief   Interrupt Service Routines implementation.
+  * @details Routes MCU exceptions and peripheral interrupts to HAL handlers and
+  *          project-specific ISR entry points.
   ******************************************************************************
   * @attention
   *
@@ -166,7 +168,7 @@ void DebugMon_Handler(void)
 /******************************************************************************/
 
 /**
-  * @brief This function handles DMA1 stream0 global interrupt.
+  * @brief Handle DMA1 Stream0 IRQ (SAI1 RX DMA).
   */
 void DMA1_Stream0_IRQHandler(void)
 {
@@ -180,7 +182,7 @@ void DMA1_Stream0_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles TIM6 global interrupt, DAC1_CH1 and DAC1_CH2 underrun error interrupts.
+  * @brief Handle TIM6 global IRQ (HAL time base source).
   */
 void TIM6_DAC_IRQHandler(void)
 {
@@ -194,7 +196,7 @@ void TIM6_DAC_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles SAI1 global interrupt.
+  * @brief Handle SAI1 IRQ.
   */
 void SAI1_IRQHandler(void)
 {
@@ -208,7 +210,7 @@ void SAI1_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles USART1 global interrupt.
+  * @brief Handle USART1 IRQ.
   */
 void USART1_IRQHandler(void)
 {
@@ -222,7 +224,7 @@ void USART1_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles LTDC global interrupt.
+  * @brief Handle LTDC IRQ.
   */
 void LTDC_IRQHandler(void)
 {
@@ -236,7 +238,7 @@ void LTDC_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles LTDC error interrupt.
+  * @brief Handle LTDC error IRQ.
   */
 void LTDC_ER_IRQHandler(void)
 {
@@ -250,7 +252,7 @@ void LTDC_ER_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles DMA2D global interrupt.
+  * @brief Handle DMA2D IRQ.
   */
 void DMA2D_IRQHandler(void)
 {

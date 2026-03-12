@@ -1,14 +1,8 @@
 /**
- ****************************************************************************************************
- * @file        tft_spi.h
- * @version     V1.0
- * @brief       TFTLCD(RGB屏) SPI接口 驱动代码
- ****************************************************************************************************
- * @attention   Waiken-Smart 慧勤智远
- *
- * 实验平台:    STM32H743IIT6小系统板
- *
- ****************************************************************************************************
+ * @file    tft_spi.h
+ * @brief   RGB 面板初始化 SPI（GPIO Bit-Bang）接口
+ * @details 用于向 LCD 驱动 IC 下发上电寄存器序列。
+ *          该接口仅在面板初始化阶段使用，非高频数据通道。
  */
 
 #ifndef __TFT_SPI_H
@@ -17,8 +11,7 @@
 #include "main.h"
 
 
-/******************************************************************************************/ 
-/* TFT_SPI 相关引脚 定义 */
+/* TFT_SPI 相关引脚定义 */
 /* 引脚对应关系: 
  *         TFT_SPI_CS  --> TP_MISO,    TFT_SPI_SCL --> LTDC_VSYNC
  *         TFT_SPI_SDA --> LTDC_HSYNC, TFT_SPI_RST --> LCD_RST 
@@ -40,9 +33,7 @@
 #define TFT_SPI_RST_GPIO_PIN                GPIO_PIN_11
 #define TFT_SPI_RST_GPIO_CLK_ENABLE()       do{ __HAL_RCC_GPIOD_CLK_ENABLE(); }while(0)   /* PD口时钟使能 */
 
-/******************************************************************************************/
-
-/* TFTLCD SPI接口引脚IO操作函数 定义 */
+/* TFTLCD SPI 接口引脚操作宏 */
 #define TFT_SPI_CS(x)        do{ x ? \
                                  HAL_GPIO_WritePin(TFT_SPI_CS_GPIO_PORT, TFT_SPI_CS_GPIO_PIN, GPIO_PIN_SET) : \
                                  HAL_GPIO_WritePin(TFT_SPI_CS_GPIO_PORT, TFT_SPI_CS_GPIO_PIN, GPIO_PIN_RESET); \
@@ -64,10 +55,9 @@
                                  HAL_GPIO_WritePin(TFT_SPI_RST_GPIO_PORT, TFT_SPI_RST_GPIO_PIN, GPIO_PIN_RESET); \
                              }while(0)
 
-/******************************************************************************************/
 /* 函数声明 */
 
-void tft_spi_init(void);                             /* TFTLCD SPI接口初始化 */
+void tft_spi_init(void);                             /* TFTLCD SPI 接口初始化 */
                              
 void tft_spi_write_byte(uint8_t buf);                /* SPI写入1字节数据 */
 void tft_spi_write_cmd(uint8_t cmd);                 /* 向LCD驱动IC写命令 */

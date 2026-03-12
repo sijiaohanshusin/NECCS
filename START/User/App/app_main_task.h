@@ -4,8 +4,8 @@
  * @details 定义音频处理流水线和 UI 显示任务的接口
  *
  * 任务架构：
- * - Audio_Pipeline_Task (优先级 3): 音频采集 → 预处理 → FFT → SRP-PHAT
- * - UI_Display_Task (优先级 2): 接收定位结果 → 渲染热力图 → 刷新显示
+ * - Audio_Pipeline_Task (优先级 4): 音频采集 → 预处理 → FFT → SRP-PHAT
+ * - UI_Display_Task (优先级 4): 接收定位结果 → 渲染热力图 → 刷新显示
  *
  * 数据流：
  * - SAI DMA ISR → xAudioFrameQueue → Audio_Pipeline_Task
@@ -100,14 +100,63 @@ typedef enum {
     APP_PERF_SEC_COUNT
 } App_Perf_Section_t;
 
+typedef enum {
+    APP_RUNTIME_DISP_MODE_FAST = 0u,
+    APP_RUNTIME_DISP_MODE_BALANCED = 1u,
+    APP_RUNTIME_DISP_MODE_CLEAN = 2u
+} App_Runtime_DisplayMode_t;
+
+typedef enum {
+    APP_RUNTIME_DISP_INTERP_NEAREST = 0u,
+    APP_RUNTIME_DISP_INTERP_BILINEAR = 1u
+} App_Runtime_DisplayInterp_t;
+
+typedef enum {
+    APP_RUNTIME_DISP_NORM_FAST = 0u,
+    APP_RUNTIME_DISP_NORM_FULL = 1u
+} App_Runtime_DisplayNorm_t;
+
+typedef struct
+{
+    float ema_attack;
+    float ema_decay;
+    float db_floor;
+    float fine_gain;
+    float gamma;
+    float noise_gate_ratio;
+    float noise_adapt_gain;
+    uint8_t smooth_passes;
+    uint8_t fine_fusion_enable;
+    uint8_t draw_coarse_grid;
+    uint8_t interp_mode;
+    uint8_t norm_mode;
+    uint8_t text_refresh_div;
+    uint8_t blit_rows;
+} App_Runtime_DisplayCfg_t;
+
+typedef struct
+{
+    uint32_t ui_target_fps;
+    uint32_t audio_algo_decim;
+    uint8_t perf_enabled;
+    uint8_t reserved[3];
+    App_Runtime_DisplayMode_t display_mode;
+    App_Runtime_DisplayCfg_t display_cfg;
+} App_Runtime_Config_t;
+
+typedef enum
+{
+    APP_UI_RENDER_BACKEND_LEGACY = 0u
+} App_UiRenderBackend_t;
+
 /* ============================================================================
  * FreeRTOS 句柄 (FreeRTOS Handles)
  * ============================================================================ */
 
-/** @brief 音频处理流水线任务句柄 (优先级 3) */
+/** @brief 音频处理流水线任务句柄 (优先级 4) */
 extern TaskHandle_t xAudioPipelineTaskHandle;
 
-/** @brief UI 显示任务句柄 (优先级 2) */
+/** @brief UI 显示任务句柄 (优先级 4) */
 extern TaskHandle_t xUITaskHandle;
 
 /** @brief 音频帧事件队列句柄 (长度 1, 覆盖模式) */
@@ -120,7 +169,7 @@ extern QueueHandle_t xPositionQueue;
  * 运行时诊断计数器 (Runtime Diagnostic Counters)
  * ============================================================================ */
 
-/** @brief 音频任务同时收到 PING 和 PONG 标志的次数 (异常情况) */
+/** @brief 音频帧事件序号跳变累计值 (用于估算 ISR 丢帧) */
 extern volatile uint32_t g_audio_both_flags_count;
 
 /** @brief 音频任务未收到任何标志的次数 (异常情况) */
@@ -155,8 +204,8 @@ extern volatile uint8_t g_ui_cli_rx_alive;
  *          5. 发送结果到 UI 任务 (xQueueOverwrite)
  *
  * 任务参数：
- * - 优先级：3 (高于 UI 任务)
- * - 堆栈：2048 字节
+ * - 优先级：4 (与 UI 任务同级)
+ * - 堆栈：2304 字节
  * - 周期：5.33ms (48kHz, 256 点)
  *
  * @param   pvParameters  FreeRTOS 任务参数 (未使用)
@@ -171,7 +220,7 @@ void Audio_Pipeline_Task(void *pvParameters);
  *          3. 刷新 LCD 显示
  *
  * 任务参数：
- * - 优先级：2 (低于音频任务)
+ * - 优先级：4 (与音频任务同级)
  * - 堆栈：2048 字节
  * - 周期：33ms (30 FPS)
  *
@@ -188,12 +237,27 @@ void UI_Display_Task(void *pvParameters);
  * @details 执行以下初始化：
  *          1. 创建音频帧事件队列 (长度 1)
  *          2. 创建声源位置队列 (长度 1)
- *          3. 创建音频处理任务 (优先级 3)
- *          4. 创建 UI 显示任务 (优先级 2)
+ *          3. 创建音频处理任务 (优先级 4)
+ *          4. 创建 UI 显示任务 (优先级 4)
  *
  * @note    在 FreeRTOS 启动前调用 (freertos.c 中)
  */
 void App_Task_Init(void);
+
+/* unified runtime configuration */
+void App_RuntimeConfig_Get(App_Runtime_Config_t *cfg);
+void App_RuntimeConfig_SetUiTargetFps(uint32_t fps);
+uint32_t App_RuntimeConfig_GetUiTargetFps(void);
+void App_RuntimeConfig_SetAudioAlgoDecim(uint32_t decim);
+uint32_t App_RuntimeConfig_GetAudioAlgoDecim(void);
+void App_RuntimeConfig_SetPerfEnabled(uint8_t enable);
+uint8_t App_RuntimeConfig_GetPerfEnabled(void);
+void App_RuntimeConfig_SetDisplayMode(App_Runtime_DisplayMode_t mode);
+App_Runtime_DisplayMode_t App_RuntimeConfig_GetDisplayMode(void);
+void App_RuntimeConfig_SetDisplayCfg(const App_Runtime_DisplayCfg_t *cfg);
+void App_RuntimeConfig_GetDisplayCfg(App_Runtime_DisplayCfg_t *cfg);
+void App_UiRenderer_SetBackend(App_UiRenderBackend_t backend);
+App_UiRenderBackend_t App_UiRenderer_GetBackend(void);
 
 /* runtime performance profiling */
 void App_Perf_Init(void);

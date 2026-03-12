@@ -4,8 +4,8 @@
  * @details 使用 GPIO 模拟 I2C 协议，用于 PCMD3180 配置
  *
  * 硬件配置：
- * - SCL: PB8 (Open-Drain + 上拉)
- * - SDA: PB9 (Open-Drain + 上拉)
+ * - SCL: PE2 (Open-Drain + 上拉)
+ * - SDA: PE3 (Open-Drain + 上拉)
  * - 速率：约 100 kHz (delay_us(5))
  *
  * 为什么使用软件 I2C？
@@ -40,13 +40,12 @@ static const osMutexAttr_t i2cMutex_attributes = {
  * @note    软件 I2C 速率控制：
  *          - delay_us(2) ≈ 250 kHz
  *          - delay_us(5) ≈ 100 kHz
+ *          具体速率受 GPIO 翻转开销与编译优化影响，以上为经验值。
  */
 static void I2C_Delay_us(volatile uint32_t microseconds)
 {
     uint32_t clk_cycle_start = DWT->CYCCNT;
-    // H7通常运行在400MHz+, 1us = 400-480 cycles
-    // SystemCoreClock 是系统核心时钟频率
-    //microseconds *= (SystemCoreClock / 1000000); 
+    /* 根据当前工程实测进行系数折算（含函数与 GPIO 操作开销）。 */
     microseconds *= (SystemCoreClock / 100000); 
     while ((DWT->CYCCNT - clk_cycle_start) < microseconds);
 }

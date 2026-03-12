@@ -1,9 +1,12 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
   * @file    dma.h
-  * @brief   This file contains all the function prototypes for
-  *          the dma.c file
+  * @brief   DMA 初始化接口声明
+  * @details 当前工程主要使用 DMA1_Stream0 为 SAI1_RX 提供循环搬运。
+  *
+  * 设计约束：
+  * - 中断优先级设置为 5，兼容 FreeRTOS 临界区策略。
+  * - 采用循环模式，持续接收音频帧数据。
   ******************************************************************************
   * @attention
   *
@@ -38,6 +41,9 @@ extern "C" {
 
 /* USER CODE END Private defines */
 
+/**
+ * @brief 初始化 DMA 控制器与相关中断。
+ */
 void MX_DMA_Init(void);
 
 /* USER CODE BEGIN Prototypes */

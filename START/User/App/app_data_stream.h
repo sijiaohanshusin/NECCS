@@ -102,8 +102,8 @@ extern float32_t GCC_PHAT_Buffer[SRP_PAIR_COUNT * SRP_FREQ_BINS * 2u];
  * @brief   SRP 功率网格缓冲区
  * @note    内存区域：AXI SRAM (0x24000000), Cacheable
  *          数据格式：float32_t, 一维数组
- *          布局：[粗搜索 64 点 | 精细搜索 48 点]
- *          大小：112 × 4 字节 = 448 字节
+ *          布局：[粗搜索 81 点 | 精细搜索 48 点]
+ *          大小：129 × 4 字节 = 516 字节
  *          对齐：32 字节 (缓存行对齐)
  *
  * 为什么放在 AXI SRAM？
@@ -125,4 +125,3 @@ extern float32_t SRP_Power[SRP_GRID_TOTAL];
 void App_Stream_Init(void);
 
 #endif /* __APP_DATA_STREAM_H */
-
