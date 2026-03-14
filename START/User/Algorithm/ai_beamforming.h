@@ -18,7 +18,7 @@
 
 #include "arm_math.h"
 #include "ai_config.h"
-#include "app_main_task.h"
+#include "app_types.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -107,7 +107,13 @@ UI 显示 (30 FPS)
 
 | 文件 | 功能 | 关键函数 |
 |------|------|----------|
-| `app_main_task.c/h` | FreeRTOS 任务 | `Audio_Pipeline_Task()`, `UI_Display_Task()` |
+| `app_main_task.c/h` | 任务引导与兼容聚合头 | `App_Task_Init()` |
+| `app_audio_task.c` | 音频处理任务 | `Audio_Pipeline_Task()` |
+| `app_ui_task.c` | UI 任务与渲染后端 glue | `UI_Display_Task()` |
+| `app_runtime.c/h` | 运行时配置 | `App_RuntimeConfig_*()` |
+| `app_perf.c/h` | 性能分析 | `App_Perf_*()` |
+| `app_ui_cli.c/h` | UART CLI | `App_UiCli_Poll()` |
+| `app_types.h`, `app_task_cfg.h` | 公共类型与共享宏 | `Sound_Pos_t`, `DEBUG_*` |
 | `app_data_stream.c/h` | 缓冲区定义 | `App_Stream_Init()` |
 | `app_display.c/h` | UI 显示 | `App_Display_Render()` |
 | `app_data_output.c/h` | 调试输出 | `VOFA_Send_*()` |
@@ -149,7 +155,7 @@ UI 显示 (30 FPS)
 
 ### 配置选项
 
-**调试模式** (`app_main_task.c`):
+**调试模式** (`app_task_cfg.h`):
 ```c
 #define DEBUG_ENABLE        // 启用调试输出
 #define DEBUG_MODE 3        // 0=RMS, 1=FFT, 3=SRP
