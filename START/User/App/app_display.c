@@ -26,6 +26,8 @@
  * - `App_Display_Render` 关注每帧完整时序与实时性取舍。
  */
 #include "app_display.h"
+#include "app_main_task.h"
+#include "app_perf.h"
 
 #include "LCD/lcd.h"
 #include "LCD/ltdc.h"

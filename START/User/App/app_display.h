@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file    app_display.h
  * @brief   声学成像显示模块对外接口
  * @details
@@ -17,7 +17,7 @@
 #include <stdint.h>
 
 #include "app_display_cfg.h"
-#include "app_main_task.h"
+#include "app_types.h"
 #include "ai_beamforming.h"
 
 #ifdef __cplusplus

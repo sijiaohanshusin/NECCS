@@ -19,135 +19,15 @@
 #include "queue.h"
 #include "task.h"
 
+#include "app_perf.h"
+#include "app_runtime.h"
+#include "app_types.h"
+
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* ============================================================================
- * 数据结构定义 (Data Structures)
- * ============================================================================ */
-
-/**
- * @brief   DMA 半缓冲标识
- * @details 用于标识 PING/PONG 双缓冲的哪一半已完成
- *
- * PING/PONG 双缓冲机制：
- * - DMA 写入 PING 区时，CPU 处理 PONG 区
- * - DMA 写入 PONG 区时，CPU 处理 PING 区
- * - 避免数据覆盖，实现零拷贝流水线
- */
-typedef enum {
-    AUDIO_DMA_HALF_PING = 0u,  /**< Mic_Rx_Buffer 前半区 (0 ~ DMA_BUFFER_SIZE/2-1) */
-    AUDIO_DMA_HALF_PONG = 1u   /**< Mic_Rx_Buffer 后半区 (DMA_BUFFER_SIZE/2 ~ DMA_BUFFER_SIZE-1) */
-} Audio_DmaHalf_t;
-
-/**
- * @brief   音频帧事件
- * @details DMA 中断生产，音频任务消费
- *
- * 队列机制：
- * - 队列长度：1 (仅保留最新帧)
- * - ISR 发送：xQueueOverwrite (覆盖旧数据)
- * - 任务接收：xQueueReceive (阻塞等待)
- *
- * 为什么队列长度为 1？
- * - 实时系统，只关心最新数据
- * - 避免队列积压导致延迟
- * - 丢帧策略：丢弃旧帧，处理新帧
- */
-typedef struct {
-    uint8_t half_id;        /**< DMA 半缓冲标识 @ref Audio_DmaHalf_t */
-    uint8_t reserved[3];    /**< 对齐/预留字段 (保证 4 字节对齐) */
-    uint32_t seq;           /**< ISR 侧单调递增序号 (用于丢帧检测) */
-} Audio_FrameEvent_t;
-
-/**
- * @brief   声源定位结果
- * @details 包含声源的方位角和能量信息
- *
- * 坐标系约定：
- * - x_angle: 水平角 (方位角)，正值向右，负值向左
- * - y_angle: 垂直角 (俯仰角)，正值向上，负值向下
- * - 原点：麦克风阵列中心正前方
- *
- * 能量归一化：
- * - 范围：[0, 1]
- * - 0: 无声源或噪声
- * - 1: 强声源 (理想情况)
- * - 实际值：通常 0.3-0.8
- */
-typedef struct {
-    float x_angle;  /**< 水平角 (度)，范围 [-60, 60] */
-    float y_angle;  /**< 垂直角 (度)，范围 [-60, 60] */
-    float energy;   /**< 归一化能量 [0, 1] */
-} Sound_Pos_t;
-
-typedef enum {
-    APP_PERF_SEC_AUDIO_TOTAL = 0u,
-    APP_PERF_SEC_AUDIO_DEINT = 1u,
-    APP_PERF_SEC_AUDIO_FFT = 2u,
-    APP_PERF_SEC_AUDIO_SRP = 3u,
-    APP_PERF_SEC_UI_LOOP = 4u,
-    APP_PERF_SEC_UI_SNAPSHOT = 5u,
-    APP_PERF_SEC_UI_RENDER = 6u,
-    APP_PERF_SEC_DISP_PREPARE = 7u,
-    APP_PERF_SEC_DISP_NORM = 8u,
-    APP_PERF_SEC_DISP_RENDER = 9u,
-    APP_PERF_SEC_DISP_OVERLAY = 10u,
-    APP_PERF_SEC_DISP_COMMIT = 11u,
-    APP_PERF_SEC_COUNT
-} App_Perf_Section_t;
-
-typedef enum {
-    APP_RUNTIME_DISP_MODE_FAST = 0u,
-    APP_RUNTIME_DISP_MODE_BALANCED = 1u,
-    APP_RUNTIME_DISP_MODE_CLEAN = 2u
-} App_Runtime_DisplayMode_t;
-
-typedef enum {
-    APP_RUNTIME_DISP_INTERP_NEAREST = 0u,
-    APP_RUNTIME_DISP_INTERP_BILINEAR = 1u
-} App_Runtime_DisplayInterp_t;
-
-typedef enum {
-    APP_RUNTIME_DISP_NORM_FAST = 0u,
-    APP_RUNTIME_DISP_NORM_FULL = 1u
-} App_Runtime_DisplayNorm_t;
-
-typedef struct
-{
-    float ema_attack;
-    float ema_decay;
-    float db_floor;
-    float fine_gain;
-    float gamma;
-    float noise_gate_ratio;
-    float noise_adapt_gain;
-    uint8_t smooth_passes;
-    uint8_t fine_fusion_enable;
-    uint8_t draw_coarse_grid;
-    uint8_t interp_mode;
-    uint8_t norm_mode;
-    uint8_t text_refresh_div;
-    uint8_t blit_rows;
-} App_Runtime_DisplayCfg_t;
-
-typedef struct
-{
-    uint32_t ui_target_fps;
-    uint32_t audio_algo_decim;
-    uint8_t perf_enabled;
-    uint8_t reserved[3];
-    App_Runtime_DisplayMode_t display_mode;
-    App_Runtime_DisplayCfg_t display_cfg;
-} App_Runtime_Config_t;
-
-typedef enum
-{
-    APP_UI_RENDER_BACKEND_LEGACY = 0u
-} App_UiRenderBackend_t;
 
 /* ============================================================================
  * FreeRTOS 句柄 (FreeRTOS Handles)
@@ -243,34 +123,6 @@ void UI_Display_Task(void *pvParameters);
  * @note    在 FreeRTOS 启动前调用 (freertos.c 中)
  */
 void App_Task_Init(void);
-
-/* unified runtime configuration */
-void App_RuntimeConfig_Get(App_Runtime_Config_t *cfg);
-void App_RuntimeConfig_SetUiTargetFps(uint32_t fps);
-uint32_t App_RuntimeConfig_GetUiTargetFps(void);
-void App_RuntimeConfig_SetAudioAlgoDecim(uint32_t decim);
-uint32_t App_RuntimeConfig_GetAudioAlgoDecim(void);
-void App_RuntimeConfig_SetPerfEnabled(uint8_t enable);
-uint8_t App_RuntimeConfig_GetPerfEnabled(void);
-void App_RuntimeConfig_SetDisplayMode(App_Runtime_DisplayMode_t mode);
-App_Runtime_DisplayMode_t App_RuntimeConfig_GetDisplayMode(void);
-void App_RuntimeConfig_SetDisplayCfg(const App_Runtime_DisplayCfg_t *cfg);
-void App_RuntimeConfig_GetDisplayCfg(App_Runtime_DisplayCfg_t *cfg);
-void App_UiRenderer_SetBackend(App_UiRenderBackend_t backend);
-App_UiRenderBackend_t App_UiRenderer_GetBackend(void);
-
-/* runtime performance profiling */
-void App_Perf_Init(void);
-void App_Perf_SetEnabled(uint8_t enable);
-uint8_t App_Perf_IsEnabled(void);
-void App_Perf_Reset(void);
-uint32_t App_Perf_BeginCycles(void);
-void App_Perf_EndCycles(App_Perf_Section_t section, uint32_t start_cycles);
-void App_Perf_CountAudioProc(void);
-void App_Perf_CountUiLoop(void);
-void App_Perf_MaybePrintRates(void);
-void App_Perf_Dump(void);
-
 #ifdef __cplusplus
 }
 #endif

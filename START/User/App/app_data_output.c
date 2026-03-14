@@ -24,6 +24,7 @@
 #include "ai_beamforming.h"
 #include "ai_config.h"
 #include "app_data_stream.h"
+#include "app_main_task.h"
 #include "usart.h"
 
 #include <math.h>

@@ -26,7 +26,7 @@
 #define APP_DATA_OUTPUT_H
 
 #include "arm_math.h"
-#include "app_main_task.h"
+#include "app_types.h"
 
 #include <stdint.h>
 
