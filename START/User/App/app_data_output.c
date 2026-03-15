@@ -25,6 +25,7 @@
 #include "ai_config.h"
 #include "app_data_stream.h"
 #include "app_main_task.h"
+#include "app_user_config.h"
 #include "usart.h"
 
 #include <math.h>
@@ -34,7 +35,6 @@
 #define VOFA_DIAG_FLOATS       8u
 #define VOFA_SRP_FLOATS        (3u + COARSE_TOTAL + VOFA_DIAG_FLOATS)
 #define VOFA_FRAME_MAX_BYTES   ((VOFA_MAX_FLOATS * sizeof(float32_t)) + 4u)
-#define VOFA_UART_TX_TIMEOUT   5u
 
 static const uint8_t s_vofa_tail[4] = {0x00, 0x00, 0x80, 0x7F};
 

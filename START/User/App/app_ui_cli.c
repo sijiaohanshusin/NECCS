@@ -891,7 +891,7 @@ static void ui_cli_poll(void)
 
     /* 更新 CLI 活跃标志：2 秒内收到过有效字节 = 活跃 */
     if ((last_rx_tick != 0u) &&
-        ((xTaskGetTickCount() - last_rx_tick) <= pdMS_TO_TICKS(2000u)))
+        ((xTaskGetTickCount() - last_rx_tick) <= pdMS_TO_TICKS(UI_CLI_ALIVE_WINDOW_MS)))
     {
         g_ui_cli_rx_alive = 1u;  /* 活跃：串口另一端有用户在操作 */
     }
