@@ -16,6 +16,7 @@
 
 #include <stdint.h>
 
+#include "app_camera.h"
 #include "app_display_cfg.h"
 #include "app_types.h"
 #include "ai_beamforming.h"
@@ -136,6 +137,7 @@ void App_Display_Init(void);
  */
 void App_Display_Render(const Sound_Pos_t *pos,
                         const SRP_VisFrame_t *vis_frame,
+                        const App_CameraFrame_t *camera_frame,
                         uint32_t frame_seq,
                         uint8_t sai_dma_active);
 

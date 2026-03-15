@@ -826,6 +826,11 @@
               <FilePath>..\Drivers\STM32H7xx_HAL_Driver\Src\stm32h7xx_hal_dma2d.c</FilePath>
             </File>
             <File>
+              <FileName>stm32h7xx_hal_dcmi.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\STM32H7xx_HAL_Driver\Src\stm32h7xx_hal_dcmi.c</FilePath>
+            </File>
+            <File>
               <FileName>stm32h7xx_ll_fmc.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Drivers\STM32H7xx_HAL_Driver\Src\stm32h7xx_ll_fmc.c</FilePath>
@@ -926,6 +931,11 @@
               <FilePath>..\User\App\app_audio_task.c</FilePath>
             </File>
             <File>
+              <FileName>app_camera.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_camera.c</FilePath>
+            </File>
+            <File>
               <FileName>app_ui_task.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\App\app_ui_task.c</FilePath>
@@ -979,6 +989,11 @@
               <FileName>soft_i2c.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\Hardware\soft_i2c.c</FilePath>
+            </File>
+            <File>
+              <FileName>camera_ov2640.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\Hardware\camera_ov2640.c</FilePath>
             </File>
           </Files>
         </Group>

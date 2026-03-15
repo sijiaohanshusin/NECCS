@@ -5,6 +5,7 @@
 #include "main.h"
 
 #include "ai_beamforming.h"
+#include "app_camera.h"
 #include "app_display.h"
 #include "app_main_task.h"
 #include "app_perf.h"
@@ -139,7 +140,10 @@ static void s_ui_legacy_render(const Sound_Pos_t *pos,
                                uint8_t sai_dma_active)
 {
     /* 直接转发所有参数到 App_Display 渲染模块，无额外处理 */
-    App_Display_Render(pos, vis_frame, frame_seq, sai_dma_active);
+    App_CameraFrame_t camera_frame;
+
+    App_Camera_GetLatestFrame(&camera_frame);
+    App_Display_Render(pos, vis_frame, &camera_frame, frame_seq, sai_dma_active);
 }
 
 /**

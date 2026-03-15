@@ -9,6 +9,15 @@
 #ifndef APP_USER_CONFIG_H
 #define APP_USER_CONFIG_H
 
+#define APP_CAMERA_ENABLE                 1u
+#define APP_CAMERA_PREVIEW_W              320u
+#define APP_CAMERA_PREVIEW_H              240u
+
+#define APP_CAMERA_OVERLAY_MODE_VERIFY_ALPHA 1u
+#define APP_CAMERA_OVERLAY_MODE           APP_CAMERA_OVERLAY_MODE_VERIFY_ALPHA
+#define APP_CAMERA_OVERLAY_COLOR_565      0xFC60u
+#define APP_CAMERA_OVERLAY_ALPHA_MAX      192u
+
 /* ============================================================================
  * 调试与串口输出配置
  * ============================================================================ */
@@ -286,6 +295,19 @@
 
 #if (APP_DISPLAY_MODE_CLEAN_BLIT_ROWS < 1u) || (APP_DISPLAY_MODE_CLEAN_BLIT_ROWS > APP_DISPLAY_BLIT_ROWS_MAX)
 #error "APP_DISPLAY_MODE_CLEAN_BLIT_ROWS out of range"
+#endif
+
+#if (APP_CAMERA_PREVIEW_W < 4u) || (APP_CAMERA_PREVIEW_H < 4u) || \
+    ((APP_CAMERA_PREVIEW_W % 4u) != 0u) || ((APP_CAMERA_PREVIEW_H % 4u) != 0u)
+#error "APP_CAMERA_PREVIEW_W/H must be >= 4 and aligned to 4 pixels"
+#endif
+
+#if (APP_CAMERA_OVERLAY_ALPHA_MAX > 255u)
+#error "APP_CAMERA_OVERLAY_ALPHA_MAX must be <= 255"
+#endif
+
+#if (APP_CAMERA_OVERLAY_MODE != APP_CAMERA_OVERLAY_MODE_VERIFY_ALPHA)
+#error "Unsupported APP_CAMERA_OVERLAY_MODE"
 #endif
 
 #endif /* APP_USER_CONFIG_H */
