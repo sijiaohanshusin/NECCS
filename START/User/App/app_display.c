@@ -39,13 +39,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifndef COARSE_ANGLE_MIN_DEG
-#define COARSE_ANGLE_MIN_DEG (-60.0f)
-#endif
-
-#ifndef COARSE_ANGLE_MAX_DEG
-#define COARSE_ANGLE_MAX_DEG (60.0f)
-#endif
 
 /* 显示中间场相关宏：
  * 这里的“field”不是 LCD 实际像素，而是绘制前的中间网格。
@@ -56,10 +49,6 @@
 #define APP_DISPLAY_FIELD_PIXELS      (APP_DISPLAY_FIELD_W * APP_DISPLAY_FIELD_H)
 #define APP_DISPLAY_BLUR_KERNEL_LEN   (2u * APP_DISPLAY_SMOOTH_RADIUS + 1u)
 #define APP_DISPLAY_FINE_KERNEL_LEN   (2u * APP_DISPLAY_FINE_KERNEL_RADIUS + 1u)
-#define APP_DISPLAY_DYNAMIC_MIN_PEAK  (1.0e-9f)
-#define APP_DISPLAY_HEAT_LUT_SIZE     256u
-#define APP_DISPLAY_NORM_RATIO_LUT_SIZE 1024u
-#define APP_DISPLAY_DMA2D_TIMEOUT     0x1FFFFFu
 
 /* ---------------------------------------------------------------------------
  * 模块状态
@@ -124,8 +113,39 @@ static float s_blur_kernel[APP_DISPLAY_BLUR_KERNEL_LEN];
 static float s_fine_kernel[APP_DISPLAY_FINE_KERNEL_LEN * APP_DISPLAY_FINE_KERNEL_LEN];
 static uint16_t s_heat_lut[APP_DISPLAY_HEAT_LUT_SIZE];
 
-static App_Display_Mode_t s_mode = APP_DISPLAY_MODE_BALANCED;
+static App_Display_Mode_t s_mode = (App_Display_Mode_t)APP_DISPLAY_DEFAULT_MODE;
 static App_Display_RuntimeCfg_t s_cfg = {
+#if (APP_DISPLAY_DEFAULT_MODE == 0u)
+    APP_DISPLAY_MODE_FAST_EMA_ATTACK,
+    APP_DISPLAY_MODE_FAST_EMA_DECAY,
+    APP_DISPLAY_MODE_FAST_DB_FLOOR,
+    APP_DISPLAY_MODE_FAST_FINE_GAIN,
+    APP_DISPLAY_MODE_FAST_GAMMA,
+    APP_DISPLAY_MODE_FAST_NOISE_GATE_RATIO,
+    APP_DISPLAY_MODE_FAST_NOISE_ADAPT_GAIN,
+    APP_DISPLAY_MODE_FAST_SMOOTH_PASSES,
+    APP_DISPLAY_MODE_FAST_FINE_FUSION_ENABLE,
+    APP_DISPLAY_MODE_FAST_DRAW_COARSE_GRID,
+    (APP_DISPLAY_MODE_FAST_INTERP_BILINEAR != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST,
+    (APP_DISPLAY_MODE_FAST_NORM_FULL != 0u) ? APP_DISPLAY_NORM_FULL : APP_DISPLAY_NORM_FAST,
+    APP_DISPLAY_MODE_FAST_TEXT_REFRESH_DIV,
+    APP_DISPLAY_MODE_FAST_BLIT_ROWS
+#elif (APP_DISPLAY_DEFAULT_MODE == 2u)
+    APP_DISPLAY_MODE_CLEAN_EMA_ATTACK,
+    APP_DISPLAY_MODE_CLEAN_EMA_DECAY,
+    APP_DISPLAY_MODE_CLEAN_DB_FLOOR,
+    APP_DISPLAY_MODE_CLEAN_FINE_GAIN,
+    APP_DISPLAY_MODE_CLEAN_GAMMA,
+    APP_DISPLAY_MODE_CLEAN_NOISE_GATE_RATIO,
+    APP_DISPLAY_MODE_CLEAN_NOISE_ADAPT_GAIN,
+    APP_DISPLAY_MODE_CLEAN_SMOOTH_PASSES,
+    APP_DISPLAY_MODE_CLEAN_FINE_FUSION_ENABLE,
+    APP_DISPLAY_MODE_CLEAN_DRAW_COARSE_GRID,
+    (APP_DISPLAY_MODE_CLEAN_INTERP_BILINEAR != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST,
+    (APP_DISPLAY_MODE_CLEAN_NORM_FULL != 0u) ? APP_DISPLAY_NORM_FULL : APP_DISPLAY_NORM_FAST,
+    APP_DISPLAY_MODE_CLEAN_TEXT_REFRESH_DIV,
+    APP_DISPLAY_MODE_CLEAN_BLIT_ROWS
+#else
     APP_DISPLAY_EMA_ATTACK,
     APP_DISPLAY_EMA_DECAY,
     APP_DISPLAY_DYNAMIC_DB_FLOOR,
@@ -137,9 +157,10 @@ static App_Display_RuntimeCfg_t s_cfg = {
     APP_DISPLAY_FINE_FUSION_ENABLE,
     APP_DISPLAY_DRAW_COARSE_GRID,
     (APP_DISPLAY_BILINEAR_SAMPLING != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST,
-    APP_DISPLAY_NORM_FAST,
+    (APP_DISPLAY_MODE_BALANCED_NORM_FULL != 0u) ? APP_DISPLAY_NORM_FULL : APP_DISPLAY_NORM_FAST,
     APP_DISPLAY_TEXT_REFRESH_DIV,
     APP_DISPLAY_BLIT_ROWS_MAX
+#endif
 };
 
 /* 几何缓存刷新函数在文件后半段定义。
@@ -362,37 +383,37 @@ static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg
     switch (mode)
     {
         case APP_DISPLAY_MODE_FAST:
-            cfg->ema_attack = 0.70f;
-            cfg->ema_decay = 0.15f;
-            cfg->db_floor = -34.0f;
-            cfg->fine_gain = 0.25f;
-            cfg->gamma = 1.00f;
-            cfg->noise_gate_ratio = 0.12f;
-            cfg->noise_adapt_gain = 1.50f;
-            cfg->smooth_passes = 0u;
-            cfg->fine_fusion_enable = 0u;
-            cfg->draw_coarse_grid = 0u;
-            cfg->interp_mode = APP_DISPLAY_INTERP_NEAREST;
-            cfg->norm_mode = APP_DISPLAY_NORM_FAST;
-            cfg->text_refresh_div = 4u;
-            cfg->blit_rows = APP_DISPLAY_BLIT_ROWS_MAX;
+            cfg->ema_attack = APP_DISPLAY_MODE_FAST_EMA_ATTACK;
+            cfg->ema_decay = APP_DISPLAY_MODE_FAST_EMA_DECAY;
+            cfg->db_floor = APP_DISPLAY_MODE_FAST_DB_FLOOR;
+            cfg->fine_gain = APP_DISPLAY_MODE_FAST_FINE_GAIN;
+            cfg->gamma = APP_DISPLAY_MODE_FAST_GAMMA;
+            cfg->noise_gate_ratio = APP_DISPLAY_MODE_FAST_NOISE_GATE_RATIO;
+            cfg->noise_adapt_gain = APP_DISPLAY_MODE_FAST_NOISE_ADAPT_GAIN;
+            cfg->smooth_passes = APP_DISPLAY_MODE_FAST_SMOOTH_PASSES;
+            cfg->fine_fusion_enable = APP_DISPLAY_MODE_FAST_FINE_FUSION_ENABLE;
+            cfg->draw_coarse_grid = APP_DISPLAY_MODE_FAST_DRAW_COARSE_GRID;
+            cfg->interp_mode = (APP_DISPLAY_MODE_FAST_INTERP_BILINEAR != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST;
+            cfg->norm_mode = (APP_DISPLAY_MODE_FAST_NORM_FULL != 0u) ? APP_DISPLAY_NORM_FULL : APP_DISPLAY_NORM_FAST;
+            cfg->text_refresh_div = APP_DISPLAY_MODE_FAST_TEXT_REFRESH_DIV;
+            cfg->blit_rows = APP_DISPLAY_MODE_FAST_BLIT_ROWS;
             break;
 
         case APP_DISPLAY_MODE_CLEAN:
-            cfg->ema_attack = 0.58f;
-            cfg->ema_decay = 0.06f;
-            cfg->db_floor = -52.0f;
-            cfg->fine_gain = 0.50f;
-            cfg->gamma = 1.35f;
-            cfg->noise_gate_ratio = 0.10f;
-            cfg->noise_adapt_gain = 2.80f;
-            cfg->smooth_passes = 2u;
-            cfg->fine_fusion_enable = 1u;
-            cfg->draw_coarse_grid = 0u;
-            cfg->interp_mode = APP_DISPLAY_INTERP_BILINEAR;
-            cfg->norm_mode = APP_DISPLAY_NORM_FULL;
-            cfg->text_refresh_div = 2u;
-            cfg->blit_rows = 6u;
+            cfg->ema_attack = APP_DISPLAY_MODE_CLEAN_EMA_ATTACK;
+            cfg->ema_decay = APP_DISPLAY_MODE_CLEAN_EMA_DECAY;
+            cfg->db_floor = APP_DISPLAY_MODE_CLEAN_DB_FLOOR;
+            cfg->fine_gain = APP_DISPLAY_MODE_CLEAN_FINE_GAIN;
+            cfg->gamma = APP_DISPLAY_MODE_CLEAN_GAMMA;
+            cfg->noise_gate_ratio = APP_DISPLAY_MODE_CLEAN_NOISE_GATE_RATIO;
+            cfg->noise_adapt_gain = APP_DISPLAY_MODE_CLEAN_NOISE_ADAPT_GAIN;
+            cfg->smooth_passes = APP_DISPLAY_MODE_CLEAN_SMOOTH_PASSES;
+            cfg->fine_fusion_enable = APP_DISPLAY_MODE_CLEAN_FINE_FUSION_ENABLE;
+            cfg->draw_coarse_grid = APP_DISPLAY_MODE_CLEAN_DRAW_COARSE_GRID;
+            cfg->interp_mode = (APP_DISPLAY_MODE_CLEAN_INTERP_BILINEAR != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST;
+            cfg->norm_mode = (APP_DISPLAY_MODE_CLEAN_NORM_FULL != 0u) ? APP_DISPLAY_NORM_FULL : APP_DISPLAY_NORM_FAST;
+            cfg->text_refresh_div = APP_DISPLAY_MODE_CLEAN_TEXT_REFRESH_DIV;
+            cfg->blit_rows = APP_DISPLAY_MODE_CLEAN_BLIT_ROWS;
             break;
 
         case APP_DISPLAY_MODE_BALANCED:
@@ -408,7 +429,7 @@ static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg
             cfg->fine_fusion_enable = APP_DISPLAY_FINE_FUSION_ENABLE;
             cfg->draw_coarse_grid = APP_DISPLAY_DRAW_COARSE_GRID;
             cfg->interp_mode = (APP_DISPLAY_BILINEAR_SAMPLING != 0u) ? APP_DISPLAY_INTERP_BILINEAR : APP_DISPLAY_INTERP_NEAREST;
-            cfg->norm_mode = APP_DISPLAY_NORM_FAST;
+            cfg->norm_mode = (APP_DISPLAY_MODE_BALANCED_NORM_FULL != 0u) ? APP_DISPLAY_NORM_FULL : APP_DISPLAY_NORM_FAST;
             cfg->text_refresh_div = APP_DISPLAY_TEXT_REFRESH_DIV;
             cfg->blit_rows = APP_DISPLAY_BLIT_ROWS_MAX;
             break;
@@ -608,7 +629,7 @@ void App_Display_Init(void)
     s_cache_map_w = 0u;
     s_cache_map_h = 0u;
     s_norm_lut_valid = 0u;
-    App_Display_SetMode(APP_DISPLAY_MODE_FAST);
+    App_Display_SetMode((App_Display_Mode_t)APP_DISPLAY_DEFAULT_MODE);
 
     g_display_init_stage = 2u;
     lcd_init();

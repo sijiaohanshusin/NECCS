@@ -88,7 +88,7 @@ void App_Task_Init(void)
     /* Step 6a: create the audio pipeline task. */
     task_ok = xTaskCreate(Audio_Pipeline_Task,   /* Task entry */
                           "Audio_Pipe",         /* Task name */
-                          2304,                 /* Stack size in words */
+                          APP_AUDIO_TASK_STACK_WORDS, /* Stack size in words */
                           NULL,                 /* Unused task parameter */
                           APP_AUDIO_TASK_PRIO,  /* Priority */
                           &xAudioPipelineTaskHandle); /* Output handle */
@@ -97,7 +97,7 @@ void App_Task_Init(void)
     /* Step 6b: create the UI display task. */
     task_ok = xTaskCreate(UI_Display_Task,   /* Task entry */
                           "UI_Disp",        /* Task name */
-                          2048,             /* Stack size in words */
+                          APP_UI_TASK_STACK_WORDS, /* Stack size in words */
                           NULL,             /* Unused task parameter */
                           APP_UI_TASK_PRIO, /* Priority */
                           &xUITaskHandle);  /* Output handle */
