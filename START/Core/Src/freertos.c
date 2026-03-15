@@ -26,6 +26,7 @@
 /* USER CODE BEGIN Includes */
 #include "pcmd3180.h"
 #include "soft_i2c.h"
+#include "app_camera.h"
 #include "app_data_stream.h"
 #include "app_main_task.h"
 /* USER CODE END Includes */
@@ -238,6 +239,8 @@ void PCMD3180InitTask(void *argument)
   PCMD3180_Init_Device(PCMD3180_ADDR_1, 8);   /* 芯片 B, slot 8 起 */
 
   /* 步骤 7: 自删除初始化任务，释放其栈与 TCB */
+  App_Camera_Init();
+  App_Camera_Start();
   vTaskDelete(NULL);
 }
 /* USER CODE END Application */

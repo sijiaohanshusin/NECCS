@@ -81,6 +81,10 @@ static uint32_t s_fb_addr_a = 0u;
 static uint32_t s_fb_addr_b = 0u;
 static uint16_t s_cache_map_w = 0u;
 static uint16_t s_cache_map_h = 0u;
+static uint16_t s_camera_cache_map_w = 0u;
+static uint16_t s_camera_cache_map_h = 0u;
+static uint16_t s_camera_cache_src_w = 0u;
+static uint16_t s_camera_cache_src_h = 0u;
 
 /* 工作缓冲区说明：
  * - `s_field_a` / `s_field_b`
@@ -104,6 +108,8 @@ static uint16_t s_col_near_cache[APP_DISPLAY_MAX_LINE_PIXELS];
 static uint16_t s_col_x0_cache[APP_DISPLAY_MAX_LINE_PIXELS];
 static uint16_t s_col_x1_cache[APP_DISPLAY_MAX_LINE_PIXELS];
 static uint16_t s_col_wx256_cache[APP_DISPLAY_MAX_LINE_PIXELS];
+static uint16_t s_camera_row_near_cache[APP_DISPLAY_MAX_LINE_PIXELS];
+static uint16_t s_camera_col_near_cache[APP_DISPLAY_MAX_LINE_PIXELS];
 
 /* 预计算表：
  * - `s_blur_kernel`：一维平滑核，供可分离模糊使用
@@ -166,6 +172,7 @@ static App_Display_RuntimeCfg_t s_cfg = {
 /* 几何缓存刷新函数在文件后半段定义。
  * 它负责把 LCD 坐标到显示场坐标的映射预先算好。 */
 void s_refresh_render_map_cache(uint16_t map_w, uint16_t map_h);
+static void s_refresh_camera_scale_cache(uint16_t map_w, uint16_t map_h, uint16_t src_w, uint16_t src_h);
 
 /* 通用钳位工具：
  * 显示链路中存在大量“用户可调参数”和“浮点转整数”的过程，
@@ -1203,6 +1210,228 @@ void s_refresh_render_map_cache(uint16_t map_w, uint16_t map_h)
 
 /* 计算归一化后的 8bit 显示场。
  * 内部会估计噪声底、扣除背景，并根据当前模式选择快速/完整路径。 */
+static void s_refresh_camera_scale_cache(uint16_t map_w, uint16_t map_h, uint16_t src_w, uint16_t src_h)
+{
+    uint16_t x;
+    uint16_t y;
+
+    if ((map_w == 0u) || (map_h == 0u) || (src_w == 0u) || (src_h == 0u) ||
+        (map_w > APP_DISPLAY_MAX_LINE_PIXELS) || (map_h > APP_DISPLAY_MAX_LINE_PIXELS))
+    {
+        return;
+    }
+
+    if ((s_camera_cache_map_w == map_w) &&
+        (s_camera_cache_map_h == map_h) &&
+        (s_camera_cache_src_w == src_w) &&
+        (s_camera_cache_src_h == src_h))
+    {
+        return;
+    }
+
+    for (x = 0u; x < map_w; x++)
+    {
+        uint32_t src_x = (map_w > 1u)
+                       ? ((uint32_t)x * (uint32_t)(src_w - 1u) / (uint32_t)(map_w - 1u))
+                       : 0u;
+        s_camera_col_near_cache[x] = (src_x >= src_w) ? (uint16_t)(src_w - 1u) : (uint16_t)src_x;
+    }
+
+    for (y = 0u; y < map_h; y++)
+    {
+        uint32_t src_y = (map_h > 1u)
+                       ? ((uint32_t)y * (uint32_t)(src_h - 1u) / (uint32_t)(map_h - 1u))
+                       : 0u;
+        s_camera_row_near_cache[y] = (src_y >= src_h) ? (uint16_t)(src_h - 1u) : (uint16_t)src_y;
+    }
+
+    s_camera_cache_map_w = map_w;
+    s_camera_cache_map_h = map_h;
+    s_camera_cache_src_w = src_w;
+    s_camera_cache_src_h = src_h;
+}
+
+static void s_render_camera_rows(const App_CameraFrame_t *camera_frame)
+{
+    uint16_t map_w = (uint16_t)(s_map_x1 - s_map_x0 + 1u);
+    uint16_t map_h = (uint16_t)(s_map_y1 - s_map_y0 + 1u);
+    uint8_t blit_rows = s_clamp_u8(s_cfg.blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
+    uint16_t y_blk;
+
+    if ((camera_frame == NULL) ||
+        (camera_frame->pixels == NULL) ||
+        (camera_frame->valid == 0u) ||
+        (camera_frame->width == 0u) ||
+        (camera_frame->height == 0u) ||
+        (map_w == 0u) ||
+        (map_h == 0u) ||
+        (map_w > APP_DISPLAY_MAX_LINE_PIXELS) ||
+        (map_h > APP_DISPLAY_MAX_LINE_PIXELS))
+    {
+        return;
+    }
+
+    s_refresh_camera_scale_cache(map_w, map_h, camera_frame->width, camera_frame->height);
+
+    for (y_blk = 0u; y_blk < map_h; y_blk = (uint16_t)(y_blk + blit_rows))
+    {
+        uint16_t rows = map_h - y_blk;
+        uint16_t row;
+
+        if (rows > blit_rows)
+        {
+            rows = blit_rows;
+        }
+
+        for (row = 0u; row < rows; row++)
+        {
+            uint16_t y = (uint16_t)(y_blk + row);
+            const uint16_t *src = &camera_frame->pixels[(uint32_t)s_camera_row_near_cache[y] *
+                                                        (uint32_t)camera_frame->width];
+            uint16_t *dst = &s_blit_buf[(uint32_t)row * (uint32_t)map_w];
+            uint16_t x;
+
+            for (x = 0u; x < map_w; x++)
+            {
+                dst[x] = src[s_camera_col_near_cache[x]];
+            }
+        }
+
+        if (ltdc_color_fill_async(s_map_x0,
+                                  (uint16_t)(s_map_y0 + y_blk),
+                                  s_map_x1,
+                                  (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                                  s_blit_buf) == 0u)
+        {
+            lcd_color_fill(s_map_x0,
+                           (uint16_t)(s_map_y0 + y_blk),
+                           s_map_x1,
+                           (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                           s_blit_buf);
+        }
+    }
+}
+
+static void s_render_field_alpha_rows(uint16_t color565)
+{
+    uint16_t map_w = (uint16_t)(s_map_x1 - s_map_x0 + 1u);
+    uint16_t map_h = (uint16_t)(s_map_y1 - s_map_y0 + 1u);
+    uint8_t blit_rows = s_clamp_u8(s_cfg.blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
+    uint8_t use_bilinear = (s_cfg.interp_mode == APP_DISPLAY_INTERP_BILINEAR) ? 1u : 0u;
+    uint16_t y_blk;
+
+    if ((map_w == 0u) ||
+        (map_h == 0u) ||
+        (map_w > APP_DISPLAY_MAX_LINE_PIXELS) ||
+        (map_h > APP_DISPLAY_MAX_LINE_PIXELS))
+    {
+        return;
+    }
+
+    s_refresh_render_map_cache(map_w, map_h);
+
+    for (y_blk = 0u; y_blk < map_h; y_blk = (uint16_t)(y_blk + blit_rows))
+    {
+        uint16_t rows = map_h - y_blk;
+        uint16_t row;
+
+        if (rows > blit_rows)
+        {
+            rows = blit_rows;
+        }
+
+        for (row = 0u; row < rows; row++)
+        {
+            uint16_t y = (uint16_t)(y_blk + row);
+            uint16_t x;
+            uint8_t *dst = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];
+
+            if (use_bilinear != 0u)
+            {
+                uint16_t y0 = s_row_y0_cache[y];
+                uint16_t y1 = s_row_y1_cache[y];
+                uint16_t wy = s_row_wy256_cache[y];
+                uint16_t wy0 = (uint16_t)(256u - wy);
+                const uint8_t *src0 = &s_field_norm_u8[(uint32_t)y0 * APP_DISPLAY_FIELD_W];
+                const uint8_t *src1 = &s_field_norm_u8[(uint32_t)y1 * APP_DISPLAY_FIELD_W];
+
+                for (x = 0u; x < map_w; x++)
+                {
+                    uint16_t x0 = s_col_x0_cache[x];
+                    uint16_t x1 = s_col_x1_cache[x];
+                    uint16_t wx = s_col_wx256_cache[x];
+                    uint16_t wx0 = (uint16_t)(256u - wx);
+                    uint32_t v00 = src0[x0];
+                    uint32_t v01 = src0[x1];
+                    uint32_t v10 = src1[x0];
+                    uint32_t v11 = src1[x1];
+                    uint32_t vx0 = v00 * wx0 + v01 * wx;
+                    uint32_t vx1 = v10 * wx0 + v11 * wx;
+                    uint32_t q = (vx0 * wy0 + vx1 * wy + 32768u) >> 16;
+                    if (q > 255u)
+                    {
+                        q = 255u;
+                    }
+                    dst[x] = (uint8_t)((q * (uint32_t)APP_CAMERA_OVERLAY_ALPHA_MAX + 127u) / 255u);
+                }
+            }
+            else
+            {
+                uint16_t y_idx = s_row_near_cache[y];
+                const uint8_t *src = &s_field_norm_u8[(uint32_t)y_idx * APP_DISPLAY_FIELD_W];
+
+                for (x = 0u; x < map_w; x++)
+                {
+                    dst[x] = (uint8_t)(((uint32_t)src[s_col_near_cache[x]] *
+                                        (uint32_t)APP_CAMERA_OVERLAY_ALPHA_MAX + 127u) / 255u);
+                }
+            }
+        }
+
+        if (ltdc_a8_blend_async(s_map_x0,
+                                (uint16_t)(s_map_y0 + y_blk),
+                                s_map_x1,
+                                (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                                s_blit_l8_buf,
+                                map_w,
+                                color565) == 0u)
+        {
+            if (ltdc_l8_fill_async(s_map_x0,
+                                   (uint16_t)(s_map_y0 + y_blk),
+                                   s_map_x1,
+                                   (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                                   s_blit_l8_buf,
+                                   map_w) == 0u)
+            {
+                for (row = 0u; row < rows; row++)
+                {
+                    uint8_t *src = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];
+                    uint16_t *dst = &s_blit_buf[(uint32_t)row * (uint32_t)map_w];
+                    uint16_t x;
+
+                    for (x = 0u; x < map_w; x++)
+                    {
+                        dst[x] = s_heat_lut[src[x]];
+                    }
+                }
+
+                if (ltdc_color_fill_async(s_map_x0,
+                                          (uint16_t)(s_map_y0 + y_blk),
+                                          s_map_x1,
+                                          (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                                          s_blit_buf) == 0u)
+                {
+                    lcd_color_fill(s_map_x0,
+                                   (uint16_t)(s_map_y0 + y_blk),
+                                   s_map_x1,
+                                   (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                                   s_blit_buf);
+                }
+            }
+        }
+    }
+}
+
 static void s_update_norm_field(float field_peak, uint32_t frame_seq)
 {
     /* 把浮点能量场转换为 8bit 强度场。
@@ -1547,6 +1776,7 @@ static void s_draw_overlay(const Sound_Pos_t *pos,
  * 这是模块对外最核心的逐帧入口。 */
 void App_Display_Render(const Sound_Pos_t *pos,
                         const SRP_VisFrame_t *vis_frame,
+                        const App_CameraFrame_t *camera_frame,
                         uint32_t frame_seq,
                         uint8_t sai_dma_active)
 {
@@ -1603,7 +1833,19 @@ void App_Display_Render(const Sound_Pos_t *pos,
     App_Perf_EndCycles(APP_PERF_SEC_DISP_NORM, t_perf);
 
     t_perf = App_Perf_BeginCycles();
-    s_render_field_rows();
+    if ((camera_frame != NULL) &&
+        (camera_frame->valid != 0u) &&
+        (camera_frame->pixels != NULL) &&
+        (camera_frame->width != 0u) &&
+        (camera_frame->height != 0u))
+    {
+        s_render_camera_rows(camera_frame);
+        s_render_field_alpha_rows(APP_CAMERA_OVERLAY_COLOR_565);
+    }
+    else
+    {
+        s_render_field_rows();
+    }
     {
         uint16_t bx0 = (s_map_x0 > 0u) ? (uint16_t)(s_map_x0 - 1u) : s_map_x0;
         uint16_t by0 = (s_map_y0 > 0u) ? (uint16_t)(s_map_y0 - 1u) : s_map_y0;
