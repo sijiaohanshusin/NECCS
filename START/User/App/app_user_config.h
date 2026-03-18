@@ -112,7 +112,7 @@
  * FreeRTOS 任务、UI 刷新与性能统计
  * ============================================================================ */
 
-#define APP_AUDIO_TASK_PRIO          4u       /**< 音频任务优先级。 */
+#define APP_AUDIO_TASK_PRIO          5u       /**< 音频任务优先级。 */
 #define APP_UI_TASK_PRIO             4u       /**< UI 任务优先级。 */
 #define APP_AUDIO_TASK_STACK_WORDS   2304u    /**< 音频任务堆栈深度，单位 word。 */
 #define APP_UI_TASK_STACK_WORDS      2048u    /**< UI 任务堆栈深度，单位 word。 */
@@ -147,8 +147,12 @@
 
 #define APP_DISPLAY_DEFAULT_MODE     0u       /**< 上电默认显示模式：0=FAST，1=BALANCED，2=CLEAN。 */
 
-#define APP_DISPLAY_MARGIN_PX        8u       /**< 热力图区与屏幕边缘留白。 */
-#define APP_DISPLAY_TEXT_WIDTH_PX    180u     /**< 右侧文字面板宽度。 */
+#define APP_DISPLAY_TEXT_WIDTH_PX    APP_DISPLAY_UI_PANEL_W /**< 兼容旧布局代码的 UI 宽度别名。 */
+#define APP_DISPLAY_CAMERA_VIEW_W     640u     /**< 摄像头显示区域宽度。 */
+#define APP_DISPLAY_CAMERA_VIEW_H     480u     /**< 摄像头显示区域高度。 */
+#define APP_DISPLAY_HEAT_VIEW_W       480u     /**< 热力图叠加区域宽度。 */
+#define APP_DISPLAY_HEAT_VIEW_H       480u     /**< 热力图叠加区域高度。 */
+#define APP_DISPLAY_UI_PANEL_W        160u     /**< 右侧状态/UI 面板宽度。 */
 #define APP_DISPLAY_MAX_LINE_PIXELS  1280u    /**< 单行临时缓冲允许的最大像素数。 */
 #define APP_DISPLAY_BLIT_ROWS_MAX    8u       /**< 单次块渲染最大行数。 */
 
@@ -196,7 +200,7 @@
 #define APP_DISPLAY_DIAG_OVERLAY           1u       /**< 是否显示诊断叠加层。 */
 #define APP_DISPLAY_DRAW_COARSE_GRID       0u       /**< 是否绘制粗网格辅助线。 */
 #define APP_DISPLAY_DEBUG_LOG              0u       /**< 显示模块日志开关。 */
-#define APP_DISPLAY_IDLE_TEST_PATTERN      0u       /**< 无有效峰值时是否显示测试图案。 */
+#define APP_DISPLAY_IDLE_TEST_PATTERN      1u       /**< 无有效峰值时显示测试图案，便于确认热力图链路正常刷新。 */
 #define APP_DISPLAY_TEXT_REFRESH_DIV       2u       /**< 文本面板刷新分频。 */
 #define APP_DISPLAY_BILINEAR_SAMPLING      1u       /**< 默认是否使用双线性插值。 */
 
