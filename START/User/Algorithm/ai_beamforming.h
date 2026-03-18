@@ -106,6 +106,7 @@ typedef struct
 } SRP_VisFrame_t;
 
 void AI_SRP_CopyVisualizationFrame(SRP_VisFrame_t *frame);
+uint8_t AI_SRP_GetLatestVisualizationFrame(SRP_VisFrame_t *frame);
 
 /* ============================================================================
  * 诊断统计变量 (Diagnostic Statistics)
@@ -122,6 +123,8 @@ extern volatile float32_t g_srp_last_contrast;
 
 /** @brief 上次计算的质量指标 (用于调试) */
 extern volatile float32_t g_srp_last_quality;
+extern volatile uint32_t g_srp_vis_publish_count;
+extern volatile uint32_t g_srp_vis_snapshot_retry_count;
 
 #ifdef __cplusplus
 }

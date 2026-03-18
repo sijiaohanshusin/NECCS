@@ -6,7 +6,7 @@
  * 当前策略：
  * - Region 0: SRAM1/SRAM2（DMA 共享缓冲）设为 Non-Cacheable
  * - Region 1: SDRAM 全区默认设为 Cacheable
- * - Region 2: SDRAM 前 2MB（帧缓冲）覆盖为 Non-Cacheable
+ * - Region 2: SDRAM 前 4MB（帧缓冲）覆盖为 Non-Cacheable
  *
  * 这样可以减少手动缓存维护开销，并避免 DMA/LTDC 读取到过期缓存数据。
  */
@@ -24,7 +24,7 @@
  *
  * 区域优先级：
  * - 区域编号越大，优先级越高
- * - Region 2 会覆盖 Region 1 的前 2MB
+ * - Region 2 会覆盖 Region 1 的前 4MB
  *
  * @note    建议在 HAL/时钟初始化完成后调用，且需早于 FreeRTOS 启动
  */
@@ -70,7 +70,7 @@ void App_MPU_Config(void)
      * - Bufferable：提升连续写入吞吐
      * - Non-Shareable：作为默认 CPU 主访问区，简化一致性模型
      *
-     * 注意：该区前 2MB 会被 Region 2 覆盖为 Non-Cacheable。
+     * 注意：该区前 4MB 会被 Region 2 覆盖为 Non-Cacheable。
      */
     MPU_InitStruct.Enable           = MPU_REGION_ENABLE;
     MPU_InitStruct.Number           = MPU_REGION_NUMBER1;
@@ -86,21 +86,21 @@ void App_MPU_Config(void)
     HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
     /* ========================================================================
-     * Region 2: LTDC 帧缓冲区 (0xC0000000, 2MB)
+     * Region 2: LTDC 帧缓冲区 (0xC0000000, 4MB)
      * ======================================================================== */
     /**
      * 用途：LCD 帧缓冲区（LTDC DMA 直接读取）。
      *
      * 属性：Non-Cacheable + Non-Bufferable + Shareable
-     * - 覆盖 Region 1 的前 2MB，使帧缓冲与 LTDC 访问保持一致
+     * - 覆盖 Region 1 的前 4MB，使帧缓冲与 LTDC 访问保持一致
      * - CPU 写像素后无需额外 Cache 维护，LTDC 可读取到最新数据
      *
-     * 大小说明：2MB 高于单帧 RGB565(800x480)需求，留有双缓冲/界面元素余量。
+     * 大小说明：4MB 高于单帧 RGB565(800x480)需求，留有双缓冲/界面元素余量。
      */
     MPU_InitStruct.Enable           = MPU_REGION_ENABLE;
     MPU_InitStruct.Number           = MPU_REGION_NUMBER2;
     MPU_InitStruct.BaseAddress      = 0xC0000000;  /* SDRAM 基地址（与 Region 1 重叠） */
-    MPU_InitStruct.Size             = MPU_REGION_SIZE_2MB;  /* 2MB（覆盖 Region 1 前 2MB） */
+    MPU_InitStruct.Size             = MPU_REGION_SIZE_4MB;  /* 4MB（覆盖 Region 1 前 4MB） */
     MPU_InitStruct.SubRegionDisable = 0x0;  /* 不屏蔽子区域 */
     MPU_InitStruct.TypeExtField     = MPU_TEX_LEVEL1;  /* TEX=001（Normal memory） */
     MPU_InitStruct.IsCacheable      = MPU_ACCESS_NOT_CACHEABLE;  /* 不可缓存 */

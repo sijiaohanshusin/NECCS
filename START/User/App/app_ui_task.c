@@ -16,84 +16,84 @@
 #include <stdio.h>
 
 /**
- * @brief UI 渲染后端操作表（虚函数表）
+ * @brief UI 濞撳弶鐓嬮崥搴ｎ伂閹垮秳缍旂悰顭掔礄閾忔艾鍤遍弫鎷屻€冮�?
  *
- * 包含三个函数指针，分别对应：
- *  - is_ready : 查询显示层是否已完成初始化
- *  - init     : 执行显示层初始化（幂等，可重复调用）
- *  - render   : 执行一帧渲染并提交到 LCD
+ * 閸栧懎鎯堟稉澶夐嚋閸戣姤鏆熼幐鍥嫛閿涘苯鍨庨崚顐㈩嚠鎼存棑�?
+ *  - is_ready : 閺屻儴顕楅弰鍓с仛鐏炲倹妲搁崥锕€鍑＄€瑰本鍨氶崚婵嗩潗閸?
+ *  - init     : 閹笛嗩攽閺勫墽銇氱仦鍌氬灥婵瀵查敍鍫濈畵缁涘绱濋崣顖炲櫢婢跺秷鐨熼悽顭掔�?
+ *  - render   : 閹笛嗩攽娑撯偓鐢勮閺屾挸鑻熼幓鎰唉�?LCD
  *
- * 通过函数指针而非直接调用，未来可无缝切换到不同渲染实现（如 GPU 加速后端）。
+ * 闁俺绻冮崙鑺ユ殶閹稿洭鎷￠懓宀勬姜閻╁瓨甯寸拫鍐暏閿涘本婀弶銉ュ讲閺冪姷绱抽崚鍥ㄥ床閸掗绗夐崥灞捐閺屾挸鐤勯悳甯礄�?GPU 閸旂娀鈧喎鎮楃粩顖ょ礆閵?
  */
 typedef struct
 {
-    uint8_t (*is_ready)(void);          /**< 返回 1 表示显示硬件已就绪，可以开始渲染 */
-    void    (*init)(void);              /**< 初始化显示层：LCD 时序、LTDC 配置、帧缓冲清零 */
-    void    (*render)(const Sound_Pos_t   *pos,        /**< 声源位置（方位角+能量） */
-                      const SRP_VisFrame_t *vis_frame, /**< SRP 热力图可视化快照 */
-                      uint32_t             frame_seq,  /**< UI 帧序号，用于文字刷新分频 */
-                      uint8_t              sai_dma_active); /**< SAI DMA 活跃标志 */
+    uint8_t (*is_ready)(void);          /**< 鏉╂柨娲?1 鐞涖劎銇氶弰鍓с仛绾兛娆㈠鎻掓皑缂侇亷绱濋崣顖欎簰瀵偓婵瑕嗛�?*/
+    void    (*init)(void);              /**< 閸掓繂顫愰崠鏍ㄦ▔缁€鍝勭湴閿涙瓈CD 閺冭泛绨妴涓㏕DC 闁板秶鐤嗛妴浣告姎缂傛挸鍟垮〒鍛存祩 */
+    void    (*render)(const Sound_Pos_t   *pos,        /**< 婢圭増绨担宥囩枂閿涘牊鏌熸担宥堫潡+閼充粙鍣洪敍?*/
+                      const SRP_VisFrame_t *vis_frame, /**< SRP 閻戭厼濮忛崶鎯у讲鐟欏棗瀵茶箛顐ゅ弾 */
+                      uint32_t             frame_seq,  /**< UI 鐢冪碍閸欏嚖绱濋悽銊ょ艾閺傚洤鐡ч崚閿嬫煀閸掑棝顣?*/
+                      uint8_t              sai_dma_active); /**< SAI DMA 濞叉槒绌弽鍥х箶 */
 } App_UiRendererOps_t;
 
 /* -------------------------------------------------------------------------- */
-/* 前向声明：Legacy 渲染后端的三个实现函数（定义在下方）                         */
+/* 閸撳秴鎮滄竟鐗堟閿涙瓈egacy 濞撳弶鐓嬮崥搴ｎ伂閻ㄥ嫪绗佹稉顏勭杽閻滄澘鍤遍弫甯礄鐎规矮绠熼崷銊ょ瑓閺傜櫢绱?                        */
 /* -------------------------------------------------------------------------- */
-static uint8_t s_ui_legacy_is_ready(void);   /**< 查询 App_Display 是否就绪 */
-static void    s_ui_legacy_init(void);        /**< 调用 App_Display_Init() */
+static uint8_t s_ui_legacy_is_ready(void);   /**< 閺屻儴顕?App_Display 閺勵垰鎯佺亸杈╁�?*/
+static void    s_ui_legacy_init(void);        /**< 鐠嬪啰鏁?App_Display_Init() */
 static void    s_ui_legacy_render(const Sound_Pos_t *pos,
                                   const SRP_VisFrame_t *vis_frame,
                                   uint32_t frame_seq,
-                                  uint8_t sai_dma_active); /**< 调用 App_Display_Render() */
+                                  uint8_t sai_dma_active); /**< 鐠嬪啰鏁?App_Display_Render() */
 
-/** @brief Legacy 渲染后端操作表（const，编译期确定，存入 Flash） */
+/** @brief Legacy 濞撳弶鐓嬮崥搴ｎ伂閹垮秳缍旂悰顭掔礄const閿涘瞼绱拠鎴炴埂绾喖鐣鹃敍灞界摠�?Flash�?*/
 static const App_UiRendererOps_t s_ui_renderer_legacy_ops = {
-    s_ui_legacy_is_ready,   /**< is_ready 函数指针 */
-    s_ui_legacy_init,        /**< init 函数指针 */
-    s_ui_legacy_render       /**< render 函数指针 */
+    s_ui_legacy_is_ready,   /**< is_ready 閸戣姤鏆熼幐鍥�?*/
+    s_ui_legacy_init,        /**< init 閸戣姤鏆熼幐鍥�?*/
+    s_ui_legacy_render       /**< render 閸戣姤鏆熼幐鍥�?*/
 };
 
-/** @brief 当前激活的渲染后端指针，默认指向 Legacy 后端 */
+/** @brief 瑜版挸澧犲┑鈧ú鑽ゆ畱濞撳弶鐓嬮崥搴ｎ伂閹稿洭鎷￠敍宀勭帛鐠併倖瀵氶�?Legacy 閸氬海顏?*/
 static const App_UiRendererOps_t *s_ui_renderer = &s_ui_renderer_legacy_ops;
 
-/** @brief 当前后端枚举值，用于外部查询（App_UiRenderer_GetBackend） */
+/** @brief 瑜版挸澧犻崥搴ｎ伂閺嬫矮濡囬崐纭风礉閻劋绨径鏍劥閺屻儴顕楅敍鍦損p_UiRenderer_GetBackend�?*/
 static volatile App_UiRenderBackend_t s_ui_backend = APP_UI_RENDER_BACKEND_LEGACY;
 
 static uint32_t s_clamp_u32(uint32_t v, uint32_t lo, uint32_t hi)
 {
-    if (v < lo)           /* 低于下限：直接返回下限值 */
+    if (v < lo)           /* 娴ｅ簼绨稉瀣閿涙氨娲块幒銉ㄧ箲閸ョ偘绗呴梽鎰�?*/
     {
         return lo;
     }
-    if (v > hi)           /* 高于上限：直接返回上限值 */
+    if (v > hi)           /* 妤傛ü绨稉濠囨閿涙氨娲块幒銉ㄧ箲閸ョ偘绗傞梽鎰�?*/
     {
         return hi;
     }
-    return v;             /* 在范围内：原值返回 */
+    return v;             /* 閸︺劏瀵栭崶鏉戝敶閿涙艾甯崐鑹扮箲閸?*/
 }
 
 /**
- * @brief   切换 UI 渲染后端（线程安全）
- * @details 在临界区内切换函数指针表，UI 任务下一次调用 render() 时生效。
- *          当前仅支持 LEGACY 后端，预留未来扩展（如 GPU 加速后端）。
- * @param   backend  目标后端枚举值
+ * @brief   閸掑洦宕?UI 濞撳弶鐓嬮崥搴ｎ伂閿涘牏鍤庣粙瀣暔閸忣煉�?
+ * @details 閸︺劋澶嶉悾灞藉隘閸愬懎鍨忛幑銏犲毐閺佺増瀵氶柦鍫ｃ€冮敍瀛禝 娴犺濮熸稉瀣╃濞喡ょ殶閻?render() 閺冨墎鏁撻弫鍫涒�?
+ *          瑜版挸澧犳禒鍛暜閹?LEGACY 閸氬海顏敍宀勵暕閻ｆ瑦婀弶銉﹀⒖鐏炴洩绱欐�?GPU 閸旂娀鈧喎鎮楃粩顖ょ礆閵?
+ * @param   backend  閻╊喗鐖ｉ崥搴ｎ伂閺嬫矮濡囬�?
  */
 void App_UiRenderer_SetBackend(App_UiRenderBackend_t backend)
 {
-    taskENTER_CRITICAL();  /* 临界区：保证指针切换原子性，防止 UI 任务读到半切换状态 */
+    taskENTER_CRITICAL();  /* 娑撳鏅崠鐚寸窗娣囨繆鐦夐幐鍥嫛閸掑洦宕查崢鐔风摍閹嶇礉闂冨弶�?UI 娴犺濮熺拠璇插煂閸楀﹤鍨忛幑銏㈠Ц�?*/
     switch (backend)
     {
-        case APP_UI_RENDER_BACKEND_LEGACY:  /* 切换到 Legacy 软件渲染后端 */
-        default:                            /* 未知后端也回退到 Legacy（安全保底） */
-            s_ui_renderer = &s_ui_renderer_legacy_ops;   /* 更新操作表指针 */
-            s_ui_backend  = APP_UI_RENDER_BACKEND_LEGACY; /* 更新枚举值 */
+        case APP_UI_RENDER_BACKEND_LEGACY:  /* 閸掑洦宕查崚?Legacy 鏉烆垯娆㈠〒鍙夌厠閸氬海顏?*/
+        default:                            /* 閺堫亞鐓￠崥搴ｎ伂娑旂喎娲栭柅鈧崚?Legacy閿涘牆鐣ㄩ崗銊ょ箽鎼存洩�?*/
+            s_ui_renderer = &s_ui_renderer_legacy_ops;   /* 閺囧瓨鏌婇幙宥勭稊鐞涖劍瀵氶�?*/
+            s_ui_backend  = APP_UI_RENDER_BACKEND_LEGACY; /* 閺囧瓨鏌婇弸姘閸?*/
             break;
     }
     taskEXIT_CRITICAL();
 }
 
 /**
- * @brief   读取当前 UI 渲染后端枚举值（线程安全）
- * @return  当前后端枚举值
+ * @brief   鐠囪褰囪ぐ鎾冲�?UI 濞撳弶鐓嬮崥搴ｎ伂閺嬫矮濡囬崐纭风礄缁捐法鈻肩€瑰鍙忛�?
+ * @return  瑜版挸澧犻崥搴ｎ伂閺嬫矮濡囬�?
  */
 App_UiRenderBackend_t App_UiRenderer_GetBackend(void)
 {
@@ -105,74 +105,76 @@ App_UiRenderBackend_t App_UiRenderer_GetBackend(void)
 }
 
 /* -------------------------------------------------------------------------- */
-/* Legacy 渲染后端实现（直接透传到 App_Display 模块）                           */
+/* Legacy 濞撳弶鐓嬮崥搴ｎ伂鐎圭偟骞囬敍鍫㈡纯閹恒儵鈧繋绱堕崚?App_Display 濡€虫健閿?                          */
 /* -------------------------------------------------------------------------- */
 
 /**
- * @brief   Legacy 后端 is_ready 实现
- * @return  App_Display_IsReady() 的返回值（1=已初始化完成，0=未就绪）
+ * @brief   Legacy 閸氬海顏?is_ready 鐎圭偟骞?
+ * @return  App_Display_IsReady() 閻ㄥ嫯绻戦崶鐐测偓纭风礄1=瀹告彃鍨垫慨瀣鐎瑰本鍨氶�?=閺堫亜姘ㄧ紒顏庣�?
  */
 static uint8_t s_ui_legacy_is_ready(void)
 {
-    return App_Display_IsReady();  /* 直接查询 App_Display 初始化状态 */
+    return App_Display_IsReady();  /* 閻╁瓨甯撮弻銉�?App_Display 閸掓繂顫愰崠鏍Ц�?*/
 }
 
 /**
- * @brief   Legacy 后端 init 实现
- * @details 调用 App_Display_Init() 初始化 LCD 时序、LTDC、帧缓冲区。
- *          若 LCD 已就绪则为空操作（App_Display_Init 内部幂等处理）。
+ * @brief   Legacy 閸氬海顏?init 鐎圭偟骞?
+ * @details 鐠嬪啰鏁?App_Display_Init() 閸掓繂顫愰崠?LCD 閺冭泛绨妴涓㏕DC閵嗕礁鎶氱紓鎾冲暱閸栨亽�?
+ *          �?LCD 瀹告彃姘ㄧ紒顏勫灟娑撹櫣鈹栭幙宥勭稊閿涘湏pp_Display_Init 閸愬懘鍎撮獮鍌滅搼婢跺嫮鎮婇敍澶堚偓?
  */
 static void s_ui_legacy_init(void)
 {
-    App_Display_Init();  /* 初始化显示层，包括 LCD 驱动、LTDC 配置、帧缓冲清零 */
+    App_Display_Init();  /* 閸掓繂顫愰崠鏍ㄦ▔缁€鍝勭湴閿涘苯瀵橀�?LCD 妞瑰崬濮╅妴涓㏕DC 闁板秶鐤嗛妴浣告姎缂傛挸鍟垮〒鍛存祩 */
 }
 
 /**
- * @brief   Legacy 后端 render 实现（透传参数到 App_Display_Render）
- * @param   pos           声源位置（方位角+能量），用于绘制十字光标
- * @param   vis_frame     SRP 热力图可视化快照，用于渲染背景热力图
- * @param   frame_seq     UI 帧序号，供文字刷新分频逻辑使用
- * @param   sai_dma_active  SAI DMA 是否活跃，用于显示 "无音频信号" 提示
+ * @brief   Legacy 閸氬海顏?render 鐎圭偟骞囬敍鍫モ偓蹇庣炊閸欏倹鏆熼崚?App_Display_Render�?
+ * @param   pos           婢圭増绨担宥囩枂閿涘牊鏌熸担宥堫潡+閼充粙鍣洪敍澶涚礉閻劋绨紒妯哄煑閸椾礁鐡ч崗澶嬬垼
+ * @param   vis_frame     SRP 閻戭厼濮忛崶鎯у讲鐟欏棗瀵茶箛顐ゅ弾閿涘瞼鏁ゆ禍搴㈣閺屾捁鍎楅弲顖滃劰閸旀稑娴?
+ * @param   frame_seq     UI 鐢冪碍閸欏嚖绱濇笟娑欐瀮鐎涙鍩涢弬鏉垮瀻妫版垿鈧槒绶担璺ㄦ�?
+ * @param   sai_dma_active  SAI DMA 閺勵垰鎯佸ú鏄忕┈閿涘瞼鏁ゆ禍搴㈡▔缁�?"閺冪娀鐓舵０鎴滀繆閸? 閹绘劗銇?
  */
 static void s_ui_legacy_render(const Sound_Pos_t *pos,
                                const SRP_VisFrame_t *vis_frame,
                                uint32_t frame_seq,
                                uint8_t sai_dma_active)
 {
-    /* 直接转发所有参数到 App_Display 渲染模块，无额外处理 */
-    App_CameraFrame_t camera_frame;
+    /* 閻╁瓨甯存潪顒€褰傞幍鈧張澶婂棘閺佹澘�?App_Display 濞撳弶鐓嬪Ο鈥虫健閿涘本妫ゆ０婵嗩樆婢跺嫮�?*/
+    App_CameraFrame_t camera_frame = {0};
 
-    App_Camera_GetLatestFrame(&camera_frame);
+    (void)App_Camera_UpdatePublishedFrame();
+    (void)App_Camera_AcquireLatestFrame(&camera_frame);
     App_Display_Render(pos, vis_frame, &camera_frame, frame_seq, sai_dma_active);
+    App_Camera_ReleaseFrame(&camera_frame);
 }
 
 /**
- * @brief   计算 UI 任务的渲染周期（FreeRTOS ticks）
- * @details 将目标帧率换算为 vTaskDelayUntil 的周期 ticks：
- *            period_ms = round(1000 / fps)  （四舍五入：加 fps/2 再除以 fps）
+ * @brief   鐠侊紕鐣?UI 娴犺濮熼惃鍕閺屾挸鎳嗛張鐕傜礄FreeRTOS ticks�?
+ * @details 鐏忓棛娲伴弽鍥ф姎閻滃洦宕茬粻妞捐�?vTaskDelayUntil 閻ㄥ嫬鎳嗛張?ticks�?
+ *            period_ms = round(1000 / fps)  閿涘牆娲撻懜宥勭安閸忋儻绱伴�?fps/2 閸愬秹娅庢禒?fps�?
  *            ticks = pdMS_TO_TICKS(period_ms)
  *
- *          示例：fps=20 -> period_ms=50ms -> 50 ticks (1ms/tick)
+ *          缁€杞扮伐閿涙瓲ps=20 -> period_ms=50ms -> 50 ticks (1ms/tick)
  *                fps=30 -> period_ms=33ms -> 33 ticks
  *                fps=5  -> period_ms=200ms -> 200 ticks
  *
- *          保证 ticks >= 1，防止 vTaskDelayUntil(0) 导致任务不让出 CPU。
+ *          娣囨繆鐦?ticks >= 1閿涘矂妲诲?vTaskDelayUntil(0) 鐎佃壈鍤ф禒璇插娑撳秷顔€閸?CPU�?
  *
- * @return  渲染周期，单位：FreeRTOS ticks
+ * @return  濞撳弶鐓嬮崨銊︽埂閿涘苯宕熸担宥忕窗FreeRTOS ticks
  */
 static uint32_t s_ui_period_ticks(void)
 {
-    /* 读取目标帧率并钳位，防止运行时配置被设置到范围外 */
+    /* 鐠囪褰囬惄顔界垼鐢呭芳楠炲爼鎸告担宥忕礉闂冨弶顒涙潻鎰攽閺冨爼鍘ょ純顔款潶鐠佸墽鐤嗛崚鎷屽瘱閸ユ潙�?*/
     uint32_t fps = s_clamp_u32(App_RuntimeConfig_GetUiTargetFps(), UI_FPS_MIN, UI_FPS_MAX);
 
-    /* 四舍五入换算：加 fps/2 再整除，相当于对 1000/fps 做四舍五入 */
+    /* 閸ユ稖鍨楁禍鏂垮弳閹广垻鐣婚敍姘�?fps/2 閸愬秵鏆ｉ梽銈忕礉閻╃缍嬫禍搴☆嚠 1000/fps 閸嬫艾娲撻懜宥勭安閸?*/
     uint32_t period_ms = (1000u + (fps / 2u)) / fps;
 
-    TickType_t ticks = pdMS_TO_TICKS(period_ms);  /* 毫秒转 FreeRTOS ticks */
+    TickType_t ticks = pdMS_TO_TICKS(period_ms);  /* 濮ｎ偆顫楁潪?FreeRTOS ticks */
 
-    if (ticks == 0u)    /* 极端情况保护（portTICK_PERIOD_MS > period_ms 时可能为 0） */
+    if (ticks == 0u)    /* 閺嬩胶顏幆鍛枌娣囨繃濮㈤敍鍧rtTICK_PERIOD_MS > period_ms 閺冭泛褰查懗鎴掕�?0�?*/
     {
-        ticks = 1u;     /* 至少延迟 1 个 tick，保证任务出让 CPU */
+        ticks = 1u;     /* 閼峰啿鐨鎯扮�?1 �?tick閿涘奔绻氱拠浣锋崲閸斺€冲毉�?CPU */
     }
     return (uint32_t)ticks;
 }
@@ -180,180 +182,178 @@ static uint32_t s_ui_period_ticks(void)
 #define ui_cli_poll App_UiCli_Poll
 
 /**
- * @brief   UI 显示任务
- * @details 轮询位置队列并刷新显示：取最新位置 -> 快照 SRP 可视化数据 -> 渲染输出。
+ * @brief   UI 閺勫墽銇氭禒璇插�?
+ * @details 鏉烆喛顕楁担宥囩枂闂冪喎鍨獮璺哄煕閺傜増妯夌粈鐚寸窗閸欐牗娓堕弬棰佺秴�?-> 韫囶偆鍙?SRP 閸欘垵顫嬮崠鏍ㄦ殶閹?-> 濞撳弶鐓嬫潏鎾冲毉閵?
  *
- * 关键点：
- * - 显示未就绪时按 `UI_RETRY_INIT_MS` 周期重试初始化。
- * - 每帧仅使用队列中的最后一条位置数据，避免 UI 堆积。
- * - 在临界区内复制 SRP 可视化快照，避免读写竞争。
+ * 閸忔娊鏁悙鐧哥�?
+ * - 閺勫墽銇氶張顏勬皑缂侇亝妞傞�?`UI_RETRY_INIT_MS` 閸涖劍婀￠柌宥堢槸閸掓繂顫愰崠鏍モ偓?
+ * - 濮ｅ繐鎶氭禒鍛▏閻劑妲﹂崚妞捐厬閻ㄥ嫭娓堕崥搴濈閺夆€茬秴缂冾喗鏆熼幑顕嗙礉闁灝鍘?UI 閸棛袧�?
+ * - 閸︺劋澶嶉悾灞藉隘閸愬懎顦查�?SRP 閸欘垵顫嬮崠鏍ф彥閻撗嶇礉闁灝鍘ょ拠璇插晸缁旂偘绨ら�?
  *
- * @param   pvParameters  FreeRTOS 任务参数（未使用）
+ * @param   pvParameters  FreeRTOS 娴犺濮熼崣鍌涙殶閿涘牊婀担璺ㄦ暏閿?
  */
 void UI_Display_Task(void *pvParameters)
 {
-    (void)pvParameters;  /* 任务参数未使用，消除警告 */
+    (void)pvParameters;  /* 娴犺濮熼崣鍌涙殶閺堫亙濞囬悽顭掔礉濞戝牓娅庣拃锕€�?*/
 
-    /* ---- 任务局部状态变量 ---- */
+    /* ---- 娴犺濮熺仦鈧柈銊уЦ閹礁褰夐柌?---- */
 
-    /** @brief 当次从队列取到的声源位置（可能被多次读取覆盖，取最新值） */
+    /** @brief 瑜版挻顐兼禒搴ㄦЕ閸掓褰囬崚鎵畱婢圭増绨担宥囩枂閿涘牆褰查懗鍊燁潶婢舵碍顐肩拠璇插絿鐟曞棛娲婇敍灞藉絿閺堚偓閺傛澘鈧》绱?*/
     Sound_Pos_t draw_pos = {0.0f, 0.0f, 0.0f};
 
-    /** @brief 最后一次成功从队列读到的声源位置（队列为空时复用此值继续渲染） */
+    /** @brief 閺堚偓閸氬簼绔村▎鈩冨灇閸旂喍绮犻梼鐔峰灙鐠囪鍩岄惃鍕紣濠ф劒缍呯純顕嗙礄闂冪喎鍨稉铏光敄閺冭泛顦查悽銊︻劃閸婅偐鎴风紒顓熻閺屾搫�?*/
     Sound_Pos_t last_pos = {0.0f, 0.0f, 0.0f};
 
-    /** @brief SRP 热力图可视化快照（从音频任务临界区拷贝，避免读写竞争） */
-    SRP_VisFrame_t vis_snapshot;
+    /** @brief SRP 閻戭厼濮忛崶鎯у讲鐟欏棗瀵茶箛顐ゅ弾閿涘牅绮犻棅鎶筋暥娴犺濮熸稉瀵告櫕閸栫儤瀚圭拹婵撶礉闁灝鍘ょ拠璇插晸缁旂偘绨ら�?*/
+    SRP_VisFrame_t vis_snapshot = {0};
 
-    /** @brief UI 帧序号，每渲染一帧递增，供文字刷新分频逻辑使用 */
+    /** @brief UI 鐢冪碍閸欏嚖绱濆В蹇旇閺屾挷绔寸敮褔鈧帒顤冮敍灞肩返閺傚洤鐡ч崚閿嬫煀閸掑棝顣堕柅鏄忕帆娴ｈ法�?*/
     uint32_t ui_frame_seq = 0u;
 
-    /** @brief 上次读取 g_audio_frame_seq_isr 时的值，用于检测 SAI DMA 是否仍在运行 */
+    /** @brief 娑撳﹥顐肩拠璇插�?g_audio_frame_seq_isr 閺冨墎娈戦崐纭风礉閻劋绨Λ鈧ù?SAI DMA 閺勵垰鎯佹禒宥呮躬鏉╂劘�?*/
     uint32_t last_audio_isr_seq = 0u;
 
-    /** @brief 连续多帧 SAI DMA 序号未变化的帧数（达到阈值后认为无音频输入） */
-    uint8_t audio_idle_frames = 0xFFu;  /* 初始化为最大值，触发首帧后立即归零 */
+    /** @brief 鏉╃偟鐢绘径姘�?SAI DMA 鎼村繐褰块張顏勫綁閸栨牜娈戠敮褎鏆熼敍鍫ｆ彧閸掍即妲囬崐鐓庢倵鐠併倓璐熼弮鐘荤叾妫版垼绶崗銉礆 */
+    uint8_t audio_idle_frames = 0xFFu;  /* 閸掓繂顫愰崠鏍﹁礋閺堚偓婢堆冣偓纭风礉鐟欙箑褰傛＃鏍ф姎閸氬海鐝涢崡鍐茬秺�?*/
 
-    /** @brief vTaskDelayUntil 的绝对唤醒时刻（保证帧周期稳定，不受渲染耗时影响） */
+    /** @brief vTaskDelayUntil 閻ㄥ嫮绮风€电懓鏁滈柋鎺撴閸掍紮绱欐穱婵婄槈鐢冩噯閺堢喓菙鐎规熬绱濇稉宥呭綀濞撳弶鐓嬮懓妤佹瑜板崬鎼烽�?*/
     TickType_t next_render_wake;
 
-    /** @brief 上次尝试初始化显示层的 tick 值（限制重试频率） */
+    /** @brief 娑撳﹥顐肩亸婵婄槸閸掓繂顫愰崠鏍ㄦ▔缁€鍝勭湴閻?tick 閸婄》绱欓梽鎰煑闁插秷鐦０鎴犲芳�?*/
     TickType_t last_init_try = 0u;
 
-    /** @brief 上次记录的 DMA2D 超时计数，用于变化检测（仅在 UI_DEBUG_LOG 模式打印） */
+    /** @brief 娑撳﹥顐肩拋鏉跨秿閻?DMA2D 鐡掑懏妞傜拋鈩冩殶閿涘瞼鏁ゆ禍搴″綁閸栨牗顥呭ù瀣剁礄娴犲懎婀?UI_DEBUG_LOG 濡€崇础閹垫挸宓冮敍?*/
     uint32_t last_dma2d_timeout = 0u;
 
-    /* ---- 任务启动时首次尝试初始化显示层 ---- */
-    /* 若 LCD 尚未就绪（如时序初始化未完成），先尝试初始化 */
+    /* ---- 娴犺濮熼崥顖氬З閺冨爼顩诲▎鈥崇毦鐠囨洖鍨垫慨瀣閺勫墽銇氱�?---- */
+    /* �?LCD 鐏忔碍婀亸杈╁崕閿涘牆顩ч弮璺虹碍閸掓繂顫愰崠鏍ㄦ弓鐎瑰本鍨氶敍澶涚礉閸忓牆鐨剧拠鏇炲灥婵�?*/
     if ((s_ui_renderer != NULL) && (s_ui_renderer->is_ready() == 0u))
     {
-        s_ui_renderer->init();  /* 初始化 LCD 驱动、LTDC 配置、清零帧缓冲 */
+        s_ui_renderer->init();  /* 閸掓繂顫愰崠?LCD 妞瑰崬濮╅妴涓㏕DC 闁板秶鐤嗛妴浣圭闂嗚泛鎶氱紓鎾冲暱 */
     }
-    last_init_try    = xTaskGetTickCount();  /* 记录初始化尝试时刻 */
-    next_render_wake = last_init_try;        /* 第一帧立即渲染 */
+    last_init_try    = xTaskGetTickCount();  /* 鐠佹澘缍嶉崚婵嗩潗閸栨牕鐨剧拠鏇熸�?*/
+    next_render_wake = last_init_try;        /* 缁楊兛绔寸敮褏鐝涢崡铏閺?*/
 
     /* ================================================================
-     * 任务主循环（永不退出）
+     * 娴犺濮熸稉璇叉儕閻滎垽绱欏闀愮瑝闁偓閸戠尨�?
      * ================================================================ */
     for (;;)
     {
-        uint32_t t_loop;       /* 本帧循环整体耗时计时起点 */
-        uint8_t  sai_dma_active; /* SAI DMA 活跃标志（传给渲染器显示音频状态） */
+        uint32_t t_loop;       /* 閺堫剙鎶氬顏嗗箚閺佺繝缍嬮懓妤佹鐠佲剝妞傜挧椋庡�?*/
+        uint8_t  sai_dma_active; /* SAI DMA 濞叉槒绌弽鍥х箶閿涘牅绱剁紒娆愯閺屾挸娅掗弰鍓с仛闂婃娊顣堕悩鑸碘偓渚婄�?*/
 
-        /* ---- 步骤 1：处理 CLI 输入（UART 命令行） ---- */
-        /* 每帧都轮询 CLI，保证串口命令响应延迟 <= 1 帧周期（≈50ms@20fps） */
+        /* ---- 濮濄儵顎?1閿涙艾顦╅悶?CLI 鏉堟挸鍙嗛敍鍦睞RT 閸涙垝鎶ょ悰宀嬬礆 ---- */
+        /* 濮ｅ繐鎶氶柈鍊熺枂鐠?CLI閿涘奔绻氱拠浣疯閸欙絽鎳℃禒銈呮惙鎼存柨娆㈡潻?<= 1 鐢冩噯閺堢噦绱欓埉?0ms@20fps�?*/
         ui_cli_poll();
 
-        /* ---- 步骤 2：显示初始化重试逻辑 ---- */
-        /* 若显示层未就绪（如 LCD 初始化失败），每隔 UI_RETRY_INIT_MS(1000ms) 重试一次 */
+        /* ---- 濮濄儵顎?2閿涙碍妯夌粈鍝勫灥婵瀵查柌宥堢槸闁槒绶?---- */
+        /* 閼汇儲妯夌粈鍝勭湴閺堫亜姘ㄧ紒顏庣礄�?LCD 閸掓繂顫愰崠鏍с亼鐠愩儻绱氶敍灞剧槨闂?UI_RETRY_INIT_MS(1000ms) 闁插秷鐦稉鈧�?*/
         if ((s_ui_renderer != NULL) && (s_ui_renderer->is_ready() == 0u))
         {
             TickType_t now = xTaskGetTickCount();
             if ((now - last_init_try) >= pdMS_TO_TICKS(UI_RETRY_INIT_MS))
             {
 #if UI_DEBUG_LOG
-                /* 调试模式下打印初始化失败时各模块的阶段值，辅助定位硬件问题 */
+                /* 鐠嬪啳鐦Ο鈥崇础娑撳澧﹂崡鏉垮灥婵瀵叉径杈Е閺冭泛鎮囧Ο鈥虫健閻ㄥ嫰妯佸▓闈涒偓纭风礉鏉堝懎濮€规矮缍呯涵顑挎闂傤噣�?*/
                 printf("UI: retry init (app=0x%08lX err=%lu lcd=%lu ltdc=%lu)\r\n",
-                       (unsigned long)g_display_init_stage,   /* App_Display 初始化阶段 */
-                       (unsigned long)g_display_init_error,   /* App_Display 错误码 */
-                       (unsigned long)g_lcd_init_stage,       /* LCD 驱动初始化阶段 */
-                       (unsigned long)g_ltdc_init_stage);     /* LTDC 控制器初始化阶段 */
+                       (unsigned long)g_display_init_stage,   /* App_Display 閸掓繂顫愰崠鏍▉濞?*/
+                       (unsigned long)g_display_init_error,   /* App_Display 闁挎瑨顕ら惍?*/
+                       (unsigned long)g_lcd_init_stage,       /* LCD 妞瑰崬濮╅崚婵嗩潗閸栨牠妯佸�?*/
+                       (unsigned long)g_ltdc_init_stage);     /* LTDC 閹貉冨煑閸ｃ劌鍨垫慨瀣闂冭埖�?*/
 #endif
-                s_ui_renderer->init();   /* 重试初始化 */
-                last_init_try = now;     /* 更新重试时刻 */
+                s_ui_renderer->init();   /* 闁插秷鐦崚婵嗩潗閸?*/
+                last_init_try = now;     /* 閺囧瓨鏌婇柌宥堢槸閺冭泛�?*/
             }
-            taskYIELD();  /* 出让 CPU，不要空转等待，让音频任务有机会运行 */
-            continue;     /* 回到循环顶部重新判断 */
+            taskYIELD();  /* 閸戦缚顔�?CPU閿涘奔绗夌憰浣衡敄鏉烆剛鐡戝鍜冪礉鐠佲晠鐓舵０鎴滄崲閸斺剝婀侀張杞扮窗鏉╂劘顢?*/
+            continue;     /* 閸ョ偛鍩屽顏嗗箚妞ゅ爼鍎撮柌宥嗘煀閸掋倖鏌?*/
         }
 
-        /* ---- 步骤 3：性能统计递增与速率打印 ---- */
-        App_Perf_CountUiLoop();         /* UI 循环计数 +1（用于 perf rate 速率计算） */
-        App_Perf_MaybePrintRates();     /* 若达到打印周期（1s），输出速率统计 */
-        t_loop = App_Perf_BeginCycles(); /* 记录本帧循环开始时刻 */
+        /* ---- 濮濄儵顎?3閿涙碍鈧嗗厴缂佺喕顓搁柅鎺戭杻娑撳酣鈧喓宸奸幍鎾冲祪 ---- */
+        App_Perf_CountUiLoop();         /* UI 瀵邦亞骞嗙拋鈩冩�?+1閿涘牏鏁ゆ禍?perf rate 闁喓宸肩拋锛勭暬閿?*/
+        App_Perf_MaybePrintRates();     /* 閼汇儴鎻崚鐗堝ⅵ閸楁澘鎳嗛張鐕傜礄1s閿涘绱濇潏鎾冲毉闁喓宸肩紒鐔活吀 */
+        t_loop = App_Perf_BeginCycles(); /* 鐠佹澘缍嶉張顒€鎶氬顏嗗箚瀵偓婵妞傞�?*/
 
-        /* ---- 步骤 4：消耗位置队列，取最新声源位置 ---- */
-        /* 使用 timeout=0（非阻塞），若无新数据则复用 last_pos 继续渲染（保持帧率稳定） */
+        /* ---- 濮濄儵顎?4閿涙碍绉烽懓妞剧秴缂冾噣妲﹂崚妤嬬礉閸欐牗娓堕弬鏉匡紣濠ф劒缍呯純?---- */
+        /* 娴ｈ法鏁?timeout=0閿涘牓娼梼璇差敚閿涘绱濋懟銉︽￥閺傜増鏆熼幑顔煎灟婢跺秶�?last_pos 缂佈呯敾濞撳弶鐓嬮敍鍫滅箽閹镐礁鎶氶悳鍥┣旂€规熬绱?*/
         if (xQueueReceive(xPositionQueue, &draw_pos, 0u) == pdPASS)
         {
-            last_pos = draw_pos;           /* 保存最新位置 */
-            g_ui_queue_rx_count++;         /* 统计成功接收次数 */
+            last_pos = draw_pos;           /* 娣囨繂鐡ㄩ張鈧弬棰佺秴�?*/
+            g_ui_queue_rx_count++;         /* 缂佺喕顓搁幋鎰閹恒儲鏁瑰▎鈩冩殶 */
 
-            /* 若队列中还有更新的位置（极少情况），继续消耗直到清空，取最后一个 */
+            /* 閼汇儵妲﹂崚妞捐厬鏉╂ɑ婀侀弴瀛樻煀閻ㄥ嫪缍呯純顕嗙礄閺嬩礁鐨幆鍛枌閿涘绱濈紒褏鐢诲☉鍫ｂ偓妤冩纯閸掔増绔荤粚鐚寸礉閸欐牗娓堕崥搴濈娑?*/
             while (xQueueReceive(xPositionQueue, &draw_pos, 0u) == pdPASS)
             {
-                last_pos = draw_pos;       /* 持续覆盖，保证取到最新的 */
+                last_pos = draw_pos;       /* 閹镐胶鐢荤憰鍡欐磰閿涘奔绻氱拠浣稿絿閸掔増娓堕弬鎵�?*/
                 g_ui_queue_rx_count++;
             }
         }
         else
         {
-            /* 队列为空（音频任务尚未产生新结果），复用 last_pos 不更新 */
-            g_ui_queue_timeout_count++;  /* 统计无新数据帧数（正常现象：当 UI FPS > 音频帧率 / decim 时） */
+            /* 闂冪喎鍨稉铏光敄閿涘牓鐓舵０鎴滄崲閸斺€崇毣閺堫亙楠囬悽鐔告煀缂佹挻鐏夐敍澶涚礉婢跺秶�?last_pos 娑撳秵娲块弬?*/
+            g_ui_queue_timeout_count++;  /* 缂佺喕顓搁弮鐘虫煀閺佺増宓佺敮褎鏆熼敍鍫燁劀鐢摜骞囩挒鈽呯窗瑜?UI FPS > 闂婃娊顣剁敮褏宸?/ decim 閺冭绱?*/
         }
 
-        ui_frame_seq++;  /* 递增 UI 帧序号（传给渲染器用于分频刷新文字等元素） */
+        ui_frame_seq++;  /* 闁帒顤?UI 鐢冪碍閸欏嚖绱欐导鐘电舶濞撳弶鐓嬮崳銊ф暏娴滃骸鍨庢０鎴濆煕閺傜増鏋冪€涙鐡戦崗鍐�?*/
 
-        /* ---- 步骤 5：检测 SAI DMA 活跃性 ---- */
-        /* 通过监测 g_audio_frame_seq_isr 是否有变化来判断 SAI DMA 是否在运行 */
+        /* ---- 濮濄儵顎?5閿涙碍顥呭�?SAI DMA 濞叉槒绌幀?---- */
+        /* 闁俺绻冮惄鎴炵�?g_audio_frame_seq_isr 閺勵垰鎯侀張澶婂綁閸栨牗娼甸崚銈嗘�?SAI DMA 閺勵垰鎯侀崷銊ㄧ箥�?*/
         {
-            uint32_t audio_seq = g_audio_frame_seq_isr;  /* 读取 ISR 帧序号（volatile） */
-            if (audio_seq != last_audio_isr_seq)          /* 序号有变化：DMA 仍在工作 */
+            uint32_t audio_seq = g_audio_frame_seq_isr;  /* 鐠囪褰?ISR 鐢冪碍閸欏嚖绱檝olatile�?*/
+            if (audio_seq != last_audio_isr_seq)          /* 鎼村繐褰块張澶婂綁閸栨牭绱癉MA 娴犲秴婀銉ょ�?*/
             {
-                last_audio_isr_seq = audio_seq;  /* 更新基准值 */
-                audio_idle_frames  = 0u;          /* 重置空闲计数（表示 DMA 活跃） */
+                last_audio_isr_seq = audio_seq;  /* 閺囧瓨鏌婇崺鍝勫櫙閸?*/
+                audio_idle_frames  = 0u;          /* 闁插秶鐤嗙粚娲＝鐠佲剝鏆熼敍鍫ｃ€冪粈?DMA 濞叉槒绌敍?*/
             }
-            else if (audio_idle_frames < 0xFFu)   /* 序号未变：DMA 可能停止，累积空闲帧数 */
+            else if (audio_idle_frames < 0xFFu)   /* 鎼村繐褰块張顏勫綁閿涙MA 閸欘垵鍏橀崑婊勵剾閿涘瞼鐤粔顖溾敄闂傛彃鎶氶�?*/
             {
-                audio_idle_frames++;  /* 饱和计数，不溢出 */
+                audio_idle_frames++;  /* 妤楀崬鎷扮拋鈩冩殶閿涘奔绗夊┃銏犲毉 */
             }
-            /* 若连续空闲帧数 <= 阈值，认为 SAI DMA 活跃；超过阈值认为无音频输入 */
+            /* 閼汇儴绻涚紒顓犫敄闂傛彃鎶氶�?<= 闂冨牆鈧》绱濈拋銈勮�?SAI DMA 濞叉槒绌敍娑滅Т鏉╁洭妲囬崐鑹邦吇娑撶儤妫ら棅鎶筋暥鏉堟挸鍙?*/
             sai_dma_active = (audio_idle_frames <= APP_DISPLAY_SAI_ACTIVE_HOLD_FRAMES) ? 1u : 0u;
         }
 
-        /* ---- 步骤 6：在临界区内复制 SRP 可视化快照 ---- */
-        /* SRP 可视化数据（热力图数据）由音频任务写入，UI 任务读取，存在竞争。
-         * 使用临界区保护复制操作，防止读到中间状态（半拷贝的数据）。
-         * 复制后快照与音频任务解耦，渲染期间不再需要持有临界区。 */
+        /* ---- 濮濄儵顎?6閿涙艾婀稉瀵告櫕閸栧搫鍞存径宥呭煑 SRP 閸欘垵顫嬮崠鏍ф彥�?---- */
+        /* SRP 閸欘垵顫嬮崠鏍ㄦ殶閹诡噯绱欓悜顓炲閸ョ偓鏆熼幑顕嗙礆閻㈤亶鐓舵０鎴滄崲閸斺€冲晸閸忋儻绱漊I 娴犺濮熺拠璇插絿閿涘苯鐡ㄩ崷銊х彽娴滃�?
+         * 娴ｈ法鏁ゆ稉瀵告櫕閸栬桨绻氶幎銈咁槻閸掕埖鎼锋担婊愮礉闂冨弶顒涚拠璇插煂娑擃參妫块悩鑸碘偓渚婄礄閸楀﹥瀚圭拹婵堟畱閺佺増宓侀敍澶堚偓?
+         * 婢跺秴鍩楅崥搴℃彥閻撗傜瑢闂婃娊顣舵禒璇插鐟欙綀鈧讣绱濆〒鍙夌厠閺堢喖妫挎稉宥呭晙闂団偓鐟曚焦瀵旈張澶夊閻ｅ苯灏妴?*/
         {
             uint32_t t_sec = App_Perf_BeginCycles();
-            taskENTER_CRITICAL();                         /* 禁止任务切换和中断 */
-            AI_SRP_CopyVisualizationFrame(&vis_snapshot); /* 快速内存拷贝 */
-            taskEXIT_CRITICAL();                          /* 恢复调度 */
+            (void)AI_SRP_GetLatestVisualizationFrame(&vis_snapshot);
             App_Perf_EndCycles(APP_PERF_SEC_UI_SNAPSHOT, t_sec);
         }
 
-        /* ---- 步骤 7：调用渲染后端执行一帧渲染 ---- */
-        /* 渲染流程（在 App_Display_Render 内部）：
-         *   归一化热力图 -> colormap 映射 -> 双线性/最近邻插值 -> 平滑 ->
-         *   绘制十字光标 -> 绘制坐标轴 -> 覆盖文字 -> DMA2D blit 到 LCD */
+        /* ---- 濮濄儵顎?7閿涙俺鐨熼悽銊﹁閺屾挸鎮楃粩顖涘⒔鐞涘奔绔寸敮褎瑕嗛弻?---- */
+        /* 濞撳弶鐓嬪ù浣衡柤閿涘牆婀?App_Display_Render 閸愬懘鍎撮敍澶涚�?
+         *   瑜版帊绔撮崠鏍劰閸旀稑娴?-> colormap 閺勭姴鐨?-> 閸欏瞼鍤庨幀?閺堚偓鏉╂垿鍋﹂幓鎺戔偓?-> 楠炶櫕绮?->
+         *   缂佹ê鍩楅崡浣哥摟閸忓鐖?-> 缂佹ê鍩楅崸鎰垼�?-> 鐟曞棛娲婇弬鍥х摟 -> DMA2D blit �?LCD */
         {
             uint32_t t_sec = App_Perf_BeginCycles();
-            s_ui_renderer->render(&last_pos,       /* 声源位置 */
-                                  &vis_snapshot,   /* SRP 热力图快照 */
-                                  ui_frame_seq,    /* 帧序号（文字分频用） */
-                                  sai_dma_active); /* SAI DMA 状态 */
+            s_ui_renderer->render(&last_pos,       /* 婢圭増绨担宥囩�?*/
+                                  &vis_snapshot,   /* SRP 閻戭厼濮忛崶鎯ф彥�?*/
+                                  ui_frame_seq,    /* 鐢冪碍閸欏嚖绱欓弬鍥х摟閸掑棝顣堕悽顭掔�?*/
+                                  sai_dma_active); /* SAI DMA 閻樿埖鈧?*/
             App_Perf_EndCycles(APP_PERF_SEC_UI_RENDER, t_sec);
         }
-        g_ui_render_count++;  /* 渲染帧计数 +1（可通过调试器观察 UI 实际运行帧率） */
+        g_ui_render_count++;  /* 濞撳弶鐓嬬敮褑顓搁弫?+1閿涘牆褰查柅姘崇箖鐠嬪啳鐦崳銊潎�?UI 鐎圭偤妾潻鎰攽鐢呭芳閿?*/
 
-        /* ---- 步骤 8：DMA2D 超时变化检测（可选调试日志） ---- */
-        if (g_ltdc_dma2d_timeout_count != last_dma2d_timeout)  /* 超时计数有增加 */
+        /* ---- 濮濄儵顎?8閿涙MA2D 鐡掑懏妞傞崣妯哄濡偓濞村绱欓崣顖炩偓澶庣殶鐠囨洘妫╄箛妤嬬�?---- */
+        if (g_ltdc_dma2d_timeout_count != last_dma2d_timeout)  /* 鐡掑懏妞傜拋鈩冩殶閺堝顤冮�?*/
         {
 #if UI_DEBUG_LOG
-            /* 打印超时信息，帮助诊断 DMA2D 硬件或时序问题 */
+            /* 閹垫挸宓冪搾鍛娣団剝浼呴敍灞藉簻閸斺晞鐦栭弬?DMA2D 绾兛娆㈤幋鏍ㄦ鎼村繘妫舵�?*/
             printf("UI: DMA2D timeout=%lu panel=0x%04X\r\n",
-                   (unsigned long)g_ltdc_dma2d_timeout_count,  /* 最新超时计数 */
-                   (unsigned int)g_ltdc_panel_id);              /* LCD 面板 ID */
+                   (unsigned long)g_ltdc_dma2d_timeout_count,  /* 閺堚偓閺傛媽绉撮弮鎯邦吀�?*/
+                   (unsigned int)g_ltdc_panel_id);              /* LCD 闂堛垺婢?ID */
 #endif
-            last_dma2d_timeout = g_ltdc_dma2d_timeout_count;  /* 更新基准值 */
+            last_dma2d_timeout = g_ltdc_dma2d_timeout_count;  /* 閺囧瓨鏌婇崺鍝勫櫙閸?*/
         }
 
-        /* ---- 步骤 9：结束本帧计时并等待下一帧唤醒时刻 ---- */
-        App_Perf_EndCycles(APP_PERF_SEC_UI_LOOP, t_loop);  /* 记录本帧总耗时 */
+        /* ---- 濮濄儵顎?9閿涙氨绮ㄩ弶鐔告拱鐢嗩吀閺冭泛鑻熺粵澶婄窡娑撳绔寸敮褍鏁滈柋鎺撴�?---- */
+        App_Perf_EndCycles(APP_PERF_SEC_UI_LOOP, t_loop);  /* 鐠佹澘缍嶉張顒€鎶氶幀鏄忊偓妤佹 */
 
-        /* vTaskDelayUntil：绝对时间延迟，自动补偿渲染耗时，保证帧周期恒定。
-         * 若渲染时间超过一个帧周期，next_render_wake 会被推进以避免负延迟。
-         * 相比 vTaskDelay（相对延迟），可有效防止帧率随负载波动而漂移。 */
+        /* vTaskDelayUntil閿涙氨绮风€佃妞傞梻鏉戞鏉╃噦绱濋懛顏勫З鐞涖儱浼╁〒鍙夌厠閼版妞傞敍灞肩箽鐠囦礁鎶氶崨銊︽埂閹帒鐣鹃妴?
+         * 閼汇儲瑕嗛弻鎾存闂傜绉存潻鍥︾娑擃亜鎶氶崨銊︽埂閿涘ext_render_wake 娴兼俺顫﹂幒銊ㄧ箻娴犮儵浼╅崗宥堢瀵ゆ儼绻滈妴?
+         * 閻╁憡鐦?vTaskDelay閿涘牏娴夌€电懓娆㈡潻鐕傜礆閿涘苯褰查張澶嬫櫏闂冨弶顒涚敮褏宸奸梾蹇氱鏉炶姤灏濋崝銊ㄢ偓灞剧磽缁夋眹鈧?*/
         vTaskDelayUntil(&next_render_wake, (TickType_t)s_ui_period_ticks());
     }
 }
