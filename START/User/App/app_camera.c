@@ -1,47 +1,84 @@
 #include "app_camera.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 #include "app_user_config.h"
 #include "camera_ov2640.h"
 #include "main.h"
+#include "mpu.h"
 
 #include <stdio.h>
 #include <string.h>
 
-#define APP_CAMERA_FB0_ADDR             0xC0177000u
-#define APP_CAMERA_FB1_ADDR             0xC019C800u
-#define APP_CAMERA_PUB0_ADDR            0xC01C2000u
+#define APP_CAMERA_FB0_ADDR             0xC0400000u
+#define APP_CAMERA_FB1_ADDR             (APP_CAMERA_FB0_ADDR + APP_CAMERA_FRAME_BYTES)
+#define APP_CAMERA_PUB_COUNT            4u
+#define APP_CAMERA_PUB0_ADDR            0xC0500000u
 #define APP_CAMERA_PUB1_ADDR            (APP_CAMERA_PUB0_ADDR + APP_CAMERA_FRAME_BYTES)
+#define APP_CAMERA_PUB2_ADDR            (APP_CAMERA_PUB1_ADDR + APP_CAMERA_FRAME_BYTES)
+#define APP_CAMERA_PUB3_ADDR            (APP_CAMERA_PUB2_ADDR + APP_CAMERA_FRAME_BYTES)
 #define APP_CAMERA_FRAME_BYTES          (APP_CAMERA_PREVIEW_W * APP_CAMERA_PREVIEW_H * 2u)
+#define APP_CAMERA_FRAME_PIXELS         (APP_CAMERA_PREVIEW_W * APP_CAMERA_PREVIEW_H)
 #define APP_CAMERA_DMA_FRAME_WORDS      (APP_CAMERA_FRAME_BYTES / 4u)
 #define APP_CAMERA_DMA_TOTAL_WORDS      (APP_CAMERA_DMA_FRAME_WORDS * 2u)
-#define APP_CAMERA_VIDEO_WINDOW_LIMIT   0xC0400000u
+#define APP_CAMERA_DMA_LINE_WORDS       (APP_CAMERA_PREVIEW_W / 2u)
+#define APP_CAMERA_LINE_BYTES           (APP_CAMERA_PREVIEW_W * 2u)
+#define APP_CAMERA_RAW_WINDOW_LIMIT     0xC0500000u
+#define APP_CAMERA_SDRAM_LIMIT          0xC2000000u
+#define APP_CAMERA_SERVICE_TASK_STACK_WORDS  640u
+#define APP_CAMERA_SERVICE_TASK_PRIO         (APP_AUDIO_TASK_PRIO + 1u)
+#define APP_CAMERA_SERVICE_WAKE_MS           50u
 
 #if ((APP_CAMERA_ENABLE != 0u) && ((APP_CAMERA_FRAME_BYTES % 4u) != 0u))
 #error "Camera frame buffer size must be aligned to 32-bit DMA transfers"
+#endif
+
+#if ((APP_CAMERA_ENABLE != 0u) && ((APP_CAMERA_PREVIEW_W % 2u) != 0u))
+#error "Camera preview width must be even for line DMA packing"
 #endif
 
 #if ((APP_CAMERA_ENABLE != 0u) && ((APP_CAMERA_FB1_ADDR - APP_CAMERA_FB0_ADDR) != APP_CAMERA_FRAME_BYTES))
 #error "Camera framebuffer addresses must match the configured frame size"
 #endif
 
-#if ((APP_CAMERA_ENABLE != 0u) && ((APP_CAMERA_PUB1_ADDR + APP_CAMERA_FRAME_BYTES) > APP_CAMERA_VIDEO_WINDOW_LIMIT))
-#error "Camera buffers must stay inside the non-cacheable SDRAM window"
+#if ((APP_CAMERA_ENABLE != 0u) && ((APP_CAMERA_FB1_ADDR + APP_CAMERA_FRAME_BYTES) > APP_CAMERA_RAW_WINDOW_LIMIT))
+#error "Camera raw buffers must stay inside the dedicated non-cacheable SDRAM window"
+#endif
+
+#if ((APP_CAMERA_ENABLE != 0u) && ((APP_CAMERA_PUB3_ADDR + APP_CAMERA_FRAME_BYTES) > APP_CAMERA_SDRAM_LIMIT))
+#error "Camera published buffers must stay inside SDRAM"
 #endif
 
 #if (APP_CAMERA_ENABLE != 0u)
 static DCMI_HandleTypeDef s_hdcmi;
 static DMA_HandleTypeDef s_hdma_dcmi;
+static TaskHandle_t s_camera_service_task_handle = NULL;
 
 static volatile uint8_t s_camera_initialized = 0u;
 static volatile uint8_t s_camera_streaming = 0u;
 static volatile uint8_t s_camera_raw_valid = 0u;
 static volatile uint8_t s_camera_frame_valid = 0u;
 static volatile uint8_t s_camera_latest_index = 0u;
+static volatile uint8_t s_camera_pending_index = 0u;
+static volatile uint8_t s_camera_pending_valid = 0u;
+static volatile uint8_t s_camera_dma_done_index = 0u;
+static volatile uint8_t s_camera_dma_done_valid = 0u;
+static volatile uint8_t s_camera_frame_boundary_valid = 0u;
+static volatile uint8_t s_camera_capture_index = 0u;
+static volatile uint8_t s_camera_capture_restart_index = 0u;
+static volatile uint8_t s_camera_capture_restart_pending = 0u;
+static volatile uint8_t s_camera_frame_sync_locked = 0u;
+static volatile uint8_t s_camera_frame_end_pending = 0u;
+static volatile uint8_t s_camera_line_overflow = 0u;
 static volatile uint8_t s_camera_pub_index = 0u;
 static volatile uint8_t s_camera_pending_restart = 0u;
 static volatile uint8_t s_camera_msp_error = 0u;
-static volatile uint8_t s_camera_pub_refcount[2] = {0u, 0u};
+static volatile uint8_t s_camera_pub_refcount[APP_CAMERA_PUB_COUNT] = {0u};
+static volatile uint8_t s_camera_wait_vsync_start = 0u;
+static volatile uint16_t s_camera_line_index = 0u;
 static volatile uint32_t s_camera_frame_seq = 0u;
+static volatile uint32_t s_camera_pending_seq = 0u;
 static volatile uint32_t s_camera_published_seq = 0u;
 static volatile uint32_t s_camera_error_code = 0u;
 static volatile uint32_t s_camera_dma_error_code = 0u;
@@ -50,17 +87,76 @@ static volatile uint32_t s_camera_restart_fail_count = 0u;
 static volatile uint32_t s_camera_init_attempt_count = 0u;
 static volatile uint32_t s_camera_publish_count = 0u;
 static volatile uint32_t s_camera_publish_drop_count = 0u;
+static volatile uint32_t s_camera_dma_done_count = 0u;
+static volatile uint32_t s_camera_frame_event_count = 0u;
+static volatile uint32_t s_camera_arm_count = 0u;
+static volatile uint32_t s_camera_arm_fail_count = 0u;
 static volatile uint8_t s_camera_init_stage = APP_CAMERA_INIT_STAGE_IDLE;
+static volatile uint8_t s_camera_freeze_publish = 0u;
 
-static uint16_t *const s_camera_buffers[2] = {
-    (uint16_t *)APP_CAMERA_FB0_ADDR,
-    (uint16_t *)APP_CAMERA_FB1_ADDR
-};
-
-static uint16_t *const s_camera_pub_buffers[2] = {
+static uint16_t *const s_camera_buffers[APP_CAMERA_PUB_COUNT] = {
     (uint16_t *)APP_CAMERA_PUB0_ADDR,
-    (uint16_t *)APP_CAMERA_PUB1_ADDR
+    (uint16_t *)APP_CAMERA_PUB1_ADDR,
+    (uint16_t *)APP_CAMERA_PUB2_ADDR,
+    (uint16_t *)APP_CAMERA_PUB3_ADDR
 };
+
+static uint16_t *const s_camera_pub_buffers[APP_CAMERA_PUB_COUNT] = {
+    (uint16_t *)APP_CAMERA_PUB0_ADDR,
+    (uint16_t *)APP_CAMERA_PUB1_ADDR,
+    (uint16_t *)APP_CAMERA_PUB2_ADDR,
+    (uint16_t *)APP_CAMERA_PUB3_ADDR
+};
+
+__SECTION_DMA_BUFFER static uint32_t s_camera_line_buffers[2][APP_CAMERA_DMA_LINE_WORDS];
+
+static uint32_t s_camera_sample_hash(const uint16_t *pixels)
+{
+    static const uint32_t k_sample_offsets[] = {
+        0u,
+        ((uint32_t)APP_CAMERA_PREVIEW_W / 4u),
+        ((uint32_t)APP_CAMERA_PREVIEW_W / 2u),
+        ((uint32_t)APP_CAMERA_PREVIEW_W * 3u) / 4u,
+        (uint32_t)APP_CAMERA_PREVIEW_W - 1u,
+        ((uint32_t)APP_CAMERA_PREVIEW_H / 4u) * (uint32_t)APP_CAMERA_PREVIEW_W,
+        ((uint32_t)APP_CAMERA_PREVIEW_H / 4u) * (uint32_t)APP_CAMERA_PREVIEW_W + ((uint32_t)APP_CAMERA_PREVIEW_W / 2u),
+        ((uint32_t)APP_CAMERA_PREVIEW_H / 2u) * (uint32_t)APP_CAMERA_PREVIEW_W,
+        ((uint32_t)APP_CAMERA_PREVIEW_H / 2u) * (uint32_t)APP_CAMERA_PREVIEW_W + ((uint32_t)APP_CAMERA_PREVIEW_W / 2u),
+        ((uint32_t)APP_CAMERA_PREVIEW_H / 2u) * (uint32_t)APP_CAMERA_PREVIEW_W + (uint32_t)APP_CAMERA_PREVIEW_W - 1u,
+        (((uint32_t)APP_CAMERA_PREVIEW_H * 3u) / 4u) * (uint32_t)APP_CAMERA_PREVIEW_W,
+        (((uint32_t)APP_CAMERA_PREVIEW_H * 3u) / 4u) * (uint32_t)APP_CAMERA_PREVIEW_W + ((uint32_t)APP_CAMERA_PREVIEW_W / 2u),
+        (uint32_t)APP_CAMERA_FRAME_PIXELS - (uint32_t)APP_CAMERA_PREVIEW_W,
+        (uint32_t)APP_CAMERA_FRAME_PIXELS - ((uint32_t)APP_CAMERA_PREVIEW_W / 2u) - 1u,
+        (uint32_t)APP_CAMERA_FRAME_PIXELS - 1u
+    };
+    uint32_t hash = 2166136261u;
+    uint32_t i;
+
+    if (pixels == NULL)
+    {
+        return 0u;
+    }
+
+    for (i = 0u; i < (sizeof(k_sample_offsets) / sizeof(k_sample_offsets[0])); i++)
+    {
+        hash ^= (uint32_t)pixels[k_sample_offsets[i]];
+        hash *= 16777619u;
+    }
+
+    return hash;
+}
+
+static void s_camera_service_task(void *argument);
+static void s_camera_notify_service_from_isr(void);
+static void s_camera_on_dma_bank_complete(uint8_t completed_index);
+static void s_camera_on_frame_boundary_isr(void);
+static void s_camera_try_queue_frame_from_isr(uint8_t completed_index);
+static void s_camera_complete_frame_from_isr(void);
+static void s_camera_drop_partial_frame_from_isr(void);
+static uint8_t s_camera_select_capture_index_from_isr(uint8_t completed_index, uint8_t *next_index);
+static void s_camera_dma_m0_complete_callback(DMA_HandleTypeDef *hdma);
+static void s_camera_dma_m1_complete_callback(DMA_HandleTypeDef *hdma);
+static void s_camera_dma_error_callback(DMA_HandleTypeDef *hdma);
 
 static void s_camera_setup_handle(void)
 {
@@ -110,6 +206,20 @@ static void s_camera_reset_capture_state(uint8_t reset_seq)
 {
     s_camera_raw_valid = 0u;
     s_camera_latest_index = 0u;
+    s_camera_pending_index = 0u;
+    s_camera_pending_valid = 0u;
+    s_camera_dma_done_index = 0u;
+    s_camera_dma_done_valid = 0u;
+    s_camera_frame_boundary_valid = 0u;
+    s_camera_capture_index = 0u;
+    s_camera_capture_restart_index = 0u;
+    s_camera_capture_restart_pending = 0u;
+    s_camera_frame_sync_locked = 0u;
+    s_camera_frame_end_pending = 0u;
+    s_camera_line_overflow = 0u;
+    s_camera_wait_vsync_start = 0u;
+    s_camera_line_index = 0u;
+    s_camera_pending_seq = 0u;
     s_camera_error_code = HAL_DCMI_ERROR_NONE;
     s_camera_dma_error_code = HAL_DMA_ERROR_NONE;
     if (reset_seq != 0u)
@@ -120,17 +230,25 @@ static void s_camera_reset_capture_state(uint8_t reset_seq)
 
 static void s_camera_reset_published_state(uint8_t clear_counters)
 {
+    uint8_t i;
+
     s_camera_frame_valid = 0u;
     s_camera_pub_index = 0u;
     s_camera_published_seq = 0u;
-    s_camera_pub_refcount[0] = 0u;
-    s_camera_pub_refcount[1] = 0u;
+    for (i = 0u; i < APP_CAMERA_PUB_COUNT; i++)
+    {
+        s_camera_pub_refcount[i] = 0u;
+    }
     if (clear_counters != 0u)
     {
         s_camera_restart_count = 0u;
         s_camera_restart_fail_count = 0u;
         s_camera_publish_count = 0u;
         s_camera_publish_drop_count = 0u;
+        s_camera_dma_done_count = 0u;
+        s_camera_frame_event_count = 0u;
+        s_camera_arm_count = 0u;
+        s_camera_arm_fail_count = 0u;
     }
 }
 
@@ -175,11 +293,25 @@ static HAL_StatusTypeDef s_camera_start_stream(uint8_t reset_seq, uint8_t announ
 
     __HAL_UNLOCK(&s_hdcmi);
     __HAL_UNLOCK(&s_hdma_dcmi);
-    if (HAL_DCMI_Start_DMA(&s_hdcmi,
-                           DCMI_MODE_CONTINUOUS,
-                           APP_CAMERA_FB0_ADDR,
-                           APP_CAMERA_DMA_TOTAL_WORDS) != HAL_OK)
+    s_camera_arm_count++;
+    __HAL_DCMI_ENABLE(&s_hdcmi);
+    s_hdcmi.State = HAL_DCMI_STATE_BUSY;
+    s_hdcmi.ErrorCode = HAL_DCMI_ERROR_NONE;
+    s_hdcmi.Instance->CR &= ~(DCMI_CR_CM);
+    s_hdcmi.Instance->CR |= DCMI_MODE_CONTINUOUS;
+
+    s_hdma_dcmi.XferCpltCallback = s_camera_dma_m0_complete_callback;
+    s_hdma_dcmi.XferM1CpltCallback = s_camera_dma_m1_complete_callback;
+    s_hdma_dcmi.XferErrorCallback = s_camera_dma_error_callback;
+    s_hdma_dcmi.XferAbortCallback = NULL;
+
+    if (HAL_DMAEx_MultiBufferStart_IT(&s_hdma_dcmi,
+                                      (uint32_t)&s_hdcmi.Instance->DR,
+                                      (uint32_t)&s_camera_line_buffers[0][0],
+                                      (uint32_t)&s_camera_line_buffers[1][0],
+                                      APP_CAMERA_DMA_LINE_WORDS) != HAL_OK)
     {
+        s_camera_arm_fail_count++;
         s_camera_streaming = 0u;
         s_camera_error_code = HAL_DCMI_GetError(&s_hdcmi);
         s_camera_dma_error_code = s_hdma_dcmi.ErrorCode;
@@ -189,13 +321,15 @@ static HAL_StatusTypeDef s_camera_start_stream(uint8_t reset_seq, uint8_t announ
     __HAL_DMA_DISABLE_IT(&s_hdma_dcmi, DMA_IT_DME);
     __HAL_DMA_DISABLE_IT(&s_hdma_dcmi, DMA_IT_FE);
     s_camera_disable_nonframe_interrupts();
-    __HAL_DCMI_ENABLE_IT(&s_hdcmi, DCMI_IT_FRAME);
-    s_camera_streaming = 1u;
+    s_camera_capture_index = 0u;
+    s_camera_streaming = 0u;
+    s_camera_wait_vsync_start = 1u;
+    __HAL_DCMI_ENABLE_IT(&s_hdcmi, DCMI_IT_VSYNC);
 
     if (announce_start != 0u)
     {
-        printf("CAM: stream started words=%lu fb0=0x%08lX fb1=0x%08lX\r\n",
-               (unsigned long)APP_CAMERA_DMA_TOTAL_WORDS,
+        printf("CAM: stream started line_words=%lu fb0=0x%08lX fb1=0x%08lX\r\n",
+               (unsigned long)APP_CAMERA_DMA_LINE_WORDS,
                (unsigned long)APP_CAMERA_FB0_ADDR,
                (unsigned long)APP_CAMERA_FB1_ADDR);
     }
@@ -203,12 +337,235 @@ static HAL_StatusTypeDef s_camera_start_stream(uint8_t reset_seq, uint8_t announ
     return HAL_OK;
 }
 
-static void s_camera_copy_frame(uint8_t dst_index, uint8_t src_index)
+static void s_camera_notify_service_from_isr(void)
 {
-    memcpy(s_camera_pub_buffers[dst_index & 1u],
-           s_camera_buffers[src_index & 1u],
-           (size_t)APP_CAMERA_FRAME_BYTES);
+    BaseType_t task_woken = pdFALSE;
+
+    if (s_camera_service_task_handle == NULL)
+    {
+        return;
+    }
+
+    vTaskNotifyGiveFromISR(s_camera_service_task_handle, &task_woken);
+    portYIELD_FROM_ISR(task_woken);
 }
+
+static void s_camera_try_queue_frame_from_isr(uint8_t completed_index)
+{
+    uint8_t next_index = completed_index;
+
+    if ((s_camera_pending_valid != 0u) &&
+        (s_camera_pending_seq != s_camera_published_seq))
+    {
+        s_camera_publish_drop_count++;
+    }
+
+    s_camera_latest_index = (uint8_t)(completed_index % APP_CAMERA_PUB_COUNT);
+    s_camera_frame_seq++;
+    s_camera_raw_valid = 1u;
+    s_camera_pending_index = s_camera_latest_index;
+    s_camera_pending_seq = s_camera_frame_seq;
+    s_camera_pending_valid = 1u;
+
+    if (s_camera_select_capture_index_from_isr(s_camera_latest_index, &next_index) != 0u)
+    {
+        s_camera_capture_index = next_index;
+    }
+    else
+    {
+        s_camera_publish_drop_count++;
+        s_camera_frame_sync_locked = 0u;
+        s_camera_frame_end_pending = 0u;
+        s_camera_line_overflow = 0u;
+        s_camera_line_index = 0u;
+        s_camera_capture_index = s_camera_latest_index;
+    }
+
+    s_camera_notify_service_from_isr();
+}
+
+static uint8_t s_camera_select_capture_index_from_isr(uint8_t completed_index, uint8_t *next_index)
+{
+    uint8_t i;
+
+    if (next_index == NULL)
+    {
+        return 0u;
+    }
+
+    for (i = 0u; i < APP_CAMERA_PUB_COUNT; i++)
+    {
+        if (i == completed_index)
+        {
+            continue;
+        }
+        if (s_camera_pub_refcount[i] != 0u)
+        {
+            continue;
+        }
+        if ((s_camera_frame_valid != 0u) && (i == s_camera_pub_index))
+        {
+            continue;
+        }
+        if ((s_camera_pending_valid != 0u) && (i == s_camera_pending_index))
+        {
+            continue;
+        }
+
+        *next_index = i;
+        return 1u;
+    }
+
+    for (i = 0u; i < APP_CAMERA_PUB_COUNT; i++)
+    {
+        if (i == completed_index)
+        {
+            continue;
+        }
+        if (s_camera_pub_refcount[i] != 0u)
+        {
+            continue;
+        }
+
+        *next_index = i;
+        return 1u;
+    }
+
+    return 0u;
+}
+
+static void s_camera_complete_frame_from_isr(void)
+{
+    uint8_t completed_index = s_camera_capture_index;
+
+    s_camera_dma_done_count++;
+    s_camera_frame_end_pending = 0u;
+    s_camera_line_overflow = 0u;
+    s_camera_line_index = 0u;
+    s_camera_try_queue_frame_from_isr(completed_index);
+}
+
+static void s_camera_drop_partial_frame_from_isr(void)
+{
+    s_camera_publish_drop_count++;
+    s_camera_frame_end_pending = 0u;
+    s_camera_line_overflow = 0u;
+    s_camera_line_index = 0u;
+}
+
+static void s_camera_on_dma_bank_complete(uint8_t completed_index)
+{
+    uint16_t *dst;
+    const uint16_t *src;
+    uint16_t line_index;
+
+    s_camera_dma_done_index = (uint8_t)(completed_index & 1u);
+    s_camera_dma_done_valid = 1u;
+
+    if (s_camera_frame_sync_locked == 0u)
+    {
+        return;
+    }
+
+    line_index = s_camera_line_index;
+    if (line_index >= (uint16_t)APP_CAMERA_PREVIEW_H)
+    {
+        s_camera_line_overflow = 1u;
+        return;
+    }
+
+    src = (const uint16_t *)&s_camera_line_buffers[s_camera_dma_done_index][0];
+    dst = &s_camera_buffers[s_camera_capture_index][(uint32_t)line_index * (uint32_t)APP_CAMERA_PREVIEW_W];
+    memcpy(dst, src, (size_t)APP_CAMERA_LINE_BYTES);
+    s_camera_line_index = (uint16_t)(line_index + 1u);
+
+    if ((s_camera_frame_end_pending != 0u) &&
+        (s_camera_line_index >= (uint16_t)APP_CAMERA_PREVIEW_H))
+    {
+        s_camera_complete_frame_from_isr();
+    }
+}
+
+static void s_camera_on_frame_boundary_isr(void)
+{
+    s_camera_frame_event_count++;
+    s_camera_frame_boundary_valid = 1u;
+
+    if (s_camera_frame_sync_locked == 0u)
+    {
+        s_camera_frame_sync_locked = 1u;
+        s_camera_frame_end_pending = 0u;
+        s_camera_line_overflow = 0u;
+        s_camera_line_index = 0u;
+        return;
+    }
+
+    if (s_camera_line_overflow != 0u)
+    {
+        s_camera_drop_partial_frame_from_isr();
+        return;
+    }
+
+    if (s_camera_line_index >= (uint16_t)APP_CAMERA_PREVIEW_H)
+    {
+        s_camera_complete_frame_from_isr();
+        return;
+    }
+
+    if (s_camera_line_index == (uint16_t)(APP_CAMERA_PREVIEW_H - 1u))
+    {
+        s_camera_frame_end_pending = 1u;
+        return;
+    }
+
+    s_camera_drop_partial_frame_from_isr();
+}
+
+static void s_camera_service_task(void *argument)
+{
+    (void)argument;
+
+    for (;;)
+    {
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(APP_CAMERA_SERVICE_WAKE_MS));
+        (void)App_Camera_UpdatePublishedFrame();
+    }
+}
+
+static void s_camera_dma_m0_complete_callback(DMA_HandleTypeDef *hdma)
+{
+    if ((hdma == NULL) || (hdma != &s_hdma_dcmi))
+    {
+        return;
+    }
+
+    s_camera_on_dma_bank_complete(0u);
+}
+
+static void s_camera_dma_m1_complete_callback(DMA_HandleTypeDef *hdma)
+{
+    if ((hdma == NULL) || (hdma != &s_hdma_dcmi))
+    {
+        return;
+    }
+
+    s_camera_on_dma_bank_complete(1u);
+}
+
+static void s_camera_dma_error_callback(DMA_HandleTypeDef *hdma)
+{
+    if ((hdma == NULL) || (hdma != &s_hdma_dcmi))
+    {
+        return;
+    }
+
+    s_camera_error_code = HAL_DCMI_ERROR_DMA;
+    s_camera_dma_error_code = hdma->ErrorCode;
+    s_camera_streaming = 0u;
+    s_camera_pending_restart = 1u;
+    s_camera_notify_service_from_isr();
+}
+
 #endif
 
 const char *App_Camera_InitStageName(uint8_t stage)
@@ -249,6 +606,14 @@ void App_Camera_Init(void)
 
     if (Camera_OV2640_Init() != 0u)
     {
+        Camera_OV2640_Diag_t sensor_diag;
+        Camera_OV2640_GetDiag(&sensor_diag);
+        printf("CAM: OV2640 diag mid=0x%04X pid=0x%04X stage=%u wr=%u rd=%u\r\n",
+               (unsigned int)sensor_diag.mid,
+               (unsigned int)sensor_diag.pid,
+               (unsigned int)sensor_diag.diag_stage,
+               (unsigned int)sensor_diag.last_write_status,
+               (unsigned int)sensor_diag.last_read_status);
         printf("CAM: OV2640 init failed\r\n");
         return;
     }
@@ -265,8 +630,10 @@ void App_Camera_Init(void)
            (unsigned int)APP_CAMERA_PREVIEW_W,
            (unsigned int)APP_CAMERA_PREVIEW_H);
 
+    HAL_Delay(20u);
+
     memset((void *)APP_CAMERA_FB0_ADDR, 0, (size_t)(APP_CAMERA_FRAME_BYTES * 2u));
-    memset((void *)APP_CAMERA_PUB0_ADDR, 0, (size_t)(APP_CAMERA_FRAME_BYTES * 2u));
+    memset((void *)APP_CAMERA_PUB0_ADDR, 0, (size_t)(APP_CAMERA_FRAME_BYTES * APP_CAMERA_PUB_COUNT));
 
     s_camera_init_stage = APP_CAMERA_INIT_STAGE_DCMI_INIT;
     s_camera_setup_handle();
@@ -284,11 +651,13 @@ void App_Camera_Init(void)
     s_camera_init_stage = APP_CAMERA_INIT_STAGE_READY;
     s_camera_initialized = 1u;
 
-    printf("CAM: DCMI ready fb0=0x%08lX fb1=0x%08lX pub0=0x%08lX pub1=0x%08lX\r\n",
+    printf("CAM: DCMI ready fb0=0x%08lX fb1=0x%08lX pub0=0x%08lX pub1=0x%08lX pub2=0x%08lX pub3=0x%08lX\r\n",
            (unsigned long)APP_CAMERA_FB0_ADDR,
            (unsigned long)APP_CAMERA_FB1_ADDR,
            (unsigned long)APP_CAMERA_PUB0_ADDR,
-           (unsigned long)APP_CAMERA_PUB1_ADDR);
+           (unsigned long)APP_CAMERA_PUB1_ADDR,
+           (unsigned long)APP_CAMERA_PUB2_ADDR,
+           (unsigned long)APP_CAMERA_PUB3_ADDR);
 #endif
 }
 
@@ -367,7 +736,34 @@ void App_Camera_Stop(void)
     s_camera_force_idle();
     s_camera_streaming = 0u;
     s_camera_raw_valid = 0u;
+    s_camera_pending_valid = 0u;
+    s_camera_dma_done_valid = 0u;
+    s_camera_frame_boundary_valid = 0u;
+    s_camera_pending_seq = 0u;
     s_camera_pending_restart = 0u;
+    s_camera_capture_restart_pending = 0u;
+#endif
+}
+
+void App_Camera_TaskInit(void)
+{
+#if (APP_CAMERA_ENABLE == 0u)
+    return;
+#else
+    BaseType_t task_ok;
+
+    if (s_camera_service_task_handle != NULL)
+    {
+        return;
+    }
+
+    task_ok = xTaskCreate(s_camera_service_task,
+                          "Cam_Service",
+                          APP_CAMERA_SERVICE_TASK_STACK_WORDS,
+                          NULL,
+                          APP_CAMERA_SERVICE_TASK_PRIO,
+                          &s_camera_service_task_handle);
+    configASSERT(task_ok == pdPASS);
 #endif
 }
 
@@ -382,8 +778,8 @@ uint8_t App_Camera_UpdatePublishedFrame(void)
     uint8_t raw_valid;
     uint8_t raw_index;
     uint8_t current_pub_valid;
-    uint8_t current_pub_index;
     uint8_t target_index;
+    uint8_t published = 0u;
 
     if (s_camera_initialized == 0u)
     {
@@ -405,62 +801,92 @@ uint8_t App_Camera_UpdatePublishedFrame(void)
 
     primask = __get_PRIMASK();
     __disable_irq();
-    raw_valid = s_camera_raw_valid;
-    raw_index = s_camera_latest_index;
-    raw_seq = s_camera_frame_seq;
+    raw_valid = s_camera_pending_valid;
+    raw_index = s_camera_pending_index;
+    raw_seq = s_camera_pending_seq;
     published_seq = s_camera_published_seq;
     current_pub_valid = s_camera_frame_valid;
-    current_pub_index = s_camera_pub_index;
     if (primask == 0u)
     {
         __enable_irq();
     }
 
-    if ((raw_valid == 0u) || (raw_seq == 0u) || (raw_seq == published_seq))
+    if ((raw_valid == 0u) || (raw_seq == published_seq))
     {
         return 0u;
     }
 
-    if (current_pub_valid == 0u)
+    if ((s_camera_freeze_publish == 0u) || (current_pub_valid == 0u))
     {
-        if (s_camera_pub_refcount[0] == 0u)
+        uint8_t can_publish = 0u;
+
+        if (s_camera_sample_hash(s_camera_buffers[raw_index % APP_CAMERA_PUB_COUNT]) == 0u)
         {
-            target_index = 0u;
-        }
-        else if (s_camera_pub_refcount[1] == 0u)
-        {
-            target_index = 1u;
+            s_camera_publish_drop_count++;
         }
         else
         {
-            s_camera_publish_drop_count++;
-            return 0u;
+            target_index = (uint8_t)(raw_index % APP_CAMERA_PUB_COUNT);
+            can_publish = 1u;
         }
-    }
-    else
-    {
-        target_index = (uint8_t)(current_pub_index ^ 1u);
-        if (s_camera_pub_refcount[target_index] != 0u)
-        {
-            s_camera_publish_drop_count++;
-            return 0u;
-        }
-    }
 
-    s_camera_copy_frame(target_index, raw_index);
+        if (can_publish != 0u)
+        {
+            primask = __get_PRIMASK();
+            __disable_irq();
+            s_camera_pub_index = target_index;
+            s_camera_published_seq = raw_seq;
+            s_camera_frame_valid = 1u;
+            s_camera_publish_count++;
+            published = 1u;
+            if ((s_camera_pending_valid != 0u) && (s_camera_pending_seq == raw_seq))
+            {
+                s_camera_pending_valid = 0u;
+            }
+            if (primask == 0u)
+            {
+                __enable_irq();
+            }
+        }
+    }
 
     primask = __get_PRIMASK();
     __disable_irq();
-    s_camera_pub_index = target_index;
-    s_camera_published_seq = raw_seq;
-    s_camera_frame_valid = 1u;
-    s_camera_publish_count++;
+    if ((s_camera_pending_valid != 0u) && (s_camera_pending_seq == raw_seq))
+    {
+        s_camera_pending_valid = 0u;
+    }
     if (primask == 0u)
     {
         __enable_irq();
     }
 
-    return 1u;
+    return published;
+#endif
+}
+
+void App_Camera_SetFreeze(uint8_t enable)
+{
+#if (APP_CAMERA_ENABLE != 0u)
+    uint32_t primask = __get_PRIMASK();
+
+    __disable_irq();
+    s_camera_freeze_publish = (enable != 0u) ? 1u : 0u;
+    if (primask == 0u)
+    {
+        __enable_irq();
+    }
+#else
+    (void)enable;
+#endif
+}
+
+uint8_t App_Camera_GetFreeze(void)
+{
+#if (APP_CAMERA_ENABLE == 0u)
+    return 0u;
+#else
+    return s_camera_freeze_publish;
 #endif
 }
 
@@ -479,6 +905,14 @@ uint8_t App_Camera_AcquireLatestFrame(App_CameraFrame_t *frame)
     }
 
     memset(frame, 0, sizeof(*frame));
+
+    /* 摄像头发布以独立服务任务为主。
+     * 这里仅保留“首帧兜底”：如果 raw 已经在增长但 published 还没建立，
+     * 则由当前调用者补一次发布，避免因为调度时序问题导致预览长期黑屏。 */
+    if ((s_camera_frame_valid == 0u) && (s_camera_raw_valid != 0u))
+    {
+        (void)App_Camera_UpdatePublishedFrame();
+    }
 
     primask = __get_PRIMASK();
     __disable_irq();
@@ -520,7 +954,7 @@ void App_Camera_ReleaseFrame(const App_CameraFrame_t *frame)
     uint32_t primask;
     uint8_t index;
 
-    if ((frame == NULL) || (frame->valid == 0u) || (frame->pixels == NULL) || (frame->buffer_id > 1u))
+    if ((frame == NULL) || (frame->valid == 0u) || (frame->pixels == NULL) || (frame->buffer_id >= APP_CAMERA_PUB_COUNT))
     {
         return;
     }
@@ -577,6 +1011,7 @@ void App_Camera_GetLatestFrame(App_CameraFrame_t *frame)
 void App_Camera_GetStatus(App_CameraStatus_t *status)
 {
     uint32_t primask;
+    Camera_OV2640_Diag_t sensor_diag;
 
     if (status == NULL)
     {
@@ -604,11 +1039,40 @@ void App_Camera_GetStatus(App_CameraStatus_t *status)
     status->init_attempt_count = s_camera_init_attempt_count;
     status->publish_count = s_camera_publish_count;
     status->publish_drop_count = s_camera_publish_drop_count;
+    status->dma_done_count = s_camera_dma_done_count;
+    status->frame_event_count = s_camera_frame_event_count;
+    status->arm_count = s_camera_arm_count;
+    status->arm_fail_count = s_camera_arm_fail_count;
     status->init_stage = s_camera_init_stage;
     status->pending_restart = s_camera_pending_restart;
+    status->freeze_enabled = s_camera_freeze_publish;
+    status->dcmi_state = (uint32_t)s_hdcmi.State;
+    status->dma_state = (uint32_t)s_hdma_dcmi.State;
     if (primask == 0u)
     {
         __enable_irq();
+    }
+
+    Camera_OV2640_GetDiag(&sensor_diag);
+    status->sensor_mid = sensor_diag.mid;
+    status->sensor_pid = sensor_diag.pid;
+    status->sensor_diag_stage = sensor_diag.diag_stage;
+    status->sensor_last_write_status = sensor_diag.last_write_status;
+    status->sensor_last_read_status = sensor_diag.last_read_status;
+    {
+        const uint16_t *raw_pixels = s_camera_buffers[status->latest_index % APP_CAMERA_PUB_COUNT];
+        const uint16_t *pub_pixels = s_camera_pub_buffers[status->published_index % APP_CAMERA_PUB_COUNT];
+        uint32_t mid_idx = ((uint32_t)APP_CAMERA_PREVIEW_H / 2u) * (uint32_t)APP_CAMERA_PREVIEW_W
+                         + ((uint32_t)APP_CAMERA_PREVIEW_W / 2u);
+
+        status->raw_sample0 = raw_pixels[0];
+        status->raw_sample1 = raw_pixels[mid_idx];
+        status->raw_sample2 = raw_pixels[APP_CAMERA_FRAME_PIXELS - 1u];
+        status->pub_sample0 = pub_pixels[0];
+        status->pub_sample1 = pub_pixels[mid_idx];
+        status->pub_sample2 = pub_pixels[APP_CAMERA_FRAME_PIXELS - 1u];
+        status->raw_hash = s_camera_sample_hash(raw_pixels);
+        status->pub_hash = s_camera_sample_hash(pub_pixels);
     }
 #endif
 }
@@ -681,7 +1145,7 @@ void HAL_DCMI_MspInit(DCMI_HandleTypeDef *hdcmi)
     s_hdma_dcmi.Init.PeriphInc = DMA_PINC_DISABLE;
     s_hdma_dcmi.Init.MemInc = DMA_MINC_ENABLE;
     s_hdma_dcmi.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
-    s_hdma_dcmi.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
+    s_hdma_dcmi.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;
     s_hdma_dcmi.Init.Mode = DMA_CIRCULAR;
     s_hdma_dcmi.Init.Priority = DMA_PRIORITY_HIGH;
     s_hdma_dcmi.Init.FIFOMode = DMA_FIFOMODE_ENABLE;
@@ -717,18 +1181,30 @@ void HAL_DCMI_MspDeInit(DCMI_HandleTypeDef *hdcmi)
 
 void HAL_DCMI_FrameEventCallback(DCMI_HandleTypeDef *hdcmi)
 {
-    uint32_t target_select;
-
     if ((hdcmi == NULL) || (hdcmi != &s_hdcmi))
     {
         return;
     }
 
-    target_select = ((DMA_Stream_TypeDef *)s_hdma_dcmi.Instance)->CR & DMA_SxCR_CT;
-    s_camera_latest_index = (target_select != 0u) ? 0u : 1u;
-    s_camera_frame_seq++;
-    s_camera_raw_valid = 1u;
+    s_camera_on_frame_boundary_isr();
     __HAL_DCMI_ENABLE_IT(hdcmi, DCMI_IT_FRAME);
+}
+
+void HAL_DCMI_VsyncEventCallback(DCMI_HandleTypeDef *hdcmi)
+{
+    if ((hdcmi == NULL) || (hdcmi != &s_hdcmi))
+    {
+        return;
+    }
+
+    if (s_camera_wait_vsync_start != 0u)
+    {
+        s_camera_wait_vsync_start = 0u;
+        s_camera_streaming = 1u;
+        __HAL_DCMI_DISABLE_IT(hdcmi, DCMI_IT_VSYNC);
+        __HAL_DCMI_ENABLE_IT(hdcmi, DCMI_IT_FRAME);
+        SET_BIT(hdcmi->Instance->CR, DCMI_CR_CAPTURE);
+    }
 }
 
 void HAL_DCMI_ErrorCallback(DCMI_HandleTypeDef *hdcmi)
@@ -755,5 +1231,6 @@ void HAL_DCMI_ErrorCallback(DCMI_HandleTypeDef *hdcmi)
     s_camera_streaming = 0u;
     s_camera_raw_valid = 0u;
     s_camera_pending_restart = 1u;
+    s_camera_notify_service_from_isr();
 }
 #endif

@@ -2,6 +2,8 @@
 
 #include "main.h"
 
+#include <stdio.h>
+
 #define CAMERA_OV2640_ADDR            0x60u
 #define CAMERA_OV2640_MID             0x7FA2u
 #define CAMERA_OV2640_PID             0x2642u
@@ -23,6 +25,47 @@
 #define CAMERA_OV2640_SDA_PIN         GPIO_PIN_10
 
 #define CAMERA_OV2640_FLIP_VER        0u
+#define CAMERA_OV2640_DIAG_NONE       0u
+#define CAMERA_OV2640_DIAG_RESET_IO   1u
+#define CAMERA_OV2640_DIAG_SOFT_RESET 2u
+#define CAMERA_OV2640_DIAG_READ_MIDH  3u
+#define CAMERA_OV2640_DIAG_READ_MIDL  4u
+#define CAMERA_OV2640_DIAG_READ_PIDH  5u
+#define CAMERA_OV2640_DIAG_READ_PIDL  6u
+#define CAMERA_OV2640_DIAG_ID_MATCH   7u
+#define CAMERA_OV2640_DIAG_READY      8u
+
+static uint8_t s_ov2640_dwt_ready = 0u;
+static volatile uint16_t s_ov2640_last_mid = 0u;
+static volatile uint16_t s_ov2640_last_pid = 0u;
+static volatile uint8_t s_ov2640_diag_stage = CAMERA_OV2640_DIAG_NONE;
+static volatile uint8_t s_ov2640_last_write_status = 0u;
+static volatile uint8_t s_ov2640_last_read_status = 0u;
+
+static void s_delay_us(uint32_t us)
+{
+    uint32_t ticks;
+    uint32_t start;
+
+    if (us == 0u)
+    {
+        return;
+    }
+
+    if (s_ov2640_dwt_ready == 0u)
+    {
+        CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+        DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+        DWT->CYCCNT = 0u;
+        s_ov2640_dwt_ready = 1u;
+    }
+
+    ticks = (SystemCoreClock / 1000000u) * us;
+    start = DWT->CYCCNT;
+    while ((uint32_t)(DWT->CYCCNT - start) < ticks)
+    {
+    }
+}
 
 static const uint8_t s_ov2640_svga_init_reg_tbl[][2] =
 {
@@ -235,12 +278,7 @@ static void s_gpio_write(GPIO_TypeDef *port, uint16_t pin, uint8_t level)
 
 static void s_sccb_delay(void)
 {
-    volatile uint32_t i;
-
-    for (i = 0u; i < 80u; i++)
-    {
-        __NOP();
-    }
+    s_delay_us(5u);
 }
 
 static void s_sccb_stop(void);
@@ -354,18 +392,22 @@ static uint8_t s_ov2640_write_reg(uint8_t reg, uint8_t value)
     uint8_t status = 0u;
 
     s_sccb_start();
+    s_delay_us(100u);
     if (s_sccb_send_byte(CAMERA_OV2640_ADDR) != 0u)
     {
         status = 1u;
     }
+    s_delay_us(100u);
     if (s_sccb_send_byte(reg) != 0u)
     {
         status = 1u;
     }
+    s_delay_us(100u);
     if (s_sccb_send_byte(value) != 0u)
     {
         status = 1u;
     }
+    s_delay_us(100u);
     s_sccb_stop();
 
     return status;
@@ -381,25 +423,29 @@ static uint8_t s_ov2640_read_reg(uint8_t reg, uint8_t *value)
     }
 
     s_sccb_start();
+    s_delay_us(100u);
     if (s_sccb_send_byte(CAMERA_OV2640_ADDR) != 0u)
     {
         s_sccb_stop();
         return 1u;
     }
+    s_delay_us(100u);
     if (s_sccb_send_byte(reg) != 0u)
     {
         s_sccb_stop();
         return 1u;
     }
     s_sccb_stop();
-    s_sccb_delay();
+    s_delay_us(100u);
 
     s_sccb_start();
+    s_delay_us(100u);
     if (s_sccb_send_byte(CAMERA_OV2640_ADDR | 0x01u) != 0u)
     {
         s_sccb_stop();
         return 1u;
     }
+    s_delay_us(100u);
     data = s_sccb_read_byte();
     s_sccb_nack();
     s_sccb_stop();
@@ -522,25 +568,35 @@ uint8_t Camera_OV2640_ReadId(uint16_t *mid, uint16_t *pid)
         return 1u;
     }
 
-    if (s_ov2640_read_reg(CAMERA_OV2640_REG_MIDH, &high) != 0u)
+    s_ov2640_diag_stage = CAMERA_OV2640_DIAG_READ_MIDH;
+    s_ov2640_last_read_status = s_ov2640_read_reg(CAMERA_OV2640_REG_MIDH, &high);
+    if (s_ov2640_last_read_status != 0u)
     {
         return 1u;
     }
-    if (s_ov2640_read_reg(CAMERA_OV2640_REG_MIDL, &low) != 0u)
+    s_ov2640_diag_stage = CAMERA_OV2640_DIAG_READ_MIDL;
+    s_ov2640_last_read_status = s_ov2640_read_reg(CAMERA_OV2640_REG_MIDL, &low);
+    if (s_ov2640_last_read_status != 0u)
     {
         return 1u;
     }
     *mid = (uint16_t)(((uint16_t)high << 8) | low);
+    s_ov2640_last_mid = *mid;
 
-    if (s_ov2640_read_reg(CAMERA_OV2640_REG_PIDH, &high) != 0u)
+    s_ov2640_diag_stage = CAMERA_OV2640_DIAG_READ_PIDH;
+    s_ov2640_last_read_status = s_ov2640_read_reg(CAMERA_OV2640_REG_PIDH, &high);
+    if (s_ov2640_last_read_status != 0u)
     {
         return 1u;
     }
-    if (s_ov2640_read_reg(CAMERA_OV2640_REG_PIDL, &low) != 0u)
+    s_ov2640_diag_stage = CAMERA_OV2640_DIAG_READ_PIDL;
+    s_ov2640_last_read_status = s_ov2640_read_reg(CAMERA_OV2640_REG_PIDL, &low);
+    if (s_ov2640_last_read_status != 0u)
     {
         return 1u;
     }
     *pid = (uint16_t)(((uint16_t)high << 8) | low);
+    s_ov2640_last_pid = *pid;
 
     return 0u;
 }
@@ -550,8 +606,13 @@ uint8_t Camera_OV2640_Init(void)
     uint16_t mid = 0u;
     uint16_t pid = 0u;
 
+    s_ov2640_last_mid = 0u;
+    s_ov2640_last_pid = 0u;
+    s_ov2640_last_write_status = 0u;
+    s_ov2640_last_read_status = 0u;
+    s_ov2640_diag_stage = CAMERA_OV2640_DIAG_RESET_IO;
+
     s_reset_io_init();
-    s_sccb_init();
 
     s_gpio_write(CAMERA_OV2640_PWDN_PORT, CAMERA_OV2640_PWDN_PIN, 0u);
     HAL_Delay(10u);
@@ -560,22 +621,40 @@ uint8_t Camera_OV2640_Init(void)
     s_gpio_write(CAMERA_OV2640_RST_PORT, CAMERA_OV2640_RST_PIN, 1u);
     HAL_Delay(20u);
 
-    (void)s_ov2640_write_reg(CAMERA_OV2640_REG_BANK_SEL, 0x01u);
-    (void)s_ov2640_write_reg(CAMERA_OV2640_REG_COM7, 0x80u);
+    s_sccb_init();
+    HAL_Delay(5u);
+
+    s_ov2640_diag_stage = CAMERA_OV2640_DIAG_SOFT_RESET;
+    s_ov2640_last_write_status = s_ov2640_write_reg(CAMERA_OV2640_REG_BANK_SEL, 0x01u);
+    if (s_ov2640_last_write_status != 0u)
+    {
+        printf("CAM: OV2640 bank select write failed\r\n");
+        return 1u;
+    }
+    s_ov2640_last_write_status = s_ov2640_write_reg(CAMERA_OV2640_REG_COM7, 0x80u);
+    if (s_ov2640_last_write_status != 0u)
+    {
+        printf("CAM: OV2640 soft reset write failed\r\n");
+        return 1u;
+    }
     HAL_Delay(50u);
 
     if (Camera_OV2640_ReadId(&mid, &pid) != 0u)
     {
+        printf("CAM: OV2640 read id failed\r\n");
         return 1u;
     }
+    s_ov2640_diag_stage = CAMERA_OV2640_DIAG_ID_MATCH;
     if ((mid != CAMERA_OV2640_MID) || (pid != CAMERA_OV2640_PID))
     {
+        printf("CAM: OV2640 id mismatch mid=0x%04X pid=0x%04X\r\n", mid, pid);
         return 1u;
     }
 
     s_apply_table(s_ov2640_svga_init_reg_tbl,
                   (uint32_t)(sizeof(s_ov2640_svga_init_reg_tbl) / sizeof(s_ov2640_svga_init_reg_tbl[0])));
 
+    s_ov2640_diag_stage = CAMERA_OV2640_DIAG_READY;
     return 0u;
 }
 
@@ -598,4 +677,18 @@ uint8_t Camera_OV2640_ConfigRgb565Preview(uint16_t width, uint16_t height)
     }
 
     return 0u;
+}
+
+void Camera_OV2640_GetDiag(Camera_OV2640_Diag_t *diag)
+{
+    if (diag == NULL)
+    {
+        return;
+    }
+
+    diag->mid = s_ov2640_last_mid;
+    diag->pid = s_ov2640_last_pid;
+    diag->diag_stage = s_ov2640_diag_stage;
+    diag->last_write_status = s_ov2640_last_write_status;
+    diag->last_read_status = s_ov2640_last_read_status;
 }

@@ -6,6 +6,7 @@
 
 #include "app_ui_cli.h"
 
+#include "app_camera.h"
 #include "app_display.h"
 #include "app_main_task.h"
 #include "app_task_cfg.h"
@@ -17,6 +18,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+
+extern volatile uint32_t g_ltdc_fifo_underrun_count;
+extern volatile uint32_t g_ltdc_transfer_error_count;
+extern volatile uint32_t g_ltdc_last_error_code;
 
 static App_Display_Mode_t s_runtime_mode_to_display(App_Runtime_DisplayMode_t mode)
 {
@@ -343,6 +348,8 @@ static void ui_cli_print_help(void)
     printf("cfg uifps <5..30>\r\n");                   /* 设置 UI 目标帧率 */
     printf("cfg algodecim <1..8>\r\n");                /* 设置音频算法抽帧比 */
     printf("cfg perf on|off|dump|reset\r\n");          /* 性能统计开关/打印/重置 */
+    printf("cfg cam retry\r\n");                      /* 手动重试摄像头初始化/启动 */
+    printf("cfg camfreeze on|off\r\n");               /* 冻结/恢复 camera 发布，定位撕裂发生层级 */
     printf("cfg uart recover\r\n");                    /* 手动触发 UART 错误恢复 */
 }
 
@@ -360,9 +367,13 @@ static void ui_cli_print_status(void)
 {
     App_Runtime_DisplayCfg_t  cfg;   /* 读取当前显示参数快照 */
     App_Runtime_DisplayMode_t mode;  /* 读取当前显示模式 */
+    App_CameraStatus_t        camera_status;
+    App_Display_DebugStats_t  display_debug;
 
     App_RuntimeConfig_GetDisplayCfg(&cfg);     /* 线程安全读取显示参数 */
     mode = App_RuntimeConfig_GetDisplayMode(); /* 线程安全读取显示模式 */
+    App_Camera_GetStatus(&camera_status);
+    App_Display_GetDebugStats(&display_debug);
 
     /* 第 1 行：显示模式与主要视觉调节参数 */
     printf("cfg mode=%s\r\n",
@@ -411,6 +422,58 @@ static void ui_cli_print_status(void)
            (unsigned long)g_ltdc_swap_pending_count, /* 已发出换页请求次数 */
            (unsigned long)g_ltdc_swap_error_count,   /* 换页错误次数 */
            (unsigned int)ltdc_is_swap_pending());    /* 当前是否有待处理换页请求 */
+    printf("cam init=%u stream=%u valid=%u stage=%s pending=%u freeze=%u raw=%lu pub=%lu\r\n",
+           (unsigned int)camera_status.initialized,
+           (unsigned int)camera_status.streaming,
+           (unsigned int)camera_status.valid,
+           App_Camera_InitStageName(camera_status.init_stage),
+           (unsigned int)camera_status.pending_restart,
+           (unsigned int)camera_status.freeze_enabled,
+           (unsigned long)camera_status.frame_seq,
+           (unsigned long)camera_status.published_seq);
+
+    printf("cam err=0x%08lX dma=0x%08lX restart=%lu/%lu drop=%lu publish=%lu irq=%lu/%lu idx=%u/%u\r\n",
+           (unsigned long)camera_status.error_code,
+           (unsigned long)camera_status.dma_error_code,
+           (unsigned long)camera_status.restart_count,
+           (unsigned long)camera_status.restart_fail_count,
+           (unsigned long)camera_status.publish_drop_count,
+           (unsigned long)camera_status.publish_count,
+           (unsigned long)camera_status.dma_done_count,
+           (unsigned long)camera_status.frame_event_count,
+           (unsigned int)camera_status.latest_index,
+           (unsigned int)camera_status.published_index);
+    printf("cam arm=%lu/%lu state=%lu/%lu\r\n",
+           (unsigned long)camera_status.arm_count,
+           (unsigned long)camera_status.arm_fail_count,
+           (unsigned long)camera_status.dcmi_state,
+           (unsigned long)camera_status.dma_state);
+    printf("cam sensor mid=0x%04X pid=0x%04X diag=%u wr=%u rd=%u\r\n",
+           (unsigned int)camera_status.sensor_mid,
+           (unsigned int)camera_status.sensor_pid,
+           (unsigned int)camera_status.sensor_diag_stage,
+           (unsigned int)camera_status.sensor_last_write_status,
+           (unsigned int)camera_status.sensor_last_read_status);
+    printf("cam samp raw=%04X/%04X/%04X pub=%04X/%04X/%04X hash=%08lX/%08lX\r\n",
+           (unsigned int)camera_status.raw_sample0,
+           (unsigned int)camera_status.raw_sample1,
+           (unsigned int)camera_status.raw_sample2,
+           (unsigned int)camera_status.pub_sample0,
+           (unsigned int)camera_status.pub_sample1,
+           (unsigned int)camera_status.pub_sample2,
+           (unsigned long)camera_status.raw_hash,
+           (unsigned long)camera_status.pub_hash);
+    printf("disp view=%s cam_path=%lu overlay=%lu in_seq=%lu cache_seq=%lu cache_valid=%u\r\n",
+           App_Display_CameraViewName((App_Display_CameraView_t)display_debug.camera_view_mode),
+           (unsigned long)display_debug.camera_path_count,
+           (unsigned long)display_debug.camera_overlay_count,
+           (unsigned long)display_debug.camera_input_seq,
+           (unsigned long)display_debug.camera_cache_seq,
+           (unsigned int)display_debug.camera_cache_valid);
+    printf("ltdc fu=%lu te=%lu last=0x%08lX\r\n",
+           (unsigned long)g_ltdc_fifo_underrun_count,
+           (unsigned long)g_ltdc_transfer_error_count,
+           (unsigned long)g_ltdc_last_error_code);
 
     /* 第 7 行：CLI UART 接收统计（诊断串口通信质量） */
     printf("cli rx_ok=%lu rx_err=%lu rx_drop=%lu alive=%u uart_err=0x%08lX baud=%lu\r\n",
@@ -703,11 +766,85 @@ static void ui_cli_apply_line(char *line)
         ui_cli_print_status();
         return;
     }
+    if (ui_cli_stricmp(cursor, "cam") == 0)
+    {
+        if (arg == NULL)
+        {
+            printf("CLI: cfg cam retry\r\n");
+            return;
+        }
+        if (ui_cli_stricmp(arg, "retry") == 0)
+        {
+            (void)App_Camera_Retry();
+        }
+        else
+        {
+            printf("CLI: cfg cam retry\r\n");
+            return;
+        }
+        ui_cli_print_status();
+        return;
+    }
 
     /* ---- 以下命令需要读取并修改显示配置，先取一次快照 ---- */
     App_RuntimeConfig_GetDisplayCfg(&cfg);  /* 读取当前配置到本地副本，下方按需修改单个字段 */
 
     /* -- cfg contrast <db_floor>：设置动态范围底限（应为负数，单位 dB） -- */
+    if (ui_cli_stricmp(cursor, "camview") == 0)
+    {
+        if (arg == NULL)
+        {
+            printf("CLI: cfg camview overlay|camera|heat|freeze\r\n");
+            return;
+        }
+        if (ui_cli_stricmp(arg, "overlay") == 0)
+        {
+            App_Display_SetCameraView(APP_DISPLAY_CAMERA_VIEW_OVERLAY);
+        }
+        else if (ui_cli_stricmp(arg, "camera") == 0)
+        {
+            App_Display_SetCameraView(APP_DISPLAY_CAMERA_VIEW_CAMERA_ONLY);
+        }
+        else if (ui_cli_stricmp(arg, "heat") == 0)
+        {
+            App_Display_SetCameraView(APP_DISPLAY_CAMERA_VIEW_HEAT_ONLY);
+        }
+        else if (ui_cli_stricmp(arg, "freeze") == 0)
+        {
+            App_Display_SetCameraView(APP_DISPLAY_CAMERA_VIEW_CAMERA_FREEZE);
+        }
+        else
+        {
+            printf("CLI: cfg camview overlay|camera|heat|freeze\r\n");
+            return;
+        }
+        ui_cli_print_status();
+        return;
+    }
+    if (ui_cli_stricmp(cursor, "camfreeze") == 0)
+    {
+        if (arg == NULL)
+        {
+            printf("CLI: cfg camfreeze on|off\r\n");
+            return;
+        }
+        if (ui_cli_stricmp(arg, "on") == 0)
+        {
+            App_Camera_SetFreeze(1u);
+        }
+        else if (ui_cli_stricmp(arg, "off") == 0)
+        {
+            App_Camera_SetFreeze(0u);
+        }
+        else
+        {
+            printf("CLI: cfg camfreeze on|off\r\n");
+            return;
+        }
+        ui_cli_print_status();
+        return;
+    }
+
     if (ui_cli_stricmp(cursor, "contrast") == 0)
     {
         if ((arg == NULL) || (ui_cli_parse_float(arg, &fv) == 0u))  /* 参数缺失或格式错误 */

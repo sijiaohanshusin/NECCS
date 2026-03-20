@@ -1,18 +1,19 @@
 ﻿# NECCS Project Snapshot
 
-- generated_at: 2026-03-18T19:18:28+08:00
+- generated_at: 2026-03-18T19:53:32+08:00
 - repo_root: D:\HEU\NECCS\NECCS
 - git_branch: camera
-- git_head: 5b76b89240baf3dfccbe721a20d7860ae93f7ac9
+- git_head: cbd851720b938caaff0118141c2f3e57df379185
 
 ## Git Summary
 
 - latest_commit: feat:
-- latest_commit_date: 2026-03-15T20:59:28+08:00
-- working_tree_dirty_files: 25
+- latest_commit_date: 2026-03-18T19:27:59+08:00
+- working_tree_dirty_files: 3
 
 ### Recent Commits
 
+- cbd8517 feat:
 - 5b76b89 feat:
 - a4bbcd5 refactor: :art: 工程整理/清空工作区，为摄像头接入做准备
 - 13a939c style: :building_construction: 工程重构
@@ -20,7 +21,6 @@
 - c9e923b style: :art: 添加完善注释
 - b340fd7 refactor(runtime): unify display runtime config and refresh module docs
 - 3628151 fix(cli): improve uart cfg command handling and sync latest runtime updates
-- f0b1323 feat(ltdc): add dma2d accel path and runtime diagnostics updates
 
 ## Key Modules
 

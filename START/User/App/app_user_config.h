@@ -112,7 +112,7 @@
  * FreeRTOS 任务、UI 刷新与性能统计
  * ============================================================================ */
 
-#define APP_AUDIO_TASK_PRIO          5u       /**< 音频任务优先级。 */
+#define APP_AUDIO_TASK_PRIO          4u       /**< 音频任务优先级。与 UI 保持同级，避免持续算力占用时饿死显示。 */
 #define APP_UI_TASK_PRIO             4u       /**< UI 任务优先级。 */
 #define APP_AUDIO_TASK_STACK_WORDS   2304u    /**< 音频任务堆栈深度，单位 word。 */
 #define APP_UI_TASK_STACK_WORDS      2048u    /**< UI 任务堆栈深度，单位 word。 */

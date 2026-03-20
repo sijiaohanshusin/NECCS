@@ -227,6 +227,7 @@ void StartDefaultTask(void *argument)
   {
     /* 延迟 1 秒 */
     osDelay(1000);
+ 
   }
   /* USER CODE END StartDefaultTask */
 }
@@ -326,6 +327,7 @@ void PCMD3180InitTask(void *argument)
   s_boot_diag_mark(APP_BOOT_DIAG_STAGE_CAMERA_START, 0u);
   App_Camera_Start();
   s_boot_diag_mark(APP_BOOT_DIAG_STAGE_DONE, 1u);
+  I2C_Scan();
   vTaskDelete(NULL);
 }
 /* USER CODE END Application */

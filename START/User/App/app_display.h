@@ -67,6 +67,14 @@ typedef enum
     APP_DISPLAY_NORM_FULL = 1u
 } App_Display_Norm_t;
 
+typedef enum
+{
+    APP_DISPLAY_CAMERA_VIEW_OVERLAY = 0u,
+    APP_DISPLAY_CAMERA_VIEW_CAMERA_ONLY = 1u,
+    APP_DISPLAY_CAMERA_VIEW_HEAT_ONLY = 2u,
+    APP_DISPLAY_CAMERA_VIEW_CAMERA_FREEZE = 3u
+} App_Display_CameraView_t;
+
 /**
  * @brief   显示运行时可调配置
  * @details 可通过 CLI 在运行时修改，无需重新编译
@@ -116,6 +124,16 @@ typedef struct
     uint8_t blit_rows;
 } App_Display_RuntimeCfg_t;
 
+typedef struct
+{
+    uint8_t camera_view_mode;
+    uint32_t camera_path_count;
+    uint32_t camera_overlay_count;
+    uint32_t camera_input_seq;
+    uint32_t camera_cache_seq;
+    uint8_t camera_cache_valid;
+} App_Display_DebugStats_t;
+
 /**
  * @brief 初始化显示模块
  * @details
@@ -149,6 +167,9 @@ void App_Display_SetConfig(const App_Display_RuntimeCfg_t *cfg);
 
 /* 读取当前生效的运行时配置。 */
 void App_Display_GetConfig(App_Display_RuntimeCfg_t *cfg);
+void App_Display_GetDebugStats(App_Display_DebugStats_t *stats);
+void App_Display_SetCameraView(App_Display_CameraView_t view_mode);
+App_Display_CameraView_t App_Display_GetCameraView(void);
 
 /* 按预设模式覆盖一组推荐配置。 */
 void App_Display_SetMode(App_Display_Mode_t mode);
@@ -160,6 +181,7 @@ App_Display_Mode_t App_Display_GetMode(void);
 const char *App_Display_ModeName(App_Display_Mode_t mode);
 const char *App_Display_InterpName(App_Display_Interp_t interp);
 const char *App_Display_NormName(App_Display_Norm_t norm);
+const char *App_Display_CameraViewName(App_Display_CameraView_t view_mode);
 
 /* 初始化阶段标志：
  * - `g_display_init_stage` 表示初始化执行到哪个阶段
