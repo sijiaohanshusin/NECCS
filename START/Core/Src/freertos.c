@@ -42,7 +42,7 @@
 /* FreeRTOS 相关编译期开关预留区 */
 #define APP_DEFAULT_TASK_PRIO        1u
 #define APP_DEFAULT_TASK_STACK_WORDS 256u
-#define APP_INIT_TASK_PRIO           3u
+#define APP_INIT_TASK_PRIO           6u
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -177,27 +177,19 @@ void MX_FREERTOS_Init(void)
   configASSERT(task_ok == pdPASS);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /*
-   * Create the steady-state audio/UI tasks before the one-shot init task.
-   * This guarantees the display task exists as soon as the scheduler starts,
-   * even if later peripheral bring-up fails or stalls.
-   */
-  App_Task_Init();
-  s_boot_diag_mark(APP_BOOT_DIAG_STAGE_APP_TASK, 0u);
-
   /**
    * PCMD3180InitTask 职责边界：
    * 1. 在 RTOS 上下文完成软 I2C 初始化（含互斥量）
    * 2. 初始化音频算法状态（FFT/SRP-PHAT）
-   * 3. 音频与 UI 工作任务已在调度器启动前创建完成
+   * 3. 创建音频与 UI 工作任务
    * 4. 启动 SAI DMA，等待时钟稳定后配置双芯片 PCMD3180
    *
    * 时序与并发约束：
    * - 软 I2C 依赖内核对象，必须在调度启动后执行
-   * - 音频/UI 任务已预先创建，启动 DMA 前消费者一定已就绪
+   * - 先创建工作任务，再启动 DMA，确保消费者已就绪
    * - PCMD3180 配置依赖 I2C 与稳定 BCLK/FSYNC，不可提前
    *
-   * 优先级：原生 FreeRTOS 3（低于 Audio/UI，避免初始化路径卡住时饿死显示）
+   * 优先级：原生 FreeRTOS 6（高于 Audio/UI，优先完成一次性上电初始化）
    * 堆栈：1024 字（覆盖 HAL 初始化与摄像头启动路径）
    * 生命周期：一次性任务，完成后自删除
    */
@@ -287,7 +279,11 @@ void PCMD3180InitTask(void *argument)
   s_boot_diag_mark(APP_BOOT_DIAG_STAGE_APP_STREAM, 0u);
   App_Stream_Init();
 
-  /* 步骤 3: 启动 SAI DMA，开始稳定输出采样时钟 */
+  /* 步骤 3: 创建音频与 UI 工作任务（稍后在本任务让出 CPU 后开始运行） */
+  App_Task_Init();
+  s_boot_diag_mark(APP_BOOT_DIAG_STAGE_APP_TASK, 0u);
+
+  /* 步骤 4: 启动 SAI DMA，开始稳定输出采样时钟 */
   /**
    * DMA 连续接收麦克风 TDM 数据，采用循环模式
    * Mic_Rx_Buffer 为双缓冲，配合半传输/全传输中断消费
@@ -303,11 +299,11 @@ void PCMD3180InitTask(void *argument)
     Error_Handler();
   }
 
-  /* 步骤 4: 等待时钟稳定，避免 PCMD3180 在边沿抖动期配置 */
+  /* 步骤 5: 等待时钟稳定，避免 PCMD3180 在边沿抖动期配置 */
   s_boot_diag_mark(APP_BOOT_DIAG_STAGE_CLOCK_WAIT, 0u);
   vTaskDelay(pdMS_TO_TICKS(1000));
 
-  /* 步骤 5: 配置双 PCMD3180，建立 16 路麦克风到 TDM slot 映射 */
+  /* 步骤 6: 配置双 PCMD3180，建立 16 路麦克风到 TDM slot 映射 */
   /**
    * 双芯片配置：
    * - 芯片 A (地址 0x4C): TDM slot 0-7 (麦克风 0-7)
@@ -324,7 +320,7 @@ void PCMD3180InitTask(void *argument)
   s_boot_diag_mark(APP_BOOT_DIAG_STAGE_PCMD1, 0u);
   PCMD3180_Init_Device(PCMD3180_ADDR_1, 8);   /* 芯片 B, slot 8 起 */
 
-  /* 步骤 6: 初始化并启动摄像头，然后自删除初始化任务 */
+  /* 步骤 7: 初始化并启动摄像头，然后自删除初始化任务 */
   s_boot_diag_mark(APP_BOOT_DIAG_STAGE_CAMERA_INIT, 0u);
   App_Camera_Init();
   s_boot_diag_mark(APP_BOOT_DIAG_STAGE_CAMERA_START, 0u);
