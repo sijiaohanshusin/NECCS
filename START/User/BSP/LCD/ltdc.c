@@ -75,6 +75,9 @@ volatile uint16_t g_ltdc_panel_id = 0u;
 volatile uint32_t g_ltdc_swap_count = 0u;
 volatile uint32_t g_ltdc_swap_pending_count = 0u;
 volatile uint32_t g_ltdc_swap_error_count = 0u;
+volatile uint32_t g_ltdc_fifo_underrun_count = 0u;
+volatile uint32_t g_ltdc_transfer_error_count = 0u;
+volatile uint32_t g_ltdc_last_error_code = 0u;
 
 static volatile uint8_t s_front_buf_idx = 0u;
 static volatile uint8_t s_back_buf_idx = 0u;
@@ -84,7 +87,7 @@ static volatile uint8_t s_swap_front_target_idx = 0u;
 static volatile uint8_t s_swap_back_target_idx = 0u;
 
 #define LTDC_DMA2D_TIMEOUT_LOOP   0X1FFFFFU
-#define LTDC_PRESENT_DIRECT_MODE  1u
+#define LTDC_PRESENT_DIRECT_MODE  0u
 
 static uint32_t *ltdc_draw_buf_ptr(void)
 {
@@ -323,28 +326,8 @@ void ltdc_request_swap(void)
     ltdc_sync_indices_from_hw_locked();
     if ((s_swap_pending == 0u) && (s_swap_reload_pending == 0u))
     {
-        uint8_t next_front = s_back_buf_idx;
-        uint8_t next_back = s_front_buf_idx;
-
-        if (HAL_LTDC_SetAddress_NoReload(&g_ltdc_handle, (uint32_t)g_ltdc_framebuf[next_front], 0) == HAL_OK)
-        {
-            if (HAL_LTDC_Reload(&g_ltdc_handle, LTDC_RELOAD_VERTICAL_BLANKING) == HAL_OK)
-            {
-                s_swap_front_target_idx = next_front;
-                s_swap_back_target_idx = next_back;
-                s_swap_reload_pending = 1u;
-                s_swap_pending = 1u;
-                g_ltdc_swap_pending_count++;
-            }
-            else
-            {
-                g_ltdc_swap_error_count++;
-            }
-        }
-        else
-        {
-            g_ltdc_swap_error_count++;
-        }
+        s_swap_pending = 1u;
+        g_ltdc_swap_pending_count++;
     }
     if (primask == 0u)
     {
@@ -1248,6 +1231,9 @@ void ltdc_init(void)
     s_back_buf_idx = (uint8_t)(s_front_buf_idx ^ 1u);
     ltdc_fill_sw_rect(0u, 0u, lcdltdc.pwidth - 1u, lcdltdc.pheight - 1u, 0u);
 
+    __HAL_LTDC_ENABLE_IT(&g_ltdc_handle, LTDC_IT_LI);
+    HAL_LTDC_ProgramLineEvent(&g_ltdc_handle, 0u);
+
     /* Turn on backlight early for visibility, even if panel reset sequence stalls. */
     LTDC_BL(1);
     g_ltdc_init_stage = 61u;
@@ -1278,6 +1264,38 @@ void ltdc_init(void)
 void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *hltdc)
 {
     (void)hltdc;
+
+#if (LTDC_PRESENT_DIRECT_MODE == 0u)
+    if ((s_swap_pending != 0u) && (s_swap_reload_pending == 0u))
+    {
+        uint8_t next_front = s_back_buf_idx;
+        uint8_t next_back = s_front_buf_idx;
+
+        if (HAL_LTDC_SetAddress_NoReload(&g_ltdc_handle, (uint32_t)g_ltdc_framebuf[next_front], 0u) == HAL_OK)
+        {
+            if (HAL_LTDC_Reload(&g_ltdc_handle, LTDC_RELOAD_VERTICAL_BLANKING) == HAL_OK)
+            {
+                s_swap_front_target_idx = next_front;
+                s_swap_back_target_idx = next_back;
+                s_swap_reload_pending = 1u;
+            }
+            else
+            {
+                s_swap_pending = 0u;
+                g_ltdc_swap_error_count++;
+                ltdc_sync_indices_from_hw_locked();
+            }
+        }
+        else
+        {
+            s_swap_pending = 0u;
+            g_ltdc_swap_error_count++;
+            ltdc_sync_indices_from_hw_locked();
+        }
+    }
+#endif
+
+    HAL_LTDC_ProgramLineEvent(&g_ltdc_handle, 0u);
 }
 void HAL_LTDC_ReloadEventCallback(LTDC_HandleTypeDef *hltdc)
 {
@@ -1302,6 +1320,29 @@ void HAL_LTDC_ReloadEventCallback(LTDC_HandleTypeDef *hltdc)
  * @param       hltdc      LTDC 句柄
  * @retval      �?
  */
+void HAL_LTDC_ErrorCallback(LTDC_HandleTypeDef *hltdc)
+{
+    uint32_t error_code;
+
+    if ((hltdc == NULL) || (hltdc != &g_ltdc_handle))
+    {
+        return;
+    }
+
+    error_code = hltdc->ErrorCode;
+    g_ltdc_last_error_code = error_code;
+
+    if ((error_code & HAL_LTDC_ERROR_FU) != 0u)
+    {
+        g_ltdc_fifo_underrun_count++;
+    }
+    if ((error_code & HAL_LTDC_ERROR_TE) != 0u)
+    {
+        g_ltdc_transfer_error_count++;
+    }
+
+    hltdc->ErrorCode = HAL_LTDC_ERROR_NONE;
+}
 void HAL_LTDC_MspInit(LTDC_HandleTypeDef *hltdc)
 {
     GPIO_InitTypeDef gpio_init_struct;
@@ -1397,6 +1438,7 @@ void HAL_LTDC_MspInit(LTDC_HandleTypeDef *hltdc)
                      GPIO_PIN_6 | GPIO_PIN_7;
     HAL_GPIO_Init(GPIOI, &gpio_init_struct); 
 }
+
 
 
 

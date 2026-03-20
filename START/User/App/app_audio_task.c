@@ -228,6 +228,7 @@ void Audio_Pipeline_Task(void *pvParameters)
         /* xQueueOverwrite锛氳嫢闃熷垪宸叉弧锛圲I 浠诲姟杩樻湭娑堣垂锛夛紝鐩存帴瑕嗙洊鏃ф暟鎹紝
          * 淇濊瘉 UI 濮嬬粓鎷垮埌鏈€鏂颁綅缃紝涓嶅洜闃熷垪婊¤€岄樆濉為煶棰戜换鍔?*/
         xQueueOverwrite(xPositionQueue, &current_pos);
+        taskYIELD();
 
         /* 涓诲姩鍑鸿 CPU锛岃鍚屼紭鍏堢骇鐨?UI 浠诲姟鏈夋満浼氱珛鍗宠繍琛屽鐞嗗垰鎶曢€掔殑鏁版嵁 */
     }

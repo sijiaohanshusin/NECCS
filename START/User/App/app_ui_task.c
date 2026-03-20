@@ -142,7 +142,6 @@ static void s_ui_legacy_render(const Sound_Pos_t *pos,
     /* 閻╁瓨甯存潪顒€褰傞幍鈧張澶婂棘閺佹澘�?App_Display 濞撳弶鐓嬪Ο鈥虫健閿涘本妫ゆ０婵嗩樆婢跺嫮�?*/
     App_CameraFrame_t camera_frame = {0};
 
-    (void)App_Camera_UpdatePublishedFrame();
     (void)App_Camera_AcquireLatestFrame(&camera_frame);
     App_Display_Render(pos, vis_frame, &camera_frame, frame_seq, sai_dma_active);
     App_Camera_ReleaseFrame(&camera_frame);

@@ -1,0 +1,286 @@
+;MCLK 24Mhz, UXGA(1600x1200) from driver 04232007 for CCM
+;YUV 7.143 fps, PCLK run 36MHz
+;
+;Ken June,15,2007 modify and add comment.
+
+60 ff 00
+60 2c ff; I/O port
+60 2e df
+
+60 ff 01
+60 12 80
+;delay 1ms
+60 3c 32 ;PWCOM4:FREX and EXPSTB pin
+60 11 01 ;0
+60 04 28 ;[7:6]mirror&flip
+60 13 e5
+60 14 48 ;4x AGC gain ceiling
+
+;rsvd
+60 2c 0c 
+60 33 78 
+60 3b fb 
+60 3e 00 
+60 43 11
+60 16 10
+
+60 39 02 ; PWCOM1,[7]Bypass regulator
+60 35 88 ;rsvd
+
+60 22 0a ;B/R and G channel pre gain 1.5x
+60 37 40 ;rsvd
+60 23 00 ;rsvd
+60 34 a0 ;[2:0]ZW horizontal start point
+60 36 1a ;rsvd
+60 06 02 ;rsvd
+60 07 c0 ;rsvd
+60 0d b7 ;rsvd
+60 0e 01 ;rsvd
+60 4c 00 ;rsvd
+
+;Black Sun control
+60 4a 81 ;[7]Black sun cancellation enable
+60 21 99 ;[7]Black sun control enable,[4:0]Black sun control level
+
+;output driver capability
+60 09 00
+
+;AE control
+60 24 40
+60 25 38
+60 26 82
+60 5c 00 ;YAVG,[7]: 0-use average value to fill YAVG
+60 7c 05 ;AEC/AGC algorithm select [7]:0-average
+60 46 3f
+;60 47 00
+;16 zone average weight option
+60 5d 55
+60 5e 7d
+60 5f 7d
+60 60 55
+
+;rsvd
+60 61 70
+60 62 80  
+
+;BLC
+60 20 80 [7]enable
+;rsvd
+60 28 30
+60 6c 00
+60 6d 80
+60 6e 00
+60 70 02 ;BLC reference value
+60 71 94
+60 73 c1
+
+;PLL clock 
+60 3d 34
+
+;banding
+60 5a 57 ;Max.step[7:4]-50Hz,[3:0]-60Hz
+60 4f bb ;BD50 4A[7:6] 4F[7:0]
+60 50 9c ;BD60 4A[5:4] 50[7:0]
+60 0c 3c ;[2]50/60 BD selector 38 for 60Hz
+
+60 3a 33 ;[7:6]crystal driving capacity selection.
+;   
+
+;resolution UXGA
+60 12 00
+;60 11 00
+60 17 11
+60 18 75
+60 19 01
+60 1a 97
+60 32 36
+60 6d 80
+;
+
+60 ff 00
+60 e0 14 ;RESET JPEG&DVP
+
+;rsvd
+60 76 ff
+60 33 a0
+60 42 20
+60 43 18
+60 4c 00
+
+;BPC & WPC
+60 87 d0 ;[7:6] enable
+60 88 0f ;rsvd
+60 d7 03 ;rsvd
+60 d9 10 ;rsvd
+
+;
+;60 da 04 ;ken mask
+60 d3 82
+60 f9 c0 ;[7:6]Microcontroller reset&Boot ROM select  
+
+;Compression register
+;DA[4]:compression output enable
+;E1[4]:compression module clock enable
+;60 44 06 ; Qs Quantization Scale Factor
+;60 45 00 ; QT indirect data
+;60 46 00 ; QT indirect address
+;rsvd
+;60 d1 07 
+;60 d2 02 
+;60 d2 00
+;60 d8 11
+;
+
+;Auto UV adjust 
+;86[3]: auto UV adjust Enable
+60 c8 0f ;[7:4]-threshold, [3:0]-offset
+60 c9 80 ;[7:6]-slope
+;
+;
+;SDE(special digital effect)
+;86[4]:SDE enable
+60 7c 00 ; SED control;
+60 7d 07 ; enable contrast/brightnes/saturation/hue
+;01 ;Hue cosine
+;02 ;Hue sine
+;03 ;Saturation U gain
+;04 ;Saturation V gain
+;05 ;Fixed U value
+;06 ;Fixed V value
+60 7c 07 ; Contrast offset
+60 7d 20
+;08 ;Contrast gain
+;09 ;Contrast brightness
+;0A ;sign bit
+;
+;gamma
+60 90 00
+60 91 0e
+60 91 1a
+60 91 31
+60 91 5a
+60 91 69
+60 91 75
+60 91 7e
+60 91 88
+60 91 8f
+60 91 96
+60 91 a3
+60 91 af
+60 91 c4
+60 91 d7
+60 91 e8
+60 91 20
+;
+;de-noise & sharpness
+60 92 00
+60 93 06 ;[7:0]:de-noise level 
+60 93 e3 ;[6]:De-noise mode selection,[5]:sharpness mode 0-manual;[4:0]-sharpness level
+60 93 03 ;[3:0]sharpness threshold
+60 93 03 ;[4:0]lower limit
+60 93 00 ;[4:0]upper limit
+60 93 02 ;De-noise offset
+60 93 00
+60 93 00
+60 93 00
+60 93 00
+60 93 00
+60 93 00
+60 93 00
+;
+;CCM   
+60 96 00
+60 97 08
+60 97 19
+60 97 02
+60 97 0c
+60 97 24
+60 97 30
+60 97 28
+60 97 26
+60 97 02
+60 97 98
+60 97 80
+60 97 00
+60 97 00
+;96[4]: set will load default CMX setting.
+
+;rsvd  
+60 c4 9a
+60 a4 00
+60 c5 11
+60 c6 51
+;
+;AWB control
+60 c7 10 ;Simple AWB enable
+60 b6 66 ;Day LMT
+60 b8 A5 ;Day SPT
+60 b7 64 ;A LMT
+60 b9 7C ;A SPT
+60 b3 af ;Day KyDay
+60 b4 97 ;A KxA
+60 b5 ff ;[7:4]Day Ec,[3:0]A Fc
+60 b0 C5 ;CWF X center
+60 b1 94 ;CWF Y center
+60 b2 0f ;[5:0]CWF SS(width)
+60 c4 5c ;AvgAll
+60 a8 00
+;
+;Lens shading
+60 a6 00
+60 a7 20 ; R
+60 a7 d8
+60 a7 1b
+60 a7 31
+60 a7 00
+60 a7 18
+
+60 a7 20 ; G 
+60 a7 d8
+60 a7 19
+60 a7 31
+60 a7 00
+60 a7 18
+
+60 a7 20 ; B
+60 a7 d8
+60 a7 19
+60 a7 31
+60 a7 00
+60 a7 18
+
+;output 1600 x 1120
+60 c0 c8;1600x1200
+60 c1 96
+60 8c 00
+60 86 3d ;DCW enable     
+60 50 00 ;down sampling disable
+60 51 90 ;DCW size, crop to 1600x1200
+60 52 2c
+60 53 00
+60 54 00
+60 55 88
+60 57 00
+;
+60 5a 90 ;output 1600x1200
+60 5b 2c
+60 5c 05
+;
+
+60 c3 ef;
+60 7f 00
+60 da 00 ; DVP output format
+60 e5 1f
+60 e1 67
+60 e0 00
+60 dd ff ;DVP option
+60 05 00
+
+88 0f 1d
+88 0f 1f
+
+
+
+
+
+
