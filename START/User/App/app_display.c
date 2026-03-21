@@ -1,30 +1,18 @@
 /**
  * @file    app_display.c
- * @brief   声学成像显示模块实现
+ * @brief   婢规澘顒熼幋鎰剼閺勫墽銇氬Ο鈥虫健鐎圭偟骞?
  * @details
- * 本文件负责把算法层给出的 SRP-PHAT 可视化结果，转换成 LCD 上真正可见的
- * 一帧图像。最终画面由四部分组成：
- * 1. 热力图：展示空间能量分布。
- * 2. 十字准星：展示最终定位输出角度。
- * 3. 峰值框：展示当前功率场中的最强点位置。
- * 4. 文本侧栏：展示坐标、能量、模式、DMA/交换等诊断信息。
- *
- * 整个渲染链路可以按如下顺序理解：
+ * 閺堫剚鏋冩禒鎯扮鐠愶絾濡哥粻妤佺《鐏炲倻绮伴崙铏规畱 SRP-PHAT 閸欘垵顫嬮崠鏍波閺嬫粣绱濇潪顒佸床閹?LCD 娑撳﹦婀″锝呭讲鐟欎胶娈?
+ * 娑撯偓鐢冩禈閸嶅繈鈧倹娓剁紒鍫㈡暰闂堛垻鏁遍崶娑㈠劥閸掑棛绮嶉幋鎰剁窗
+ * 1. 閻戭厼濮忛崶鎾呯窗鐏炴洜銇氱粚娲？閼充粙鍣洪崚鍡楃閵? * 2. 閸椾礁鐡ч崙鍡樻Е閿涙艾鐫嶇粈鐑樻付缂佸牆鐣炬担宥堢翻閸戦缚顫楁惔锔衡偓? * 3. 瀹勬澘鈧吋顢嬮敍姘潔缁€鍝勭秼閸撳秴濮涢悳鍥ф簚娑擃厾娈戦張鈧铏瑰仯娴ｅ秶鐤嗛妴? * 4. 閺傚洦婀版笟褎鐖敍姘潔缁€鍝勬綏閺嶅洢鈧浇鍏橀柌蹇嬧偓浣鼓佸蹇嬧偓涓廙A/娴溿倖宕茬粵澶庣槚閺傤厺淇婇幁顖樷偓? *
+ * 閺佺繝閲滃〒鍙夌厠闁炬崘鐭鹃崣顖欎簰閹稿顩ф稉瀣€庢惔蹇曟倞鐟欙綇绱?
  * `SRP_VisFrame_t`
- * -> 将稀疏搜索网格重采样为稠密显示场
- * -> 可选地把细搜索结果重新融合到显示场
- * -> 对场做平滑和动态归一化
- * -> 分块写入 LTDC 后台缓冲
- * -> 叠加边框、准星、峰值框和文本
- * -> 刷新绘制队列并申请前后台缓冲交换
+ * -> 鐏忓棛鈻堥悿蹇旀偝缁便垻缍夐弽濂稿櫢闁插洦鐗辨稉铏诡焼鐎靛棙妯夌粈鍝勬簚
+ * -> 閸欘垶鈧婀撮幎濠勭矎閹兼粎鍌ㄧ紒鎾寸亯闁插秵鏌婇摶宥呮値閸掔増妯夌粈鍝勬簚
+ * -> 鐎电懓婧€閸嬫艾閽╁鎴濇嫲閸斻劍鈧礁缍婃稉鈧崠? * -> 閸掑棗娼￠崘娆忓弳 LTDC 閸氬骸褰寸紓鎾冲暱
+ * -> 閸欑姴濮炴潏瑙勵攱閵嗕礁鍣弰鐔粹偓浣稿槻閸婂吋顢嬮崪灞炬瀮閺? * -> 閸掗攱鏌婄紒妯哄煑闂冪喎鍨獮鍓佹暤鐠囧嘲澧犻崥搴″酱缂傛挸鍟挎禍銈嗗床
  *
- * 阅读建议：
- * - `App_Display_Init` 关注初始化、布局计算和缓冲绑定。
- * - `s_prepare_field` 关注算法结果如何变成可绘制场。
- * - `s_update_norm_field` 关注动态范围压缩与亮度稳定机制。
- * - `s_render_field_rows` 关注如何把 8bit 热力图送上屏幕。
- * - `App_Display_Render` 关注每帧完整时序与实时性取舍。
- */
+ * 闂冨懓顕板楦款唴閿? * - `App_Display_Init` 閸忚櫕鏁為崚婵嗩潗閸栨牓鈧礁绔风仦鈧拋锛勭暬閸滃瞼绱﹂崘鑼拨鐎规哎鈧? * - `s_prepare_field` 閸忚櫕鏁炵粻妤佺《缂佹挻鐏夋俊鍌欑秿閸欐ɑ鍨氶崣顖滅帛閸掕泛婧€閵? * - `s_update_norm_field` 閸忚櫕鏁為崝銊︹偓浣藉瘱閸ユ潙甯囩紓鈺€绗屾禍顔煎缁嬪啿鐣鹃張鍝勫煑閵? * - `s_render_field_rows` 閸忚櫕鏁炴俊鍌欑秿閹?8bit 閻戭厼濮忛崶楣冣偓浣风瑐鐏炲繐绠烽妴? * - `App_Display_Render` 閸忚櫕鏁炲В蹇撴姎鐎瑰本鏆ｉ弮璺虹碍娑撳骸鐤勯弮鑸碘偓褍褰囬懜宥冣偓? */
 #include "app_display.h"
 #include "app_main_task.h"
 #include "app_perf.h"
@@ -40,25 +28,22 @@
 #include <string.h>
 
 
-/* 显示中间场相关宏：
- * 这里的“field”不是 LCD 实际像素，而是绘制前的中间网格。
- * 这样设计的好处是：
- * - 分辨率比粗/细搜索网格高，足以获得较平滑的热力图；
- * - 分辨率又远小于整屏逐像素处理，节省 RAM 和计算量；
- * - 后续无论采用最近邻还是双线性放大，都有统一的数据来源。 */
+/* 閺勫墽銇氭稉顓㈡？閸﹁櫣娴夐崗鍐茬暞閿? * 鏉╂瑩鍣烽惃鍕ㄢ偓娓噄eld閳ユ繀绗夐弰?LCD 鐎圭偤妾崓蹇曠閿涘矁鈧本妲哥紒妯哄煑閸撳秶娈戞稉顓㈡？缂冩垶鐗搁妴? * 鏉╂瑦鐗辩拋鎹愵吀閻ㄥ嫬銈芥径鍕Ц閿? * - 閸掑棜椴搁悳鍥ㄧ槷缁?缂佸棙鎮崇槐銏㈢秹閺嶅ジ鐝敍宀冨喕娴犮儴骞忓妤勭窛楠炶櫕绮﹂惃鍕劰閸旀稑娴橀敍? * - 閸掑棜椴搁悳鍥у嫉鏉╂粌鐨禍搴㈡殻鐏炲繘鈧劕鍎氱槐鐘差槱閻炲棴绱濋懞鍌滄阜 RAM 閸滃矁顓哥粻妤呭櫤閿? * - 閸氬海鐢婚弮鐘侯啈闁插洨鏁ら張鈧潻鎴﹀仸鏉╂ɑ妲搁崣宀€鍤庨幀褎鏂佹径褝绱濋柈鑺ユ箒缂佺喍绔撮惃鍕殶閹诡喗娼靛┃鎰┾偓?*/
 #define APP_DISPLAY_FIELD_PIXELS      (APP_DISPLAY_FIELD_W * APP_DISPLAY_FIELD_H)
 #define APP_DISPLAY_BLUR_KERNEL_LEN   (2u * APP_DISPLAY_SMOOTH_RADIUS + 1u)
 #define APP_DISPLAY_FINE_KERNEL_LEN   (2u * APP_DISPLAY_FINE_KERNEL_RADIUS + 1u)
+#define APP_DISPLAY_CAMERA_CACHE_ADDR 0xC0600000u
+#define APP_DISPLAY_CAMERA_CACHE_BYTES (APP_DISPLAY_CAMERA_VIEW_W * APP_DISPLAY_CAMERA_VIEW_H * 2u)
+#define APP_DISPLAY_CAMERA_CACHE_LIMIT 0xC2000000u
+#if ((APP_CAMERA_ENABLE != 0u) && ((APP_DISPLAY_CAMERA_CACHE_ADDR + APP_DISPLAY_CAMERA_CACHE_BYTES) > APP_DISPLAY_CAMERA_CACHE_LIMIT))
+#error "Camera display cache must stay inside SDRAM"
+#endif
 
 /* ---------------------------------------------------------------------------
- * 模块状态
- * ---------------------------------------------------------------------------
- * 下列静态变量都属于“显示模块私有状态”，不是算法状态本身。
- * 可按用途分为几组：
- * - 生命周期状态：初始化是否完成、在哪一步失败
- * - 布局状态：热力图区域和文本区域在 LCD 上的矩形范围
- * - 动态状态：EMA 峰值、噪声底、文本刷新节流信息
- * - 缓存/LUT 状态：为减少逐帧重复计算而保留的辅助数据
+ * 濡€虫健閻樿埖鈧? * ---------------------------------------------------------------------------
+ * 娑撳鍨棃娆愨偓浣稿綁闁插繘鍏樼仦鐐扮艾閳ユ粍妯夌粈鐑樐侀崸妤冾潌閺堝濮搁幀浣测偓婵撶礉娑撳秵妲哥粻妤佺《閻樿埖鈧焦婀伴煬顐犫偓? * 閸欘垱瀵滈悽銊┾偓鏂垮瀻娑撳搫鍤戠紒鍕剁窗
+ * - 閻㈢喎鎳￠崨銊︽埂閻樿埖鈧緤绱伴崚婵嗩潗閸栨牗妲搁崥锕€鐣幋鎰┾偓浣告躬閸濐亙绔村銉ャ亼鐠? * - 鐢啫鐪悩鑸碘偓渚婄窗閻戭厼濮忛崶鎯у隘閸╃喎鎷伴弬鍥ㄦ拱閸栧搫鐓欓崷?LCD 娑撳﹦娈戦惌鈺佽埌閼煎啫娲?
+ * - 閸斻劍鈧胶濮搁幀渚婄窗EMA 瀹勬澘鈧鈧礁娅旀竟鏉跨俺閵嗕焦鏋冮張顒€鍩涢弬鎷屽Ν濞翠椒淇婇幁? * - 缂傛挸鐡?LUT 閻樿埖鈧緤绱版稉鍝勫櫤鐏忔垿鈧劕鎶氶柌宥咁槻鐠侊紕鐣婚懓灞肩箽閻ｆ瑧娈戞潏鍛И閺佺増宓?
  */
 static uint8_t s_ready = 0u;
 volatile uint32_t g_display_init_stage = 0u;
@@ -69,6 +54,11 @@ static uint16_t s_map_y0 = 0u;
 static uint16_t s_map_x1 = 0u;
 static uint16_t s_map_y1 = 0u;
 static uint16_t s_text_x = 0u;
+static uint16_t s_camera_x0 = 0u;
+static uint16_t s_camera_y0 = 0u;
+static uint16_t s_camera_x1 = 0u;
+static uint16_t s_camera_y1 = 0u;
+static uint16_t s_ui_x1 = 0u;
 
 static float s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
 static float s_last_noise_floor = 0.0f;
@@ -81,15 +71,27 @@ static uint32_t s_fb_addr_a = 0u;
 static uint32_t s_fb_addr_b = 0u;
 static uint16_t s_cache_map_w = 0u;
 static uint16_t s_cache_map_h = 0u;
+static uint16_t s_camera_cache_map_w = 0u;
+static uint16_t s_camera_cache_map_h = 0u;
+static uint16_t s_camera_cache_src_w = 0u;
+static uint16_t s_camera_cache_src_h = 0u;
+static uint16_t *const s_camera_cache_pixels = (uint16_t *)APP_DISPLAY_CAMERA_CACHE_ADDR;
+static uint32_t s_camera_cache_seq = 0u;
+static uint8_t s_camera_cache_valid = 0u;
+static uint16_t s_camera_freeze_w = 0u;
+static uint16_t s_camera_freeze_h = 0u;
+static uint16_t s_camera_freeze_stride = 0u;
+static uint8_t s_camera_freeze_valid = 0u;
+static uint32_t s_dbg_camera_path_count = 0u;
+static uint32_t s_dbg_camera_overlay_count = 0u;
+static uint32_t s_dbg_camera_input_seq = 0u;
+static App_Display_CameraView_t s_camera_view_mode = APP_DISPLAY_CAMERA_VIEW_OVERLAY;
 
-/* 工作缓冲区说明：
+/* 瀹搞儰缍旂紓鎾冲暱閸栭缚顕╅弰搴窗
  * - `s_field_a` / `s_field_b`
- *   保存浮点显示场。之所以使用双缓冲，是为了卷积/平滑时避免“边读边写”
- *   导致结果污染。
- * - `s_field_norm_u8`
- *   保存归一化后的 8bit 强度图，是最终着色和上屏的直接输入。
- * - `s_blit_buf` / `s_blit_l8_buf`
- *   保存分块渲染时的临时行块数据，兼顾 DMA2D/LTDC 加速路径和软件回退路径。 */
+ *   娣囨繂鐡ㄥù顔惧仯閺勫墽銇氶崷鎭掆偓鍌欑閹碘偓娴犮儰濞囬悽銊ュ蓟缂傛挸鍟块敍灞炬Ц娑撹桨绨￠崡椋幮?楠炶櫕绮﹂弮鍫曚缉閸忓秮鈧粏绔熺拠鏄忕珶閸愭瑢鈧? *   鐎佃壈鍤х紒鎾寸亯濮光剝鐓嬮妴? * - `s_field_norm_u8`
+ *   娣囨繂鐡ㄨぐ鎺嶇閸栨牕鎮楅惃?8bit 瀵搫瀹抽崶鎾呯礉閺勵垱娓剁紒鍫㈡絻閼规彃鎷版稉濠傜潌閻ㄥ嫮娲块幒銉ㄧ翻閸忋儯鈧? * - `s_blit_buf` / `s_blit_l8_buf`
+ *   娣囨繂鐡ㄩ崚鍡楁健濞撳弶鐓嬮弮鍓佹畱娑撳瓨妞傜悰灞芥健閺佺増宓侀敍灞藉悑妞?DMA2D/LTDC 閸旂娀鈧喕鐭惧鍕嫲鏉烆垯娆㈤崶鐐衡偓鈧捄顖氱窞閵?*/
 __SECTION_AXI_SRAM static float s_field_a[APP_DISPLAY_FIELD_PIXELS];
 __SECTION_AXI_SRAM static float s_field_b[APP_DISPLAY_FIELD_PIXELS];
 __SECTION_AXI_SRAM static uint8_t s_field_norm_u8[APP_DISPLAY_FIELD_PIXELS];
@@ -104,11 +106,10 @@ static uint16_t s_col_near_cache[APP_DISPLAY_MAX_LINE_PIXELS];
 static uint16_t s_col_x0_cache[APP_DISPLAY_MAX_LINE_PIXELS];
 static uint16_t s_col_x1_cache[APP_DISPLAY_MAX_LINE_PIXELS];
 static uint16_t s_col_wx256_cache[APP_DISPLAY_MAX_LINE_PIXELS];
+static uint16_t s_camera_row_near_cache[APP_DISPLAY_MAX_LINE_PIXELS];
+static uint16_t s_camera_col_near_cache[APP_DISPLAY_MAX_LINE_PIXELS];
 
-/* 预计算表：
- * - `s_blur_kernel`：一维平滑核，供可分离模糊使用
- * - `s_fine_kernel`：二维细搜索扩散核，把细网格点能量“撒”回显示场
- * - `s_heat_lut`：把 0..255 强度映射为 RGB565 热力图颜色 */
+/* 妫板嫯顓哥粻妤勩€冮敍? * - `s_blur_kernel`閿涙矮绔寸紒鏉戦挬濠婃垶鐗抽敍灞肩返閸欘垰鍨庣粋缁樐佺化濠佸▏閻? * - `s_fine_kernel`閿涙矮绨╃紒瀵哥矎閹兼粎鍌ㄩ幍鈺傛殠閺嶉潻绱濋幎濠勭矎缂冩垶鐗搁悙纭呭厴闁插繆鈧粍鎷婚垾婵嗘礀閺勫墽銇氶崷? * - `s_heat_lut`閿涙碍濡?0..255 瀵搫瀹抽弰鐘茬殸娑?RGB565 閻戭厼濮忛崶楣冾杹閼?*/
 static float s_blur_kernel[APP_DISPLAY_BLUR_KERNEL_LEN];
 static float s_fine_kernel[APP_DISPLAY_FINE_KERNEL_LEN * APP_DISPLAY_FINE_KERNEL_LEN];
 static uint16_t s_heat_lut[APP_DISPLAY_HEAT_LUT_SIZE];
@@ -163,13 +164,30 @@ static App_Display_RuntimeCfg_t s_cfg = {
 #endif
 };
 
-/* 几何缓存刷新函数在文件后半段定义。
- * 它负责把 LCD 坐标到显示场坐标的映射预先算好。 */
+/* 閸戠姳缍嶇紓鎾崇摠閸掗攱鏌婇崙鑺ユ殶閸︺劍鏋冩禒璺烘倵閸楀﹥顔岀€规矮绠熼妴? * 鐎瑰啳绀嬬拹锝嗗Ω LCD 閸ф劖鐖ｉ崚鐗堟▔缁€鍝勬簚閸ф劖鐖ｉ惃鍕Ё鐏忓嫰顣╅崗鍫㈢暬婵傚鈧?*/
 void s_refresh_render_map_cache(uint16_t map_w, uint16_t map_h);
+static void s_refresh_camera_scale_cache(uint16_t map_w, uint16_t map_h, uint16_t src_w, uint16_t src_h);
+static uint32_t s_display_frame_budget_ms(void);
+static uint8_t s_flush_temp_draw(void);
+static void s_submit_rgb565_block(uint16_t sx,
+                                  uint16_t sy,
+                                  uint16_t ex,
+                                  uint16_t ey,
+                                  uint16_t *pixels);
+static void s_clean_dcache_by_addr(const void *addr, uint32_t size);
+static uint16_t s_blend_rgb565(uint16_t bg, uint16_t fg, uint8_t alpha);
+static uint8_t s_overlay_alpha_from_norm(uint8_t norm);
+static void s_clear_scene_gutters(void);
+static void s_update_camera_cache_from_frame(const App_CameraFrame_t *camera_frame);
+static uint8_t s_blit_camera_cache_region(uint16_t dst_x0,
+                                          uint16_t dst_y0,
+                                          uint16_t width,
+                                          uint16_t height,
+                                          uint16_t src_x0,
+                                          uint16_t src_y0);
+static void s_render_camera_frame_rows(const App_CameraFrame_t *camera_frame);
 
-/* 通用钳位工具：
- * 显示链路中存在大量“用户可调参数”和“浮点转整数”的过程，
- * 钳位函数用于保证数据不会越过合法边界。 */
+/* 闁氨鏁ら柦鍏呯秴瀹搞儱鍙块敍? * 閺勫墽銇氶柧鎹愮熅娑擃厼鐡ㄩ崷銊ャ亣闁插繆鈧粎鏁ら幋宄板讲鐠嬪啫寮弫鎵斥偓婵嗘嫲閳ユ粍璇為悙纭呮祮閺佸瓨鏆熼垾婵堟畱鏉╁洨鈻奸敍? * 闁藉厖缍呴崙鑺ユ殶閻劋绨穱婵婄槈閺佺増宓佹稉宥勭窗鐡掑﹨绻冮崥鍫熺《鏉堝湱鏅妴?*/
 static float s_clamp_f32(float v, float lo, float hi)
 {
     if (v < lo)
@@ -183,8 +201,7 @@ static float s_clamp_f32(float v, float lo, float hi)
     return v;
 }
 
-/* 将 8 位无符号值限制在 `[lo, hi]` 范围内。
- * 主要用于运行时配置的枚举/小范围参数修正。 */
+/* 鐏?8 娴ｅ秵妫ょ粭锕€褰块崐濂告閸掕泛婀?`[lo, hi]` 閼煎啫娲块崘鍛偓? * 娑撴槒顩﹂悽銊ょ艾鏉╂劘顢戦弮鍫曞帳缂冾喚娈戦弸姘/鐏忓繗瀵栭崶鏉戝棘閺侀鎱ㄥ锝冣偓?*/
 static uint8_t s_clamp_u8(uint8_t v, uint8_t lo, uint8_t hi)
 {
     if (v < lo)
@@ -198,8 +215,7 @@ static uint8_t s_clamp_u8(uint8_t v, uint8_t lo, uint8_t hi)
     return v;
 }
 
-/* 将有符号中间值限制到 16 位无符号合法范围。
- * 常用于像素坐标计算完成后的安全落地。 */
+/* 鐏忓棙婀佺粭锕€褰挎稉顓㈡？閸婂ジ妾洪崚璺哄煂 16 娴ｅ秵妫ょ粭锕€褰块崥鍫熺《閼煎啫娲块妴? * 鐢摜鏁ゆ禍搴″剼缁辩姴娼楅弽鍥吀缁犳鐣幋鎰倵閻ㄥ嫬鐣ㄩ崗銊ㄦ儰閸﹁埇鈧?*/
 static uint16_t s_clamp_u16(int32_t v, uint16_t lo, uint16_t hi)
 {
     if (v < (int32_t)lo)
@@ -213,8 +229,7 @@ static uint16_t s_clamp_u16(int32_t v, uint16_t lo, uint16_t hi)
     return (uint16_t)v;
 }
 
-/* 把 8bit 的 R/G/B 三通道压缩为 RGB565。
- * 这是软件回退着色路径使用的基础颜色打包函数。 */
+/* 閹?8bit 閻?R/G/B 娑撳鈧岸浜鹃崢瀣級娑?RGB565閵? * 鏉╂瑦妲告潪顖欐閸ョ偤鈧偓閻偓閼硅尪鐭惧鍕▏閻劎娈戦崺铏诡攨妫版粏澹婇幍鎾冲瘶閸戣姤鏆熼妴?*/
 static uint16_t s_rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
     return (uint16_t)(((uint16_t)(r & 0xF8u) << 8) |
@@ -222,12 +237,10 @@ static uint16_t s_rgb565(uint8_t r, uint8_t g, uint8_t b)
                       ((uint16_t)b >> 3));
 }
 
-/* 输入 `0.0f ~ 1.0f` 的热度比例，输出对应的 RGB565 热力图颜色。
- * 函数内部通过 5 个色标控制点做分段线性插值。 */
+/* 鏉堟挸鍙?`0.0f ~ 1.0f` 閻ㄥ嫮鍎规惔锔界槷娓氬绱濇潏鎾冲毉鐎电懓绨查惃?RGB565 閻戭厼濮忛崶楣冾杹閼瑰眰鈧? * 閸戣姤鏆熼崘鍛村劥闁俺绻?5 娑擃亣澹婇弽鍥ㄥ付閸掑墎鍋ｉ崑姘瀻濞堢數鍤庨幀褎褰冮崐绗衡偓?*/
 static uint16_t s_heat_color(float t)
 {
-    /* 颜色渐变采用少量控制点线性插值，而不是运行时计算复杂色图。
-     * 这样既容易调色，也便于后续预生成 256 级 LUT。 */
+    /* 妫版粏澹婂〒鎰綁闁插洨鏁ょ亸鎴﹀櫤閹貉冨煑閻愬湱鍤庨幀褎褰冮崐纭风礉閼板奔绗夐弰顖濈箥鐞涘本妞傜拋锛勭暬婢跺秵娼呴懝鎻掓禈閵?     * 鏉╂瑦鐗遍弮銏狀啇閺勬捁鐨熼懝璇х礉娑旂喍绌舵禍搴℃倵缂侇參顣╅悽鐔稿灇 256 缁?LUT閵?*/
     typedef struct
     {
         uint8_t r;
@@ -262,11 +275,10 @@ static uint16_t s_heat_color(float t)
     return s_rgb565(r, g, b);
 }
 
-/* 构建 256 级热力图颜色查找表。
- * 后续只要拿强度值作为索引即可直接得到显示颜色。 */
+/* 閺嬪嫬缂?256 缁狙呭劰閸旀稑娴樻０婊嗗閺屻儲澹樼悰銊ｂ偓? * 閸氬海鐢婚崣顏囶洣閹峰灝宸辨惔锕€鈧棿缍旀稉铏瑰偍瀵洖宓嗛崣顖滄纯閹恒儱绶遍崚鐗堟▔缁€娲杹閼瑰眰鈧?*/
 static void s_build_heat_lut(void)
 {
-    /* 预先把 0..255 的热度等级转换成 RGB565，避免逐像素重复算颜色。 */
+    /* 妫板嫬鍘涢幎?0..255 閻ㄥ嫮鍎规惔锔剧搼缁狙嗘祮閹广垺鍨?RGB565閿涘矂浼╅崗宥夆偓鎰剼缁辩娀鍣告径宥囩暬妫版粏澹婇妴?*/
     uint32_t i;
 
     for (i = 0u; i < APP_DISPLAY_HEAT_LUT_SIZE; i++)
@@ -275,17 +287,13 @@ static void s_build_heat_lut(void)
     }
 }
 
-/* 构建显示模块所需的全部核函数。
- * 包括：
- * - 一维模糊核：供横向/纵向可分离平滑
- * - 二维细融合核：供细搜索能量扩散
- *
- * 该函数具备“只初始化一次”的保护。 */
+/* 閺嬪嫬缂撻弰鍓с仛濡€虫健閹碘偓闂団偓閻ㄥ嫬鍙忛柈銊︾壋閸戣姤鏆熼妴? * 閸栧懏瀚敍? * - 娑撯偓缂佸瓨膩缁﹥鐗抽敍姘返濡亜鎮?缁鹃潧鎮滈崣顖氬瀻缁傝閽╁? * - 娴滃瞼娣紒鍡氱€洪崥鍫熺壋閿涙矮绶电紒鍡樻偝缁便垼鍏橀柌蹇斿⒖閺? *
+ * 鐠囥儱鍤遍弫鏉垮徔婢跺洠鈧粌褰ч崚婵嗩潗閸栨牔绔村▎鈾€鈧繄娈戞穱婵囧Б閵?*/
 static void s_build_kernels(void)
 {
-    /* 本函数只需执行一次：
-     * - 构建一维平滑核，供横向/纵向两次卷积复用
-     * - 构建二维细融合核，把离散细峰值扩展为更易观察的能量团 */
+    /* 閺堫剙鍤遍弫鏉垮涧闂団偓閹笛嗩攽娑撯偓濞嗏槄绱?
+     * - 閺嬪嫬缂撴稉鈧紒鏉戦挬濠婃垶鐗抽敍灞肩返濡亜鎮?缁鹃潧鎮滄稉銈嗩偧閸楅袧婢跺秶鏁?
+     * - 閺嬪嫬缂撴禍宀€娣紒鍡氱€洪崥鍫熺壋閿涘本濡哥粋缁樻殠缂佸棗鍢查崐鍏煎⒖鐏炴洑璐熼弴瀛樻鐟欏倸鐧傞惃鍕厴闁插繐娲?*/
     uint32_t i;
     uint32_t j;
     float sum = 0.0f;
@@ -334,7 +342,7 @@ static void s_build_kernels(void)
     s_kernel_ready = 1u;
 }
 
-/* 把模式枚举转换为短标签字符串，主要给侧边栏显示使用。 */
+/* 閹跺﹥膩瀵繑鐏囨稉鎹愭祮閹诡澀璐熼惌顓熺垼缁涙儳鐡х粭锔胯閿涘奔瀵岀憰浣虹舶娓氀嗙珶閺嶅繑妯夌粈杞板▏閻劊鈧?*/
 const char *App_Display_ModeName(App_Display_Mode_t mode)
 {
     switch (mode)
@@ -349,7 +357,7 @@ const char *App_Display_ModeName(App_Display_Mode_t mode)
     }
 }
 
-/* 把插值模式转换为短标签字符串。 */
+/* 閹跺﹥褰冮崐鍏寄佸蹇氭祮閹诡澀璐熼惌顓熺垼缁涙儳鐡х粭锔胯閵?*/
 const char *App_Display_InterpName(App_Display_Interp_t interp)
 {
     if (interp == APP_DISPLAY_INTERP_BILINEAR)
@@ -359,7 +367,7 @@ const char *App_Display_InterpName(App_Display_Interp_t interp)
     return "NEAR";
 }
 
-/* 把归一化模式转换为短标签字符串。 */
+/* 閹跺﹤缍婃稉鈧崠鏍佸蹇氭祮閹诡澀璐熼惌顓熺垼缁涙儳鐡х粭锔胯閵?*/
 const char *App_Display_NormName(App_Display_Norm_t norm)
 {
     if (norm == APP_DISPLAY_NORM_FULL)
@@ -369,12 +377,26 @@ const char *App_Display_NormName(App_Display_Norm_t norm)
     return "FAST";
 }
 
-/* 根据预设模式装载一组推荐参数。
- * 注意这里只是填充 `cfg`，真正生效仍需调用 `App_Display_SetConfig`。 */
+const char *App_Display_CameraViewName(App_Display_CameraView_t view_mode)
+{
+    switch (view_mode)
+    {
+        case APP_DISPLAY_CAMERA_VIEW_CAMERA_ONLY:
+            return "CAM";
+        case APP_DISPLAY_CAMERA_VIEW_CAMERA_FREEZE:
+            return "FRZ";
+        case APP_DISPLAY_CAMERA_VIEW_HEAT_ONLY:
+            return "HEAT";
+        case APP_DISPLAY_CAMERA_VIEW_OVERLAY:
+        default:
+            return "OVLY";
+    }
+}
+
+/* 閺嶈宓佹０鍕啎濡€崇础鐟佸懓娴囨稉鈧紒鍕腹閼芥劕寮弫鑸偓? * 濞夈劍鍓版潻娆撳櫡閸欘亝妲告繅顐㈠帠 `cfg`閿涘瞼婀″锝囨晸閺佸牅绮涢棁鈧拫鍐暏 `App_Display_SetConfig`閵?*/
 static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg_t *cfg)
 {
-    /* 预设模式不是简单的“单参数开关”，而是整组参数协同调整。
-     * 这样可以保证用户切换模式后，显示观感是成体系变化的。 */
+    /* 妫板嫯顔曞Ο鈥崇础娑撳秵妲哥粻鈧崡鏇犳畱閳ユ粌宕熼崣鍌涙殶瀵偓閸忔枼鈧繐绱濋懓灞炬Ц閺佸绮嶉崣鍌涙殶閸楀繐鎮撶拫鍐╂殻閵?     * 鏉╂瑦鐗遍崣顖欎簰娣囨繆鐦夐悽銊﹀煕閸掑洦宕插Ο鈥崇础閸氬函绱濋弰鍓с仛鐟欏倹鍔呴弰顖涘灇娴ｆ挾閮撮崣妯哄閻ㄥ嫨鈧?*/
     if (cfg == NULL)
     {
         return;
@@ -436,15 +458,12 @@ static void s_load_mode_defaults(App_Display_Mode_t mode, App_Display_RuntimeCfg
     }
 }
 
-/* 写入运行时配置。
- * 关键点：
- * - 对所有数值做合法区间钳位
- * - 对布尔开关做 0/1 归一化
- * - 配置变化后使归一化 LUT 失效，确保后续按新参数重建 */
+/* 閸愭瑥鍙嗘潻鎰攽閺冨爼鍘ょ純顔衡偓? * 閸忔娊鏁悙鐧哥窗
+ * - 鐎佃澧嶉張澶嬫殶閸婄厧浠涢崥鍫熺《閸栨椽妫块柦鍏呯秴
+ * - 鐎电懓绔风亸鏂跨磻閸忓啿浠?0/1 瑜版帊绔撮崠? * - 闁板秶鐤嗛崣妯哄閸氬簼濞囪ぐ鎺嶇閸?LUT 婢惰鲸鏅ラ敍宀€鈥樻穱婵嗘倵缂侇厽瀵滈弬鏉垮棘閺佷即鍣稿?*/
 void App_Display_SetConfig(const App_Display_RuntimeCfg_t *cfg)
 {
-    /* 所有运行时配置在这里统一做边界修正，避免非法配置把后续渲染路径
-     * 推入未定义状态，例如负的 gamma、过大的 blit 行数等。 */
+    /* 閹碘偓閺堝绻嶇悰灞炬闁板秶鐤嗛崷銊ㄧ箹闁插瞼绮烘稉鈧崑姘崇珶閻ｅ奔鎱ㄥ锝忕礉闁灝鍘ら棃鐐寸《闁板秶鐤嗛幎濠傛倵缂侇厽瑕嗛弻鎾圭熅瀵?     * 閹恒劌鍙嗛張顏勭暰娑斿濮搁幀渚婄礉娓氬顩х拹鐔烘畱 gamma閵嗕浇绻冩径褏娈?blit 鐞涘本鏆熺粵澶堚偓?*/
     if (cfg == NULL)
     {
         return;
@@ -467,7 +486,7 @@ void App_Display_SetConfig(const App_Display_RuntimeCfg_t *cfg)
     s_norm_lut_valid = 0u;
 }
 
-/* 读取当前生效配置到调用者提供的结构体中。 */
+/* 鐠囪褰囪ぐ鎾冲閻㈢喐鏅ラ柊宥囩枂閸掓媽鐨熼悽銊ㄢ偓鍛絹娓氭稓娈戠紒鎾寸€担鎾茶厬閵?*/
 void App_Display_GetConfig(App_Display_RuntimeCfg_t *cfg)
 {
     if (cfg != NULL)
@@ -476,8 +495,45 @@ void App_Display_GetConfig(App_Display_RuntimeCfg_t *cfg)
     }
 }
 
-/* 切换显示模式。
- * 若输入非法模式，则回退到 `APP_DISPLAY_MODE_BALANCED`。 */
+void App_Display_GetDebugStats(App_Display_DebugStats_t *stats)
+{
+    if (stats == NULL)
+    {
+        return;
+    }
+
+    memset(stats, 0, sizeof(*stats));
+    stats->camera_view_mode = (uint8_t)s_camera_view_mode;
+    stats->camera_path_count = s_dbg_camera_path_count;
+    stats->camera_overlay_count = s_dbg_camera_overlay_count;
+    stats->camera_input_seq = s_dbg_camera_input_seq;
+    stats->camera_cache_seq = s_camera_cache_seq;
+    stats->camera_cache_valid = s_camera_cache_valid;
+}
+
+void App_Display_SetCameraView(App_Display_CameraView_t view_mode)
+{
+    if ((view_mode != APP_DISPLAY_CAMERA_VIEW_OVERLAY) &&
+        (view_mode != APP_DISPLAY_CAMERA_VIEW_CAMERA_ONLY) &&
+        (view_mode != APP_DISPLAY_CAMERA_VIEW_HEAT_ONLY) &&
+        (view_mode != APP_DISPLAY_CAMERA_VIEW_CAMERA_FREEZE))
+    {
+        view_mode = APP_DISPLAY_CAMERA_VIEW_OVERLAY;
+    }
+
+    s_camera_view_mode = view_mode;
+    s_camera_freeze_w = 0u;
+    s_camera_freeze_h = 0u;
+    s_camera_freeze_stride = 0u;
+    s_camera_freeze_valid = 0u;
+}
+
+App_Display_CameraView_t App_Display_GetCameraView(void)
+{
+    return s_camera_view_mode;
+}
+
+/* 閸掑洦宕查弰鍓с仛濡€崇础閵? * 閼汇儴绶崗銉╂姜濞夋洘膩瀵骏绱濋崚娆忔礀闁偓閸?`APP_DISPLAY_MODE_BALANCED`閵?*/
 void App_Display_SetMode(App_Display_Mode_t mode)
 {
     App_Display_RuntimeCfg_t mode_cfg;
@@ -494,24 +550,22 @@ void App_Display_SetMode(App_Display_Mode_t mode)
     App_Display_SetConfig(&mode_cfg);
 }
 
-/* 返回当前显示模式。 */
+/* 鏉╂柨娲栬ぐ鎾冲閺勫墽銇氬Ο鈥崇础閵?*/
 App_Display_Mode_t App_Display_GetMode(void)
 {
     return s_mode;
 }
 
-/* 返回显示模块是否已完成初始化。 */
+/* 鏉╂柨娲栭弰鍓с仛濡€虫健閺勵垰鎯佸鎻掔暚閹存劕鍨垫慨瀣閵?*/
 uint8_t App_Display_IsReady(void)
 {
     return s_ready;
 }
 
-/* 异步填充矩形区域。
- * 优先走 LTDC/DMA2D 异步路径；失败时回退到 `lcd_fill`。 */
+/* 瀵倹顒炴繅顐㈠帠閻晛鑸伴崠鍝勭厵閵? * 娴兼ê鍘涚挧?LTDC/DMA2D 瀵倹顒炵捄顖氱窞閿涙稑銇戠拹銉︽閸ョ偤鈧偓閸?`lcd_fill`閵?*/
 static void s_fill_rect_async(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint32_t color)
 {
-    /* 优先尝试异步加速填充；若底层不支持或提交失败，则回退到同步软件路径。
-     * 这样上层无需关心当前平台是否具备 DMA2D/LTDC 加速能力。 */
+    /* 娴兼ê鍘涚亸婵婄槸瀵倹顒為崝鐘烩偓鐔凤綖閸忓拑绱遍懟銉ョ俺鐏炲倷绗夐弨顖涘瘮閹存牗褰佹禍銈呫亼鐠愩儻绱濋崚娆忔礀闁偓閸掓澘鎮撳銉ㄨ拫娴犳儼鐭惧鍕┾偓?     * 鏉╂瑦鐗辨稉濠傜湴閺冪娀娓堕崗鍐茬妇瑜版挸澧犻獮鍐插酱閺勵垰鎯侀崗宄邦槵 DMA2D/LTDC 閸旂娀鈧喕鍏橀崝娑栤偓?*/
     if ((x0 > x1) || (y0 > y1))
     {
         return;
@@ -523,20 +577,19 @@ static void s_fill_rect_async(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1
     }
 }
 
-/* 绘制水平线，本质上是高度为 1 的矩形填充。 */
+/* 缂佹ê鍩楀鏉戦挬缁惧尅绱濋張顒冨窛娑撳﹥妲告妯哄娑?1 閻ㄥ嫮鐓╄ぐ銏狅綖閸忓懌鈧?*/
 static void s_draw_hline_async(uint16_t x0, uint16_t y, uint16_t x1, uint32_t color)
 {
     s_fill_rect_async(x0, y, x1, y, color);
 }
 
-/* 绘制垂直线，本质上是宽度为 1 的矩形填充。 */
+/* 缂佹ê鍩楅崹鍌滄纯缁惧尅绱濋張顒冨窛娑撳﹥妲哥€硅棄瀹虫稉?1 閻ㄥ嫮鐓╄ぐ銏狅綖閸忓懌鈧?*/
 static void s_draw_vline_async(uint16_t x, uint16_t y0, uint16_t y1, uint32_t color)
 {
     s_fill_rect_async(x, y0, x, y1, color);
 }
 
-/* 绘制空心矩形边框。
- * 通过四条边组合而成，不单独填充内部区域。 */
+/* 缂佹ê鍩楃粚鍝勭妇閻晛鑸版潏瑙勵攱閵? * 闁俺绻冮崶娑欐蒋鏉堝湱绮嶉崥鍫ｂ偓灞惧灇閿涘奔绗夐崡鏇犲婵夘偄鍘栭崘鍛村劥閸栧搫鐓欓妴?*/
 static void s_draw_rect_async(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint32_t color)
 {
     s_draw_hline_async(x0, y0, x1, color);
@@ -545,15 +598,13 @@ static void s_draw_rect_async(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1
     s_draw_vline_async(x1, y0, y1, color);
 }
 
-/* 识别当前后台缓冲属于哪一个槽位。
- * 返回值约定：
- * - `0`：后台缓冲等于 A
- * - `1`：后台缓冲等于 B
- * - `0xFF`：无法识别 */
+/* 鐠囧棗鍩嗚ぐ鎾冲閸氬骸褰寸紓鎾冲暱鐏炵偘绨崫顏冪娑擃亝蝎娴ｅ秲鈧? * 鏉╂柨娲栭崐鑲╁鐎规熬绱?
+ * - `0`閿涙艾鎮楅崣鎵处閸愯尙鐡戞禍?A
+ * - `1`閿涙艾鎮楅崣鎵处閸愯尙鐡戞禍?B
+ * - `0xFF`閿涙碍妫ゅ▔鏇＄槕閸?*/
 static uint8_t s_backbuf_slot(void)
 {
-    /* 根据后台缓冲地址判断当前正在绘制的是 A 还是 B。
-     * 文本面板刷新节流逻辑依赖这个槽位信息，避免双缓冲切换后节流状态错乱。 */
+    /* 閺嶈宓侀崥搴″酱缂傛挸鍟块崷鏉挎絻閸掋倖鏌囪ぐ鎾冲濮濓絽婀紒妯哄煑閻ㄥ嫭妲?A 鏉╂ɑ妲?B閵?     * 閺傚洦婀伴棃銏℃緲閸掗攱鏌婇懞鍌涚ウ闁槒绶笟婵婄鏉╂瑤閲滃Σ鎴掔秴娣団剝浼呴敍宀勪缉閸忓秴寮荤紓鎾冲暱閸掑洦宕查崥搴ゅΝ濞翠胶濮搁幀渚€鏁婃稊渚库偓?*/
     uint32_t back_addr = ltdc_get_backbuf_addr();
 
     if (back_addr == s_fb_addr_a)
@@ -567,15 +618,156 @@ static uint8_t s_backbuf_slot(void)
     return 0xFFu;
 }
 
-/* 提交本帧绘制结果。
- * 包括冲刷底层绘制队列以及申请 front/back swap。 */
+/* 閹绘劒姘﹂張顒€鎶氱紒妯哄煑缂佹挻鐏夐妴? * 閸栧懏瀚崘鎻掑煕鎼存洖鐪扮紒妯哄煑闂冪喎鍨禒銉ュ挤閻㈠疇顕?front/back swap閵?*/
+static uint32_t s_display_frame_budget_ms(void)
+{
+    uint32_t fps = App_RuntimeConfig_GetUiTargetFps();
+    if (fps < UI_FPS_MIN)
+    {
+        fps = UI_FPS_MIN;
+    }
+    if (fps > UI_FPS_MAX)
+    {
+        fps = UI_FPS_MAX;
+    }
+    return (1000u + fps - 1u) / fps;
+}
+static uint8_t s_flush_temp_draw(void)
+{
+    if (ltdc_draw_flush(APP_DISPLAY_DMA2D_TIMEOUT) != 0u)
+    {
+        DMA2D_Accel_Reset();
+        return 0u;
+    }
+    return 1u;
+}
+static void s_submit_rgb565_block(uint16_t sx,
+                                  uint16_t sy,
+                                  uint16_t ex,
+                                  uint16_t ey,
+                                  uint16_t *pixels)
+{
+    if ((pixels == NULL) || (sx > ex) || (sy > ey))
+    {
+        return;
+    }
+    if (ltdc_color_fill_async(sx, sy, ex, ey, pixels) == 0u)
+    {
+        return;
+    }
+    if (s_flush_temp_draw() != 0u)
+    {
+        return;
+    }
+    DMA2D_Accel_Reset();
+    lcd_color_fill(sx, sy, ex, ey, pixels);
+}
+
+static void s_clean_dcache_by_addr(const void *addr, uint32_t size)
+{
+#if (__DCACHE_PRESENT == 1U)
+    uintptr_t start_addr;
+    uintptr_t end_addr;
+    uintptr_t aligned_addr;
+    uint32_t aligned_size;
+
+    if ((addr == NULL) || (size == 0u))
+    {
+        return;
+    }
+
+    start_addr = (uintptr_t)addr;
+    end_addr = start_addr + (uintptr_t)size;
+    aligned_addr = start_addr & ~(uintptr_t)31u;
+    aligned_size = (uint32_t)(((end_addr + 31u) & ~(uintptr_t)31u) - aligned_addr);
+    SCB_CleanDCache_by_Addr((uint32_t *)aligned_addr, (int32_t)aligned_size);
+#else
+    (void)addr;
+    (void)size;
+#endif
+}
+
+static uint16_t s_blend_rgb565(uint16_t bg, uint16_t fg, uint8_t alpha)
+{
+    uint32_t a = (uint32_t)alpha;
+    uint32_t inv = 255u - a;
+    uint32_t bg_r = (bg >> 11) & 0x1Fu;
+    uint32_t bg_g = (bg >> 5) & 0x3Fu;
+    uint32_t bg_b = bg & 0x1Fu;
+    uint32_t fg_r = (fg >> 11) & 0x1Fu;
+    uint32_t fg_g = (fg >> 5) & 0x3Fu;
+    uint32_t fg_b = fg & 0x1Fu;
+    uint32_t out_r = (bg_r * inv + fg_r * a + 127u) / 255u;
+    uint32_t out_g = (bg_g * inv + fg_g * a + 127u) / 255u;
+    uint32_t out_b = (bg_b * inv + fg_b * a + 127u) / 255u;
+
+    return (uint16_t)((out_r << 11) | (out_g << 5) | out_b);
+}
+static uint8_t s_overlay_alpha_from_norm(uint8_t norm)
+{
+    uint32_t scaled;
+    uint32_t curved;
+
+    if (norm <= 24u)
+    {
+        return 0u;
+    }
+
+    scaled = ((uint32_t)(norm - 24u) * 255u + 115u) / 231u;
+    if (scaled > 255u)
+    {
+        scaled = 255u;
+    }
+    curved = (scaled * scaled + 127u) / 255u;
+    if (curved > 255u)
+    {
+        curved = 255u;
+    }
+    return (uint8_t)((curved * ((uint32_t)APP_CAMERA_OVERLAY_ALPHA_MAX / 2u) + 127u) / 255u);
+}
+static void s_clear_scene_gutters(void)
+{
+    uint16_t left_w = s_text_x;
+    uint16_t screen_h = lcddev.height;
+
+    if ((left_w == 0u) || (screen_h == 0u) ||
+        (s_map_x1 < s_map_x0) || (s_map_y1 < s_map_y0))
+    {
+        return;
+    }
+
+    if (s_map_y0 > 0u)
+    {
+        s_fill_rect_async(0u, 0u, (uint16_t)(left_w - 1u), (uint16_t)(s_map_y0 - 1u), BLACK);
+    }
+    if (((uint32_t)s_map_y1 + 1u) < (uint32_t)screen_h)
+    {
+        s_fill_rect_async(0u,
+                          (uint16_t)(s_map_y1 + 1u),
+                          (uint16_t)(left_w - 1u),
+                          (uint16_t)(screen_h - 1u),
+                          BLACK);
+    }
+    if (s_map_x0 > 0u)
+    {
+        s_fill_rect_async(0u, s_map_y0, (uint16_t)(s_map_x0 - 1u), s_map_y1, BLACK);
+    }
+    if (((uint32_t)s_map_x1 + 1u) < (uint32_t)left_w)
+    {
+        s_fill_rect_async((uint16_t)(s_map_x1 + 1u),
+                          s_map_y0,
+                          (uint16_t)(left_w - 1u),
+                          s_map_y1,
+                          BLACK);
+    }
+}
 static void s_commit_frame(void)
 {
-    /* 提交阶段分两步：
-     * 1. 等待/刷新底层绘制队列
-     * 2. 若当前没有未完成交换，再申请一次 front/back swap
+    /* 閹绘劒姘﹂梼鑸殿唽閸掑棔琚卞銉窗
+     * 1. 缁涘绶?閸掗攱鏌婃惔鏇炵湴缂佹ê鍩楅梼鐔峰灙
+     * 2. 閼汇儱缍嬮崜宥嗙梾閺堝婀€瑰本鍨氭禍銈嗗床閿涘苯鍟€閻㈠疇顕稉鈧▎?front/back swap
      *
-     * 若 DMA2D 路径异常超时，会主动复位加速器，防止后续帧长期卡死。 */
+     * 閼?DMA2D 鐠侯垰绶炲鍌氱埗鐡掑懏妞傞敍灞肩窗娑撹濮╂径宥勭秴閸旂娀鈧喎娅掗敍宀勬Щ濮濄垹鎮楃紒顓炴姎闂€鎸庢埂閸椻剝顒撮妴?*/
     if (ltdc_draw_flush(APP_DISPLAY_DMA2D_TIMEOUT) != 0u)
     {
         DMA2D_Accel_Reset();
@@ -588,36 +780,22 @@ static void s_commit_frame(void)
     }
 }
 
-/* 初始化显示模块。
- * 这是整个模块的上电入口，负责：
- * - 建表
- * - 初始化 LCD
- * - 计算布局
- * - 获取帧缓冲地址
- * - 绘制首帧边框和背景 */
+/* 閸掓繂顫愰崠鏍ㄦ▔缁€鐑樐侀崸妞尖偓? * 鏉╂瑦妲搁弫缈犻嚋濡€虫健閻ㄥ嫪绗傞悽闈涘弳閸欙綇绱濈拹鐔荤煑閿? * - 瀵ら缚銆?
+ * - 閸掓繂顫愰崠?LCD
+ * - 鐠侊紕鐣荤敮鍐ㄧ湰
+ * - 閼惧嘲褰囩敮褏绱﹂崘鎻掓勾閸р偓
+ * - 缂佹ê鍩楁＃鏍ф姎鏉堣顢嬮崪宀冨剹閺?*/
 void App_Display_Init(void)
 {
-    /* 初始化显示链路所需的一切资源：
-     * - 预计算核函数和热力图颜色表
-     * - 清零运行期状态
-     * - 初始化 LCD/LTDC
-     * - 根据面板尺寸计算热力图区和文本区布局
-     * - 生成坐标映射缓存
-     * - 绑定前后台缓冲并清出首帧
-     *
-     * `g_display_init_stage` 会在过程中持续更新，目的是在没有调试器的环境下，
-     * 也能通过串口/监控变量快速判断卡在初始化哪一步。 */
     uint16_t draw_w;
     uint16_t draw_h;
-    uint16_t text_w;
-    uint16_t map_w;
-    uint16_t map_h;
-    uint16_t map_size;
-
+    uint16_t camera_w;
+    uint16_t camera_h;
+    uint16_t heat_w;
+    uint16_t heat_h;
     g_display_init_stage = 1u;
     g_display_init_error = 0u;
     s_ready = 0u;
-
     s_build_kernels();
     s_build_heat_lut();
     s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
@@ -628,73 +806,80 @@ void App_Display_Init(void)
     s_fb_addr_b = 0u;
     s_cache_map_w = 0u;
     s_cache_map_h = 0u;
+    s_camera_cache_map_w = 0u;
+    s_camera_cache_map_h = 0u;
+    s_camera_cache_src_w = 0u;
+    s_camera_cache_src_h = 0u;
+    s_camera_cache_seq = 0u;
+    s_camera_cache_valid = 0u;
+    s_camera_freeze_w = 0u;
+    s_camera_freeze_h = 0u;
+    s_camera_freeze_stride = 0u;
+    s_camera_freeze_valid = 0u;
+    s_dbg_camera_path_count = 0u;
+    s_dbg_camera_overlay_count = 0u;
+    s_dbg_camera_input_seq = 0u;
+    s_camera_view_mode = APP_DISPLAY_CAMERA_VIEW_OVERLAY;
     s_norm_lut_valid = 0u;
     App_Display_SetMode((App_Display_Mode_t)APP_DISPLAY_DEFAULT_MODE);
-
     g_display_init_stage = 2u;
     lcd_init();
-
     g_display_init_stage = 3u;
     draw_w = lcddev.width;
     draw_h = lcddev.height;
-
     if ((draw_w == 0u) || (draw_h == 0u))
     {
         g_display_init_error = 1u;
         g_display_init_stage = 0xE001u;
         return;
     }
-
-    text_w = (draw_w > (APP_DISPLAY_TEXT_WIDTH_PX + APP_DISPLAY_MARGIN_PX * 3u))
-             ? APP_DISPLAY_TEXT_WIDTH_PX
-             : (draw_w / 3u);
-    map_w = (uint16_t)(draw_w - (APP_DISPLAY_MARGIN_PX * 3u + text_w));
-    map_h = (uint16_t)(draw_h - (APP_DISPLAY_MARGIN_PX * 2u));
-    map_size = (map_w < map_h) ? map_w : map_h;
-    if (map_size > APP_DISPLAY_MAX_LINE_PIXELS)
-    {
-        map_size = APP_DISPLAY_MAX_LINE_PIXELS;
-    }
-    if (map_size < 32u)
+    if ((draw_w <= APP_DISPLAY_UI_PANEL_W) || (draw_h < 32u))
     {
         g_display_init_error = 2u;
         g_display_init_stage = 0xE002u;
         return;
     }
-
-    s_map_x0 = APP_DISPLAY_MARGIN_PX;
-    s_map_y0 = (uint16_t)((draw_h - map_size) / 2u);
-    s_map_x1 = (uint16_t)(s_map_x0 + map_size - 1u);
-    s_map_y1 = (uint16_t)(s_map_y0 + map_size - 1u);
-    s_text_x = (uint16_t)(s_map_x1 + APP_DISPLAY_MARGIN_PX);
+    camera_w = (uint16_t)(draw_w - APP_DISPLAY_UI_PANEL_W);
+    camera_h = draw_h;
+    heat_w = (camera_w < APP_DISPLAY_HEAT_VIEW_W) ? camera_w : (uint16_t)APP_DISPLAY_HEAT_VIEW_W;
+    heat_h = (camera_h < APP_DISPLAY_HEAT_VIEW_H) ? camera_h : (uint16_t)APP_DISPLAY_HEAT_VIEW_H;
+    if ((heat_w < 32u) || (heat_h < 32u))
+    {
+        g_display_init_error = 3u;
+        g_display_init_stage = 0xE003u;
+        return;
+    }
+    s_map_x0 = (uint16_t)((camera_w - heat_w) / 2u);
+    s_map_y0 = (uint16_t)((camera_h - heat_h) / 2u);
+    s_map_x1 = (uint16_t)(s_map_x0 + heat_w - 1u);
+    s_map_y1 = (uint16_t)(s_map_y0 + heat_h - 1u);
+    s_camera_x0 = s_map_x0;
+    s_camera_y0 = s_map_y0;
+    s_camera_x1 = s_map_x1;
+    s_camera_y1 = s_map_y1;
+    s_text_x = camera_w;
+    s_ui_x1 = (uint16_t)(draw_w - 1u);
     s_refresh_render_map_cache((uint16_t)(s_map_x1 - s_map_x0 + 1u),
                                (uint16_t)(s_map_y1 - s_map_y0 + 1u));
-
     g_display_init_stage = 4u;
     s_fb_addr_a = ltdc_get_frontbuf_addr();
     s_fb_addr_b = ltdc_get_backbuf_addr();
     DMA2D_Accel_LoadClutFromRgb565(s_heat_lut, APP_DISPLAY_HEAT_LUT_SIZE);
-
     s_fill_rect_async(0u, 0u, (uint16_t)(draw_w - 1u), (uint16_t)(draw_h - 1u), BLACK);
+    s_draw_rect_async(s_map_x0, s_map_y0, s_map_x1, s_map_y1, WHITE);
+    if (s_text_x > 0u)
     {
-        uint16_t bx0 = (s_map_x0 > 0u) ? (uint16_t)(s_map_x0 - 1u) : s_map_x0;
-        uint16_t by0 = (s_map_y0 > 0u) ? (uint16_t)(s_map_y0 - 1u) : s_map_y0;
-        uint16_t bx1 = ((uint32_t)s_map_x1 + 1u < draw_w) ? (uint16_t)(s_map_x1 + 1u) : s_map_x1;
-        uint16_t by1 = ((uint32_t)s_map_y1 + 1u < draw_h) ? (uint16_t)(s_map_y1 + 1u) : s_map_y1;
-        s_draw_rect_async(bx0, by0, bx1, by1, WHITE);
+        s_draw_vline_async((uint16_t)(s_text_x - 1u), 0u, (uint16_t)(draw_h - 1u), WHITE);
     }
     s_commit_frame();
-
     s_ready = 1u;
     g_display_init_stage = 0x8000u;
 }
 
-/* 对算法功率值做有效性过滤。
- * 只保留“有限且大于 0”的值，其余全部视为 0。 */
+/* 鐎靛湱鐣诲▔鏇炲閻滃洤鈧厧浠涢張澶嬫櫏閹嗙箖濠娿們鈧? * 閸欘亙绻氶悾娆屸偓婊勬箒闂勬劒绗栨径褌绨?0閳ユ繄娈戦崐纭风礉閸忔湹缍戦崗銊╁劥鐟欏棔璐?0閵?*/
 static float s_power_mag(float v)
 {
-    /* 算法输出中若出现 NaN、Inf 或负值，这里统一视为无效能量。
-     * 显示模块只接受“有限且非负”的功率值。 */
+    /* 缁犳纭舵潏鎾冲毉娑擃叀瀚㈤崙铏瑰箛 NaN閵嗕浮nf 閹存牞绀嬮崐纭风礉鏉╂瑩鍣风紒鐔剁鐟欏棔璐熼弮鐘虫櫏閼充粙鍣洪妴?     * 閺勫墽銇氬Ο鈥虫健閸欘亝甯撮崣妞烩偓婊勬箒闂勬劒绗栭棃鐐剁閳ユ繄娈戦崝鐔哄芳閸婄鈧?*/
     if (!isfinite(v) || (v <= 0.0f))
     {
         return 0.0f;
@@ -702,11 +887,10 @@ static float s_power_mag(float v)
     return v;
 }
 
-/* 按编译期开关把算法角度坐标映射到显示坐标系。 */
+/* 閹稿绱拠鎴炴埂瀵偓閸忚櫕濡哥粻妤佺《鐟欐帒瀹抽崸鎰垼閺勭姴鐨犻崚鐗堟▔缁€鍝勬綏閺嶅洨閮撮妴?*/
 static void s_apply_output_remap(float *x_angle, float *y_angle)
 {
-    /* 显示坐标系与算法坐标系可能不完全一致。
-     * 这里按编译期开关执行交换轴/翻转轴，保证画面方向符合屏幕安装方式。 */
+    /* 閺勫墽銇氶崸鎰垼缁绗岀粻妤佺《閸ф劖鐖ｇ化璇插讲閼虫垝绗夌€瑰苯鍙忔稉鈧懛娣偓?     * 鏉╂瑩鍣烽幐澶岀椽鐠囨垶婀″鈧崗铏⒔鐞涘奔姘﹂幑銏ｉ叡/缂堟槒娴嗘潪杈剧礉娣囨繆鐦夐悽濠氭桨閺傜懓鎮滅粭锕€鎮庣仦蹇撶鐎瑰顥婇弬鐟扮础閵?*/
 #if (SRP_OUTPUT_SWAP_XY != 0u)
     {
         float t = *x_angle;
@@ -722,11 +906,10 @@ static void s_apply_output_remap(float *x_angle, float *y_angle)
 #endif
 }
 
-/* 执行与 `s_apply_output_remap` 相反的坐标映射。 */
+/* 閹笛嗩攽娑?`s_apply_output_remap` 閻╃寮介惃鍕綏閺嶅洦妲х亸鍕┾偓?*/
 static void s_inverse_output_remap(float *x_angle, float *y_angle)
 {
-    /* 与 `s_apply_output_remap` 相反，用于从显示坐标回到算法原始坐标系。
-     * 典型用途是：当我们按“屏幕上的某个采样点”反查粗网格值时，需要先做逆映射。 */
+    /* 娑?`s_apply_output_remap` 閻╃寮介敍宀€鏁ゆ禍搴濈矤閺勫墽銇氶崸鎰垼閸ョ偛鍩岀粻妤佺《閸樼喎顫愰崸鎰垼缁眹鈧?     * 閸忕鐎烽悽銊┾偓鏃€妲搁敍姘秼閹存垳婊戦幐澶嗏偓婊冪潌楠炴洑绗傞惃鍕厙娑擃亪鍣伴弽椋庡仯閳ユ繂寮介弻銉х煐缂冩垶鐗搁崐鍏兼閿涘矂娓剁憰浣稿帥閸嬫岸鈧棙妲х亸鍕┾偓?*/
 #if (SRP_OUTPUT_INVERT_Y != 0u)
     *y_angle = -*y_angle;
 #endif
@@ -742,18 +925,12 @@ static void s_inverse_output_remap(float *x_angle, float *y_angle)
 #endif
 }
 
-/* 把粗搜索网格重采样到显示中间场 `s_field_a`。
- * 每个场点都通过角度反查回粗网格，并做双线性插值。 */
+/* 閹跺﹦鐭栭幖婊呭偍缂冩垶鐗搁柌宥夊櫚閺嶅嘲鍩岄弰鍓с仛娑擃參妫块崷?`s_field_a`閵? * 濮ｅ繋閲滈崷铏瑰仯闁粙鈧俺绻冪憴鎺戝閸欏秵鐓￠崶鐐电煐缂冩垶鐗搁敍灞借嫙閸嬫艾寮荤痪鎸庘偓褎褰冮崐绗衡偓?*/
 static void s_resample_coarse_to_field(const SRP_VisFrame_t *vis_frame)
 {
-    /* 粗搜索网格点数较少，不适合直接上屏，否则会呈现明显棋盘格/块状边界。
-     * 这里的做法是：
-     * 1. 遍历显示中间场的每个采样点
-     * 2. 把该点对应的显示角度反推回算法角度坐标
-     * 3. 在粗网格上做双线性插值
-     * 4. 得到一个稠密、连续的浮点场 `s_field_a`
+    /* 缁鎮崇槐銏㈢秹閺嶈偐鍋ｉ弫鎷岀窛鐏忔埊绱濇稉宥夆偓鍌氭値閻╁瓨甯存稉濠傜潌閿涘苯鎯侀崚娆庣窗閸涘牏骞囬弰搴㈡▔濡娲忛弽?閸ф濮告潏鍦櫕閵?     * 鏉╂瑩鍣烽惃鍕粵濞夋洘妲搁敍?     * 1. 闁秴宸婚弰鍓с仛娑擃參妫块崷铏规畱濮ｅ繋閲滈柌鍥ㄧ壉閻?     * 2. 閹跺﹨顕氶悙鐟邦嚠鎼存梻娈戦弰鍓с仛鐟欐帒瀹抽崣宥嗗腹閸ョ偟鐣诲▔鏇☆潡鎼达箑娼楅弽?     * 3. 閸︺劎鐭栫純鎴炵壐娑撳﹤浠涢崣宀€鍤庨幀褎褰冮崐?     * 4. 瀵版鍩屾稉鈧稉顏嗩焼鐎靛棎鈧浇绻涚紒顓犳畱濞搭喚鍋ｉ崷?`s_field_a`
      *
-     * 这一步是“算法网格”到“显示网格”的第一座桥。 */
+     * 鏉╂瑤绔村銉︽Ц閳ユ粎鐣诲▔鏇犵秹閺嶅皷鈧繂鍩岄垾婊勬▔缁€铏圭秹閺嶅皷鈧繄娈戠粭顑跨鎼囱勊夐妴?*/
     uint32_t y;
     uint32_t x;
     float span = (float)(COARSE_ANGLE_MAX_DEG - COARSE_ANGLE_MIN_DEG);
@@ -768,18 +945,18 @@ static void s_resample_coarse_to_field(const SRP_VisFrame_t *vis_frame)
 
     for (y = 0u; y < APP_DISPLAY_FIELD_H; y++)
     {
-        /* 当前行对应的显示垂直角度。 */
+        /* 瑜版挸澧犵悰灞筋嚠鎼存梻娈戦弰鍓с仛閸ㄥ倻娲跨憴鎺戝閵?*/
         float phi_disp = (float)COARSE_ANGLE_MAX_DEG
                        - ((float)y * span / (float)(APP_DISPLAY_FIELD_H - 1u));
         for (x = 0u; x < APP_DISPLAY_FIELD_W; x++)
         {
-            /* 当前列对应的显示水平角度。 */
+            /* 瑜版挸澧犻崚妤€顕惔鏃傛畱閺勫墽銇氬鏉戦挬鐟欐帒瀹抽妴?*/
             float theta_disp = (float)COARSE_ANGLE_MIN_DEG
                              + ((float)x * span / (float)(APP_DISPLAY_FIELD_W - 1u));
-            /* 后续会把显示角度逆变换回算法角度坐标系。 */
+            /* 閸氬海鐢绘导姘Ω閺勫墽銇氱憴鎺戝闁棗褰夐幑銏犳礀缁犳纭剁憴鎺戝閸ф劖鐖ｇ化姹団偓?*/
             float theta_raw = theta_disp;
             float phi_raw = phi_disp;
-            /* `tx/py` 是粗网格中的浮点坐标。 */
+            /* `tx/py` 閺勵垳鐭栫純鎴炵壐娑擃厾娈戝ù顔惧仯閸ф劖鐖ｉ妴?*/
             float tx;
             float py;
             uint32_t t0;
@@ -801,13 +978,13 @@ static void s_resample_coarse_to_field(const SRP_VisFrame_t *vis_frame)
 
             s_inverse_output_remap(&theta_raw, &phi_raw);
 
-            /* 连续角度 -> 粗网格浮点索引。 */
+            /* 鏉╃偟鐢荤憴鎺戝 -> 缁缍夐弽鍏艰癁閻愬湱鍌ㄥ鏇樷偓?*/
             tx = (theta_raw - (float)COARSE_ANGLE_MIN_DEG) * inv_span * (float)(COARSE_GRID_SIZE - 1u);
             py = (phi_raw - (float)COARSE_ANGLE_MIN_DEG) * inv_span * (float)(COARSE_GRID_SIZE - 1u);
             tx = s_clamp_f32(tx, 0.0f, (float)(COARSE_GRID_SIZE - 1u));
             py = s_clamp_f32(py, 0.0f, (float)(COARSE_GRID_SIZE - 1u));
 
-            /* 找到双线性插值的四个邻点及其权重。 */
+            /* 閹垫儳鍩岄崣宀€鍤庨幀褎褰冮崐鑲╂畱閸ユ稐閲滈柇鑽ゅ仯閸欏﹤鍙鹃弶鍐櫢閵?*/
             t0 = (uint32_t)tx;
             p0 = (uint32_t)py;
             t1 = (t0 + 1u < COARSE_GRID_SIZE) ? (t0 + 1u) : t0;
@@ -824,7 +1001,7 @@ static void s_resample_coarse_to_field(const SRP_VisFrame_t *vis_frame)
             v01 = s_power_mag(vis_frame->power[idx01]);
             v10 = s_power_mag(vis_frame->power[idx10]);
             v11 = s_power_mag(vis_frame->power[idx11]);
-            /* 先横向插值，再纵向插值。 */
+            /* 閸忓牊铆閸氭垶褰冮崐纭风礉閸愬秶鏃遍崥鎴炲絻閸婄鈧?*/
             vt0 = v00 * (1.0f - wt) + v01 * wt;
             vt1 = v10 * (1.0f - wt) + v11 * wt;
             s_field_a[y * APP_DISPLAY_FIELD_W + x] = vt0 * (1.0f - wp) + vt1 * wp;
@@ -832,14 +1009,12 @@ static void s_resample_coarse_to_field(const SRP_VisFrame_t *vis_frame)
     }
 }
 
-/* 将细搜索结果融合回显示中间场。
- * 只融合强度足够高的细点，并按照二维核向周围扩散。 */
+/* 鐏忓棛绮忛幖婊呭偍缂佹挻鐏夐摶宥呮値閸ョ偞妯夌粈杞拌厬闂傛潙婧€閵? * 閸欘亣鐎洪崥鍫濆繁鎼达箒鍐绘径鐔肩彯閻ㄥ嫮绮忛悙鐧哥礉楠炶埖瀵滈悡褌绨╃紒瀛樼壋閸氭垵鎳嗛崶瀛樺⒖閺侊絻鈧?*/
 static void s_apply_fine_fusion(const SRP_VisFrame_t *vis_frame)
 {
 #if (APP_DISPLAY_FINE_FUSION_ENABLE != 0u)
-    /* 细搜索融合的目的不是重建整张图，而是对局部强峰附近补充细节。
-     * 逻辑上只处理足够强的细网格点，并用一个二维核把它们扩散到显示场，
-     * 这样既能强化峰值附近结构，又不至于把弱噪声全面抬高。 */
+    /* 缂佸棙鎮崇槐銏ｇ€洪崥鍫㈡畱閻╊喚娈戞稉宥嗘Ц闁插秴缂撻弫鏉戠炊閸ユ拝绱濋懓灞炬Ц鐎电懓鐪柈銊ュ繁瀹勪即妾潻鎴Ｋ夐崗鍛矎閼哄倶鈧?     * 闁槒绶稉濠傚涧婢跺嫮鎮婄搾鍐差檮瀵櫣娈戠紒鍡欑秹閺嶈偐鍋ｉ敍灞借嫙閻劋绔存稉顏冪癌缂佸瓨鐗抽幎濠傜暊娴狀剚澧块弫锝呭煂閺勫墽銇氶崷鐚寸礉
+     * 鏉╂瑦鐗遍弮銏ｅ厴瀵搫瀵插畡鏉库偓濂告鏉╂垹绮ㄩ弸鍕剁礉閸欏牅绗夐懛鍏呯艾閹跺﹤鎬ラ崳顏勶紣閸忋劑娼伴幎顒勭彯閵?*/
     uint32_t i;
     float peak = 0.0f;
     float theta_span = (float)(COARSE_ANGLE_MAX_DEG - COARSE_ANGLE_MIN_DEG);
@@ -878,7 +1053,7 @@ static void s_apply_fine_fusion(const SRP_VisFrame_t *vis_frame)
 
         if (mag < min_keep)
         {
-            /* 过滤掉过弱的细搜索点。 */
+            /* 鏉╁洦鎶ら幒澶庣箖瀵京娈戠紒鍡樻偝缁便垻鍋ｉ妴?*/
             continue;
         }
         theta = vis_frame->theta_deg[i];
@@ -893,7 +1068,7 @@ static void s_apply_fine_fusion(const SRP_VisFrame_t *vis_frame)
         cx = (int32_t)(u * (float)(APP_DISPLAY_FIELD_W - 1u) + 0.5f);
         cy = (int32_t)(v * (float)(APP_DISPLAY_FIELD_H - 1u) + 0.5f);
 
-        /* 以细搜索点为中心，把能量扩散到周围显示场像素。 */
+        /* 娴犮儳绮忛幖婊呭偍閻愰€涜礋娑擃厼绺鹃敍灞惧Ω閼充粙鍣洪幍鈺傛殠閸掓澘鎳嗛崶瀛樻▔缁€鍝勬簚閸嶅繒绀岄妴?*/
         for (ky = -(int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS; ky <= (int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS; ky++)
         {
             int32_t fy = cy + ky;
@@ -916,7 +1091,7 @@ static void s_apply_fine_fusion(const SRP_VisFrame_t *vis_frame)
                 kx_idx = (uint32_t)(kx + (int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS);
                 w = s_fine_kernel[ky_idx * APP_DISPLAY_FINE_KERNEL_LEN + kx_idx];
                 fidx = (uint32_t)fy * APP_DISPLAY_FIELD_W + (uint32_t)fx;
-                /* 当前核权重对应的能量增量。 */
+                /* 瑜版挸澧犻弽鍛婃綀闁插秴顕惔鏃傛畱閼充粙鍣烘晶鐐哄櫤閵?*/
                 s_field_a[fidx] += s_cfg.fine_gain * mag * w;
             }
         }
@@ -926,16 +1101,14 @@ static void s_apply_fine_fusion(const SRP_VisFrame_t *vis_frame)
 #endif
 }
 
-/* 对显示中间场执行一次可分离平滑。
- * 横向结果先写到 `s_field_b`，再纵向写回 `s_field_a`。 */
+/* 鐎佃妯夌粈杞拌厬闂傛潙婧€閹笛嗩攽娑撯偓濞嗏€冲讲閸掑棛顬囬獮铏拨閵? * 濡亜鎮滅紒鎾寸亯閸忓牆鍟撻崚?`s_field_b`閿涘苯鍟€缁鹃潧鎮滈崘娆忔礀 `s_field_a`閵?*/
 static void s_apply_blur_once(void)
 {
 #if (APP_DISPLAY_SMOOTH_ENABLE != 0u)
-    /* 一次完整平滑由两步组成：
-     * - 先横向卷积，把结果写入 `s_field_b`
-     * - 再纵向卷积，把结果写回 `s_field_a`
+    /* 娑撯偓濞嗏€崇暚閺佹潙閽╁鎴犳暠娑撱倖顒炵紒鍕灇閿?     * - 閸忓牊铆閸氭垵宓庣粔顖ょ礉閹跺﹦绮ㄩ弸婊冨晸閸?`s_field_b`
+     * - 閸愬秶鏃遍崥鎴濆祹缁夘垽绱濋幎濠勭波閺嬫粌鍟撻崶?`s_field_a`
      *
-     * 这是典型的可分离卷积写法，相比直接二维卷积，运算量更低。 */
+     * 鏉╂瑦妲搁崗绋跨€烽惃鍕讲閸掑棛顬囬崡椋幮濋崘娆愮《閿涘瞼娴夊В鏃傛纯閹恒儰绨╃紒鏉戝祹缁夘垽绱濇潻鎰暬闁插繑娲挎担搴涒偓?*/
     uint32_t y;
     uint32_t x;
     int32_t k;
@@ -945,7 +1118,7 @@ static void s_apply_blur_once(void)
         for (x = 0u; x < APP_DISPLAY_FIELD_W; x++)
         {
             float acc = 0.0f;
-            /* 横向卷积，边界位置采用夹取策略。 */
+            /* 濡亜鎮滈崡椋幮濋敍宀冪珶閻ｅ奔缍呯純顕€鍣伴悽銊ャ仚閸欐牜鐡ラ悾銉ｂ偓?*/
             for (k = -(int32_t)APP_DISPLAY_SMOOTH_RADIUS; k <= (int32_t)APP_DISPLAY_SMOOTH_RADIUS; k++)
             {
                 int32_t xi = (int32_t)x + k;
@@ -962,7 +1135,7 @@ static void s_apply_blur_once(void)
         for (x = 0u; x < APP_DISPLAY_FIELD_W; x++)
         {
             float acc = 0.0f;
-            /* 纵向卷积，边界同样采用夹取策略。 */
+            /* 缁鹃潧鎮滈崡椋幮濋敍宀冪珶閻ｅ苯鎮撻弽鐑藉櫚閻劌銇欓崣鏍摜閻ｃ儯鈧?*/
             for (k = -(int32_t)APP_DISPLAY_SMOOTH_RADIUS; k <= (int32_t)APP_DISPLAY_SMOOTH_RADIUS; k++)
             {
                 int32_t yi = (int32_t)y + k;
@@ -976,18 +1149,12 @@ static void s_apply_blur_once(void)
 #endif
 }
 
-/* 基于当前可视化帧，准备一张完整的浮点显示场。
- * 返回值为场中的最大峰值，用于后续动态归一化。 */
+/* 閸╄桨绨ぐ鎾冲閸欘垵顫嬮崠鏍ф姎閿涘苯鍣径鍥︾瀵姴鐣弫瀵告畱濞搭喚鍋ｉ弰鍓с仛閸︽亽鈧? * 鏉╂柨娲栭崐闂磋礋閸﹁桨鑵戦惃鍕付婢堆冨槻閸婄》绱濋悽銊ょ艾閸氬海鐢婚崝銊︹偓浣哥秺娑撯偓閸栨牓鈧?*/
 static float s_prepare_field(const SRP_VisFrame_t *vis_frame)
 {
-    /* 基于最新的 SRP 快照，构建一张“可直接进入显示链路”的浮点场。
-     * 这是算法输出到显示逻辑之间的核心桥接步骤，通常包含：
-     * - 粗网格重采样
-     * - 可选的细网格融合
-     * - 若干次平滑
-     * - 最终峰值提取
-     *
-     * 返回值 `peak` 会作为后续动态归一化的参考输入。 */
+    /* 閸╄桨绨張鈧弬鎵畱 SRP 韫囶偆鍙庨敍灞剧€杞扮瀵姭鈧粌褰查惄瀛樺复鏉╂稑鍙嗛弰鍓с仛闁炬崘鐭鹃垾婵堟畱濞搭喚鍋ｉ崷鎭掆偓?     * 鏉╂瑦妲哥粻妤佺《鏉堟挸鍤崚鐗堟▔缁€娲偓鏄忕帆娑斿妫块惃鍕壋韫囧啯藟閹恒儲顒炴銈忕礉闁艾鐖堕崠鍛儓閿?     * - 缁缍夐弽濂稿櫢闁插洦鐗?
+     * - 閸欘垶鈧娈戠紒鍡欑秹閺嶈壈鐎洪崥?     * - 閼汇儱鍏卞▎鈥抽挬濠?     * - 閺堚偓缂佸牆鍢查崐鍏煎絹閸?     *
+     * 鏉╂柨娲栭崐?`peak` 娴兼矮缍旀稉鍝勬倵缂侇厼濮╅幀浣哥秺娑撯偓閸栨牜娈戦崣鍌濃偓鍐翻閸忋儯鈧?*/
     uint32_t i;
     float peak = 0.0f;
 
@@ -1018,15 +1185,14 @@ static float s_prepare_field(const SRP_VisFrame_t *vis_frame)
     return peak;
 }
 
-/* 完整精度归一化函数。
- * 输入是相对参考峰值的比例，输出是 0..255 灰度。 */
+/* 鐎瑰本鏆ｇ划鎯у瑜版帊绔撮崠鏍у毐閺佽埇鈧? * 鏉堟挸鍙嗛弰顖滄祲鐎电懓寮懓鍐ㄥ槻閸婅偐娈戝В鏂剧伐閿涘矁绶崙鐑樻Ц 0..255 閻忔澘瀹抽妴?*/
 static uint8_t s_compute_norm_full(float ratio)
 {
-    /* 完整归一化路径：
-     * - 先把线性能量比转换到 dB 空间
-     * - 再按 `db_floor` 截断
-     * - 再映射回 0..1
-     * - 最后套 gamma 调整观感，并量化到 0..255 */
+    /* 鐎瑰本鏆ｈぐ鎺嶇閸栨牞鐭惧鍕剁窗
+     * - 閸忓牊濡哥痪鎸庘偓褑鍏橀柌蹇旂槷鏉烆剚宕查崚?dB 缁屾椽妫?
+     * - 閸愬秵瀵?`db_floor` 閹搭亝鏌?
+     * - 閸愬秵妲х亸鍕礀 0..1
+     * - 閺堚偓閸氬骸顨?gamma 鐠嬪啯鏆ｇ憴鍌涘妳閿涘苯鑻熼柌蹇撳閸?0..255 */
     float db;
     float t;
     uint32_t q;
@@ -1050,12 +1216,10 @@ static uint8_t s_compute_norm_full(float ratio)
     return (q > 255u) ? 255u : (uint8_t)q;
 }
 
-/* 刷新快速归一化 LUT。
- * 只有在 `gamma` 或 `db_floor` 变化时才重新构建。 */
+/* 閸掗攱鏌婅箛顐︹偓鐔风秺娑撯偓閸?LUT閵? * 閸欘亝婀侀崷?`gamma` 閹?`db_floor` 閸欐ê瀵查弮鑸靛闁插秵鏌婇弸鍕紦閵?*/
 static void s_refresh_norm_lut(void)
 {
-    /* 快速归一化模式下，`ratio -> 灰度值` 的关系只取决于 gamma 和 db_floor。
-     * 只要这两个参数没变，LUT 就可以持续复用。 */
+    /* 韫囶偊鈧喎缍婃稉鈧崠鏍佸蹇庣瑓閿涘畭ratio -> 閻忔澘瀹抽崐绯?閻ㄥ嫬鍙х化璇插涧閸欐牕鍠呮禍?gamma 閸?db_floor閵?     * 閸欘亣顩︽潻娆庤⒈娑擃亜寮弫鐗堢梾閸欐﹫绱滾UT 鐏忓崬褰叉禒銉﹀瘮缂侇厼顦查悽銊ｂ偓?*/
     uint32_t i;
     float gamma;
     float db_floor;
@@ -1089,10 +1253,10 @@ static void s_refresh_norm_lut(void)
     s_norm_lut_valid = 1u;
 }
 
-/* 快速归一化查表函数。 */
+/* 韫囶偊鈧喎缍婃稉鈧崠鏍ㄧ叀鐞涖劌鍤遍弫鑸偓?*/
 static uint8_t s_norm_fast_lookup(float ratio)
 {
-    /* 快速模式下不再逐像素计算 log10f/powf，而是直接查表。 */
+    /* 韫囶偊鈧喐膩瀵繋绗呮稉宥呭晙闁劕鍎氱槐鐘侯吀缁?log10f/powf閿涘矁鈧本妲搁惄瀛樺复閺屻儴銆冮妴?*/
     uint32_t idx;
 
     if (ratio <= 0.0f)
@@ -1109,19 +1273,14 @@ static uint8_t s_norm_fast_lookup(float ratio)
     return s_norm_ratio_lut[idx];
 }
 
-/* 刷新 LCD 像素到显示场坐标的映射缓存。
- * 这样渲染阶段可以避免每帧重复进行坐标换算。 */
+/* 閸掗攱鏌?LCD 閸嶅繒绀岄崚鐗堟▔缁€鍝勬簚閸ф劖鐖ｉ惃鍕Ё鐏忓嫮绱︾€涙ǜ鈧? * 鏉╂瑦鐗卞〒鍙夌厠闂冭埖顔岄崣顖欎簰闁灝鍘ゅВ蹇撴姎闁插秴顦叉潻娑滎攽閸ф劖鐖ｉ幑銏㈢暬閵?*/
 void s_refresh_render_map_cache(uint16_t map_w, uint16_t map_h)
 {
-    /* 预计算“LCD 像素坐标 -> 显示场坐标”的映射关系。
-     * 最近邻和双线性两种路径都会用到这些缓存。
-     *
-     * 缓存后，逐帧内层循环就不需要反复做：
-     * - 浮点除法
-     * - 边界钳位
-     * - 双线性权重换算
-     *
-     * 这对整屏热力图逐帧绘制的性能帮助很直接。 */
+    /* 妫板嫯顓哥粻妞烩偓娣烠D 閸嶅繒绀岄崸鎰垼 -> 閺勫墽銇氶崷鍝勬綏閺嶅洠鈧繄娈戦弰鐘茬殸閸忓磭閮撮妴?     * 閺堚偓鏉╂垿鍋﹂崪灞藉蓟缁炬寧鈧傝⒈缁夊秷鐭惧鍕厴娴兼氨鏁ら崚鎷岀箹娴滄稓绱︾€涙ǜ鈧?     *
+     * 缂傛挸鐡ㄩ崥搴礉闁劕鎶氶崘鍛湴瀵邦亞骞嗙亸鍙樼瑝闂団偓鐟曚礁寮芥径宥呬粵閿?     * - 濞搭喚鍋ｉ梽銈嗙《
+     * - 鏉堝湱鏅柦鍏呯秴
+     * - 閸欏瞼鍤庨幀褎娼堥柌宥嗗床缁?     *
+     * 鏉╂瑥顕弫鏉戠潌閻戭厼濮忛崶楣冣偓鎰姎缂佹ê鍩楅惃鍕偓褑鍏樼敮顔煎И瀵板牏娲块幒銉ｂ偓?*/
     uint16_t x;
     uint16_t y;
 
@@ -1144,7 +1303,7 @@ void s_refresh_render_map_cache(uint16_t map_w, uint16_t map_h)
         uint16_t x1;
         uint16_t wx;
 
-        /* `fx` 表示 LCD 当前列对应到显示场中的浮点列坐标。 */
+        /* `fx` 鐞涖劎銇?LCD 瑜版挸澧犻崚妤€顕惔鏂垮煂閺勫墽銇氶崷杞拌厬閻ㄥ嫭璇為悙鐟板灙閸ф劖鐖ｉ妴?*/
         fx = (map_w > 1u)
            ? ((float)x * (float)(APP_DISPLAY_FIELD_W - 1u) / (float)(map_w - 1u))
            : 0.0f;
@@ -1160,7 +1319,7 @@ void s_refresh_render_map_cache(uint16_t map_w, uint16_t map_h)
             wx = 256u;
         }
 
-        /* 同时缓存最近邻索引与双线性插值所需的左右邻点、权重。 */
+        /* 閸氬本妞傜紓鎾崇摠閺堚偓鏉╂垿鍋︾槐銏犵穿娑撳骸寮荤痪鎸庘偓褎褰冮崐鍏煎闂団偓閻ㄥ嫬涔忛崣鎶藉仸閻愬箍鈧焦娼堥柌宥冣偓?*/
         s_col_x0_cache[x] = x0;
         s_col_x1_cache[x] = x1;
         s_col_wx256_cache[x] = wx;
@@ -1174,7 +1333,7 @@ void s_refresh_render_map_cache(uint16_t map_w, uint16_t map_h)
         uint16_t y1;
         uint16_t wy;
 
-        /* `fy` 表示 LCD 当前行对应到显示场中的浮点行坐标。 */
+        /* `fy` 鐞涖劎銇?LCD 瑜版挸澧犵悰灞筋嚠鎼存柨鍩岄弰鍓с仛閸﹁桨鑵戦惃鍕癁閻愮顢戦崸鎰垼閵?*/
         fy = (map_h > 1u)
            ? ((float)y * (float)(APP_DISPLAY_FIELD_H - 1u) / (float)(map_h - 1u))
            : 0.0f;
@@ -1190,7 +1349,7 @@ void s_refresh_render_map_cache(uint16_t map_w, uint16_t map_h)
             wy = 256u;
         }
 
-        /* 同时缓存最近邻索引与双线性插值所需的上下邻点、权重。 */
+        /* 閸氬本妞傜紓鎾崇摠閺堚偓鏉╂垿鍋︾槐銏犵穿娑撳骸寮荤痪鎸庘偓褎褰冮崐鍏煎闂団偓閻ㄥ嫪绗傛稉瀣仸閻愬箍鈧焦娼堥柌宥冣偓?*/
         s_row_y0_cache[y] = y0;
         s_row_y1_cache[y] = y1;
         s_row_wy256_cache[y] = wy;
@@ -1201,20 +1360,401 @@ void s_refresh_render_map_cache(uint16_t map_w, uint16_t map_h)
     s_cache_map_h = map_h;
 }
 
-/* 计算归一化后的 8bit 显示场。
- * 内部会估计噪声底、扣除背景，并根据当前模式选择快速/完整路径。 */
+/* 鐠侊紕鐣昏ぐ鎺嶇閸栨牕鎮楅惃?8bit 閺勫墽銇氶崷鎭掆偓? * 閸愬懘鍎存导姘強鐠佲€虫珨婢规澘绨抽妴浣瑰⒏闂勩倛鍎楅弲顖ょ礉楠炶埖鐗撮幑顔肩秼閸撳秵膩瀵繘鈧瀚ㄨ箛顐︹偓?鐎瑰本鏆ｇ捄顖氱窞閵?*/
+static void s_refresh_camera_scale_cache(uint16_t map_w, uint16_t map_h, uint16_t src_w, uint16_t src_h)
+{
+    uint16_t x;
+    uint16_t y;
+
+    if ((map_w == 0u) || (map_h == 0u) || (src_w == 0u) || (src_h == 0u) ||
+        (map_w > APP_DISPLAY_MAX_LINE_PIXELS) || (map_h > APP_DISPLAY_MAX_LINE_PIXELS))
+    {
+        return;
+    }
+
+    if ((s_camera_cache_map_w == map_w) &&
+        (s_camera_cache_map_h == map_h) &&
+        (s_camera_cache_src_w == src_w) &&
+        (s_camera_cache_src_h == src_h))
+    {
+        return;
+    }
+
+    for (x = 0u; x < map_w; x++)
+    {
+        uint32_t src_x = (map_w > 1u)
+                       ? ((uint32_t)x * (uint32_t)(src_w - 1u) / (uint32_t)(map_w - 1u))
+                       : 0u;
+        s_camera_col_near_cache[x] = (src_x >= src_w) ? (uint16_t)(src_w - 1u) : (uint16_t)src_x;
+    }
+
+    for (y = 0u; y < map_h; y++)
+    {
+        uint32_t src_y = (map_h > 1u)
+                       ? ((uint32_t)y * (uint32_t)(src_h - 1u) / (uint32_t)(map_h - 1u))
+                       : 0u;
+        s_camera_row_near_cache[y] = (src_y >= src_h) ? (uint16_t)(src_h - 1u) : (uint16_t)src_y;
+    }
+
+    s_camera_cache_map_w = map_w;
+    s_camera_cache_map_h = map_h;
+    s_camera_cache_src_w = src_w;
+    s_camera_cache_src_h = src_h;
+}
+
+static void s_update_camera_cache_from_frame(const App_CameraFrame_t *camera_frame)
+{
+    uint16_t camera_w = (uint16_t)(s_camera_x1 - s_camera_x0 + 1u);
+    uint16_t camera_h = (uint16_t)(s_camera_y1 - s_camera_y0 + 1u);
+    uint16_t src_stride;
+    uint16_t y;
+    if ((camera_frame == NULL) ||
+        (camera_frame->pixels == NULL) ||
+        (camera_frame->valid == 0u) ||
+        (camera_frame->width == 0u) ||
+        (camera_frame->height == 0u) ||
+        (camera_w == 0u) ||
+        (camera_h == 0u) ||
+        (camera_w > APP_DISPLAY_CAMERA_VIEW_W) ||
+        (camera_h > APP_DISPLAY_CAMERA_VIEW_H) ||
+        (camera_w > APP_DISPLAY_MAX_LINE_PIXELS) ||
+        (camera_h > APP_DISPLAY_MAX_LINE_PIXELS))
+    {
+        return;
+    }
+    if ((s_camera_cache_valid != 0u) &&
+        (s_camera_cache_seq == camera_frame->seq) &&
+        (s_camera_cache_map_w == camera_w) &&
+        (s_camera_cache_map_h == camera_h) &&
+        (s_camera_cache_src_w == camera_frame->width) &&
+        (s_camera_cache_src_h == camera_frame->height))
+    {
+        return;
+    }
+    src_stride = (camera_frame->stride != 0u) ? camera_frame->stride : camera_frame->width;
+    s_refresh_camera_scale_cache(camera_w, camera_h, camera_frame->width, camera_frame->height);
+    for (y = 0u; y < camera_h; y++)
+    {
+        const uint16_t *src_cam = &camera_frame->pixels[(uint32_t)s_camera_row_near_cache[y] * (uint32_t)src_stride];
+        uint16_t *dst = &s_camera_cache_pixels[(uint32_t)y * (uint32_t)camera_w];
+        uint16_t x;
+        for (x = 0u; x < camera_w; x++)
+        {
+            dst[x] = src_cam[s_camera_col_near_cache[x]];
+        }
+    }
+    s_clean_dcache_by_addr(s_camera_cache_pixels,
+                           (uint32_t)camera_w * (uint32_t)camera_h * 2u);
+    s_camera_cache_seq = camera_frame->seq;
+    s_camera_cache_valid = 1u;
+}
+static uint8_t s_blit_camera_cache_region(uint16_t dst_x0,
+                                          uint16_t dst_y0,
+                                          uint16_t width,
+                                          uint16_t height,
+                                          uint16_t src_x0,
+                                          uint16_t src_y0)
+{
+    uint16_t camera_w = (uint16_t)(s_camera_x1 - s_camera_x0 + 1u);
+    uint16_t camera_h = (uint16_t)(s_camera_y1 - s_camera_y0 + 1u);
+    uint16_t dst_x1;
+    uint16_t dst_y1;
+    const uint16_t *src;
+    uint16_t row;
+    if ((s_camera_cache_valid == 0u) ||
+        (width == 0u) ||
+        (height == 0u) ||
+        (camera_w == 0u) ||
+        (camera_h == 0u))
+    {
+        return 0u;
+    }
+    if (((uint32_t)src_x0 + (uint32_t)width > (uint32_t)camera_w) ||
+        ((uint32_t)src_y0 + (uint32_t)height > (uint32_t)camera_h))
+    {
+        return 0u;
+    }
+    dst_x1 = (uint16_t)(dst_x0 + width - 1u);
+    dst_y1 = (uint16_t)(dst_y0 + height - 1u);
+    src = &s_camera_cache_pixels[(uint32_t)src_y0 * (uint32_t)camera_w + (uint32_t)src_x0];
+    if (ltdc_copy_async(dst_x0, dst_y0, dst_x1, dst_y1, src, camera_w) != 0u)
+    {
+        if (s_flush_temp_draw() != 0u)
+        {
+            return 1u;
+        }
+        DMA2D_Accel_Reset();
+    }
+    else
+    {
+        return 1u;
+    }
+
+    for (row = 0u; row < height; row++)
+    {
+        lcd_color_fill(dst_x0,
+                       (uint16_t)(dst_y0 + row),
+                       dst_x1,
+                       (uint16_t)(dst_y0 + row),
+                       (uint16_t *)&src[(uint32_t)row * (uint32_t)camera_w]);
+    }
+    return 1u;
+}
+static void s_render_camera_rows(const App_CameraFrame_t *camera_frame)
+{
+    uint16_t camera_w = (uint16_t)(s_camera_x1 - s_camera_x0 + 1u);
+    uint16_t camera_h = (uint16_t)(s_camera_y1 - s_camera_y0 + 1u);
+    if ((camera_frame == NULL) ||
+        (camera_frame->pixels == NULL) ||
+        (camera_frame->valid == 0u) ||
+        (camera_frame->width == 0u) ||
+        (camera_frame->height == 0u) ||
+        (camera_w == 0u) ||
+        (camera_h == 0u) ||
+        (camera_w > APP_DISPLAY_CAMERA_VIEW_W) ||
+        (camera_h > APP_DISPLAY_CAMERA_VIEW_H))
+    {
+        return;
+    }
+    s_update_camera_cache_from_frame(camera_frame);
+    if (s_camera_cache_valid == 0u)
+    {
+        return;
+    }
+    (void)s_blit_camera_cache_region(s_camera_x0, s_camera_y0, camera_w, camera_h, 0u, 0u);
+}
+
+static void s_render_camera_frame_rows(const App_CameraFrame_t *camera_frame)
+{
+    uint16_t map_w = (uint16_t)(s_map_x1 - s_map_x0 + 1u);
+    uint16_t map_h = (uint16_t)(s_map_y1 - s_map_y0 + 1u);
+    uint16_t fit_w;
+    uint16_t fit_h;
+    uint16_t fit_x0;
+    uint16_t fit_y0;
+    uint16_t fit_x1;
+    uint16_t fit_y1;
+    uint16_t src_x0;
+    uint16_t src_y0;
+    uint16_t src_stride;
+    uint8_t blit_rows = s_clamp_u8(s_cfg.blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
+    uint16_t y_blk;
+
+    if ((camera_frame == NULL) ||
+        (camera_frame->pixels == NULL) ||
+        (camera_frame->valid == 0u) ||
+        (camera_frame->width == 0u) ||
+        (camera_frame->height == 0u) ||
+        (map_w == 0u) ||
+        (map_h == 0u) ||
+        (map_w > APP_DISPLAY_MAX_LINE_PIXELS) ||
+        (map_h > APP_DISPLAY_MAX_LINE_PIXELS))
+    {
+        return;
+    }
+
+    src_stride = (camera_frame->stride != 0u) ? camera_frame->stride : camera_frame->width;
+    fit_w = (map_w < camera_frame->width) ? map_w : camera_frame->width;
+    fit_h = (map_h < camera_frame->height) ? map_h : camera_frame->height;
+    if ((fit_w == 0u) || (fit_h == 0u))
+    {
+        return;
+    }
+
+    src_x0 = (uint16_t)(((uint32_t)camera_frame->width - (uint32_t)fit_w) / 2u);
+    src_y0 = (uint16_t)(((uint32_t)camera_frame->height - (uint32_t)fit_h) / 2u);
+    fit_x0 = (uint16_t)(s_map_x0 + ((uint32_t)map_w - (uint32_t)fit_w) / 2u);
+    fit_y0 = (uint16_t)(s_map_y0 + ((uint32_t)map_h - (uint32_t)fit_h) / 2u);
+    fit_x1 = (uint16_t)(fit_x0 + fit_w - 1u);
+    fit_y1 = (uint16_t)(fit_y0 + fit_h - 1u);
+
+    s_fill_rect_async(s_map_x0, s_map_y0, s_map_x1, s_map_y1, BLACK);
+    s_camera_cache_seq = camera_frame->seq;
+    s_camera_cache_valid = 1u;
+
+    for (y_blk = 0u; y_blk < fit_h; y_blk = (uint16_t)(y_blk + blit_rows))
+    {
+        uint16_t rows = fit_h - y_blk;
+        uint16_t row;
+
+        if (rows > blit_rows)
+        {
+            rows = blit_rows;
+        }
+
+        for (row = 0u; row < rows; row++)
+        {
+            uint16_t src_y = (uint16_t)(src_y0 + y_blk + row);
+            const uint16_t *src = &camera_frame->pixels[(uint32_t)src_y * (uint32_t)src_stride + (uint32_t)src_x0];
+            uint16_t *dst = &s_blit_buf[(uint32_t)row * (uint32_t)fit_w];
+            memcpy(dst, src, (size_t)fit_w * sizeof(uint16_t));
+        }
+
+        s_submit_rgb565_block(fit_x0,
+                              (uint16_t)(fit_y0 + y_blk),
+                              fit_x1,
+                              (uint16_t)(fit_y0 + y_blk + rows - 1u),
+                              s_blit_buf);
+    }
+}
+
+static uint8_t s_capture_frozen_camera_frame(const App_CameraFrame_t *camera_frame)
+{
+    uint16_t src_stride;
+    uint16_t row;
+
+    if ((camera_frame == NULL) ||
+        (camera_frame->pixels == NULL) ||
+        (camera_frame->valid == 0u) ||
+        (camera_frame->width == 0u) ||
+        (camera_frame->height == 0u) ||
+        (camera_frame->width > APP_DISPLAY_CAMERA_VIEW_W) ||
+        (camera_frame->height > APP_DISPLAY_CAMERA_VIEW_H))
+    {
+        return 0u;
+    }
+
+    src_stride = (camera_frame->stride != 0u) ? camera_frame->stride : camera_frame->width;
+    if (src_stride < camera_frame->width)
+    {
+        return 0u;
+    }
+
+    for (row = 0u; row < camera_frame->height; row++)
+    {
+        memcpy(&s_camera_cache_pixels[(uint32_t)row * (uint32_t)camera_frame->width],
+               &camera_frame->pixels[(uint32_t)row * (uint32_t)src_stride],
+               (size_t)camera_frame->width * sizeof(uint16_t));
+    }
+
+    s_camera_freeze_w = camera_frame->width;
+    s_camera_freeze_h = camera_frame->height;
+    s_camera_freeze_stride = camera_frame->width;
+    s_camera_freeze_valid = 1u;
+    s_camera_cache_seq = camera_frame->seq;
+    s_camera_cache_valid = 1u;
+    s_clean_dcache_by_addr(s_camera_cache_pixels,
+                           (uint32_t)s_camera_freeze_w * (uint32_t)s_camera_freeze_h * 2u);
+    return 1u;
+}
+
+static void s_render_field_alpha_rows(const App_CameraFrame_t *camera_frame, uint16_t color565)
+{
+    uint16_t map_w = (uint16_t)(s_map_x1 - s_map_x0 + 1u);
+    uint16_t map_h = (uint16_t)(s_map_y1 - s_map_y0 + 1u);
+    uint16_t src_stride;
+    uint8_t blit_rows = s_clamp_u8(s_cfg.blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
+    uint8_t use_bilinear = (s_cfg.interp_mode == APP_DISPLAY_INTERP_BILINEAR) ? 1u : 0u;
+    uint16_t y_blk;
+    (void)color565;
+
+    if ((map_w == 0u) ||
+        (map_h == 0u) ||
+        (camera_frame == NULL) ||
+        (camera_frame->pixels == NULL) ||
+        (camera_frame->valid == 0u) ||
+        (camera_frame->width == 0u) ||
+        (camera_frame->height == 0u) ||
+        (map_w > APP_DISPLAY_MAX_LINE_PIXELS) ||
+        (map_h > APP_DISPLAY_MAX_LINE_PIXELS))
+    {
+        return;
+    }
+
+    src_stride = (camera_frame->stride != 0u) ? camera_frame->stride : camera_frame->width;
+    s_refresh_render_map_cache(map_w, map_h);
+    s_refresh_camera_scale_cache(map_w, map_h, camera_frame->width, camera_frame->height);
+    s_camera_cache_seq = camera_frame->seq;
+    s_camera_cache_valid = 1u;
+
+    for (y_blk = 0u; y_blk < map_h; y_blk = (uint16_t)(y_blk + blit_rows))
+    {
+        uint16_t rows = map_h - y_blk;
+        uint16_t row;
+
+        if (rows > blit_rows)
+        {
+            rows = blit_rows;
+        }
+
+        for (row = 0u; row < rows; row++)
+        {
+            uint16_t y = (uint16_t)(y_blk + row);
+            uint16_t x;
+            uint8_t *dst = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];
+
+            if (use_bilinear != 0u)
+            {
+                uint16_t y0 = s_row_y0_cache[y];
+                uint16_t y1 = s_row_y1_cache[y];
+                uint16_t wy = s_row_wy256_cache[y];
+                uint16_t wy0 = (uint16_t)(256u - wy);
+                const uint8_t *src0 = &s_field_norm_u8[(uint32_t)y0 * APP_DISPLAY_FIELD_W];
+                const uint8_t *src1 = &s_field_norm_u8[(uint32_t)y1 * APP_DISPLAY_FIELD_W];
+
+                for (x = 0u; x < map_w; x++)
+                {
+                    uint16_t x0 = s_col_x0_cache[x];
+                    uint16_t x1 = s_col_x1_cache[x];
+                    uint16_t wx = s_col_wx256_cache[x];
+                    uint16_t wx0 = (uint16_t)(256u - wx);
+                    uint32_t v00 = src0[x0];
+                    uint32_t v01 = src0[x1];
+                    uint32_t v10 = src1[x0];
+                    uint32_t v11 = src1[x1];
+                    uint32_t vx0 = v00 * wx0 + v01 * wx;
+                    uint32_t vx1 = v10 * wx0 + v11 * wx;
+                    uint32_t q = (vx0 * wy0 + vx1 * wy + 32768u) >> 16;
+                    if (q > 255u)
+                    {
+                        q = 255u;
+                    }
+                    dst[x] = (uint8_t)q;
+                }
+            }
+            else
+            {
+                uint16_t y_idx = s_row_near_cache[y];
+                const uint8_t *src = &s_field_norm_u8[(uint32_t)y_idx * APP_DISPLAY_FIELD_W];
+
+                for (x = 0u; x < map_w; x++)
+                {
+                    dst[x] = src[s_col_near_cache[x]];
+                }
+            }
+        }
+
+        for (row = 0u; row < rows; row++)
+        {
+            const uint8_t *src = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];
+            uint16_t src_y = s_camera_row_near_cache[(uint32_t)y_blk + (uint32_t)row];
+            const uint16_t *bg = &camera_frame->pixels[(uint32_t)src_y * (uint32_t)src_stride];
+            uint16_t *dst = &s_blit_buf[(uint32_t)row * (uint32_t)map_w];
+            uint16_t x;
+
+            for (x = 0u; x < map_w; x++)
+            {
+                uint8_t alpha = s_overlay_alpha_from_norm(src[x]);
+                uint16_t bg_px = bg[s_camera_col_near_cache[x]];
+                dst[x] = (alpha == 0u) ? bg_px : s_blend_rgb565(bg_px, s_heat_lut[src[x]], alpha);
+            }
+        }
+        s_submit_rgb565_block(s_map_x0,
+                              (uint16_t)(s_map_y0 + y_blk),
+                              s_map_x1,
+                              (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                              s_blit_buf);
+    }
+}
+
 static void s_update_norm_field(float field_peak, uint32_t frame_seq)
 {
-    /* 把浮点能量场转换为 8bit 强度场。
-     * 这是影响观感最关键的步骤之一，因为 SRP 功率动态范围很大，而且随帧波动。
-     *
-     * 当前策略分为四层：
-     * 1. 用 `s_peak_ema` 作为平滑参考峰值，减少亮度剧烈抖动
-     * 2. 根据固定比例和背景平均值共同估算噪声底
-     * 3. 把超过噪声底的有效能量映射到 0..255
-     * 4. 根据模式选择“查表快速路径”或“全精度公式路径”
-     *
-     * 如果当前帧没有有效峰值，还会根据配置选择输出测试图案或纯黑图。 */
+    /* 閹跺﹥璇為悙纭呭厴闁插繐婧€鏉烆剚宕叉稉?8bit 瀵搫瀹抽崷鎭掆偓?     * 鏉╂瑦妲歌ぐ鍗炴惙鐟欏倹鍔呴張鈧崗鎶芥暛閻ㄥ嫭顒炴銈勭娑撯偓閿涘苯娲滄稉?SRP 閸旂喓宸奸崝銊︹偓浣藉瘱閸ユ潙绶㈡径褝绱濋懓灞肩瑬闂呭繐鎶氬▔銏犲З閵?     *
+     * 瑜版挸澧犵粵鏍殣閸掑棔璐熼崶娑樼湴閿?     * 1. 閻?`s_peak_ema` 娴ｆ粈璐熼獮铏拨閸欏倽鈧啫鍢查崐纭风礉閸戝繐鐨禍顔煎閸撗呭創閹舵牕濮?
+     * 2. 閺嶈宓侀崶鍝勭暰濮ｆ柧绶ラ崪宀冨剹閺咁垰閽╅崸鍥р偓鐓庡彙閸氬奔鍙婄粻妤€娅旀竟鏉跨俺
+     * 3. 閹跺﹨绉存潻鍥ф珨婢规澘绨抽惃鍕箒閺佸牐鍏橀柌蹇旀Ё鐏忓嫬鍩?0..255
+     * 4. 閺嶈宓佸Ο鈥崇础闁瀚ㄩ垾婊勭叀鐞涖劌鎻╅柅鐔荤熅瀵板嫧鈧繃鍨ㄩ垾婊冨弿缁儳瀹抽崗顒€绱＄捄顖氱窞閳?     *
+     * 婵″倹鐏夎ぐ鎾冲鐢勭梾閺堝婀侀弫鍫濆槻閸婄》绱濇潻妯圭窗閺嶈宓侀柊宥囩枂闁瀚ㄦ潏鎾冲毉濞村鐦崶鐐攳閹存牜鍑芥鎴濇禈閵?*/
     uint32_t i;
     float ref;
     float floor_linear;
@@ -1246,18 +1786,18 @@ static void s_update_norm_field(float field_peak, uint32_t frame_seq)
     ref = (s_peak_ema < APP_DISPLAY_DYNAMIC_MIN_PEAK) ? APP_DISPLAY_DYNAMIC_MIN_PEAK : s_peak_ema;
     for (i = 0u; i < APP_DISPLAY_FIELD_PIXELS; i++)
     {
-        /* 峰值一半以下的区域被作为背景候选，用来估计噪声底。 */
+        /* 瀹勬澘鈧棿绔撮崡濠佷簰娑撳娈戦崠鍝勭厵鐞氼偂缍旀稉楦垮剹閺咁垰鈧瑩鈧绱濋悽銊︽降娴兼媽顓搁崳顏勶紣鎼存洏鈧?*/
         if (s_field_a[i] < (field_peak * 0.5f))
         {
             bg_sum += s_field_a[i];
             bg_cnt++;
         }
     }
-    /* 先按固定比例给出基础噪声底。 */
+    /* 閸忓牊瀵滈崶鍝勭暰濮ｆ柧绶ョ紒娆忓毉閸╄櫣顢呴崳顏勶紣鎼存洏鈧?*/
     floor_linear = field_peak * s_cfg.noise_gate_ratio;
     if (bg_cnt > 0u)
     {
-        /* 再用背景平均值估计一个自适应噪声底，取两者更大的那个。 */
+        /* 閸愬秶鏁ら懗灞炬珯楠炲啿娼庨崐闂村強鐠佲€茬娑擃亣鍤滈柅鍌氱安閸ｎ亜锛愭惔鏇礉閸欐牔琚遍懓鍛纯婢堆呮畱闁絼閲滈妴?*/
         float bg_floor = (bg_sum / (float)bg_cnt) * s_cfg.noise_adapt_gain;
         if (bg_floor > floor_linear)
         {
@@ -1275,11 +1815,11 @@ static void s_update_norm_field(float field_peak, uint32_t frame_seq)
             float v = s_field_a[i] - floor_linear;
             if (v <= 0.0f)
             {
-                /* 低于噪声底的像素直接压成 0。 */
+                /* 娴ｅ簼绨崳顏勶紣鎼存洜娈戦崓蹇曠閻╁瓨甯撮崢瀣灇 0閵?*/
                 s_field_norm_u8[i] = 0u;
                 continue;
             }
-            /* `v / ref` 是相对参考峰值的能量比例。 */
+            /* `v / ref` 閺勵垳娴夌€电懓寮懓鍐ㄥ槻閸婅偐娈戦懗浠嬪櫤濮ｆ柧绶ラ妴?*/
             s_field_norm_u8[i] = s_norm_fast_lookup(v / ref);
         }
         return;
@@ -1293,15 +1833,15 @@ static void s_update_norm_field(float field_peak, uint32_t frame_seq)
             s_field_norm_u8[i] = 0u;
             continue;
         }
-        /* 完整模式直接逐像素走公式路径。 */
+        /* 鐎瑰本鏆ｅΟ鈥崇础閻╁瓨甯撮柅鎰剼缁辩姾铔嬮崗顒€绱＄捄顖氱窞閵?*/
         s_field_norm_u8[i] = s_compute_norm_full(v / ref);
     }
 }
 
-/* 把水平角度转换为热力图区域内的 X 坐标。 */
+/* 閹跺﹥鎸夐獮瀹狀潡鎼达箒娴嗛幑顫礋閻戭厼濮忛崶鎯у隘閸╃喎鍞撮惃?X 閸ф劖鐖ｉ妴?*/
 static uint16_t s_angle_to_x(float angle)
 {
-    /* 把水平角度线性映射到热力图矩形内的 X 像素坐标。 */
+    /* 閹跺﹥鎸夐獮瀹狀潡鎼达妇鍤庨幀褎妲х亸鍕煂閻戭厼濮忛崶鍓х叐瑜般垹鍞撮惃?X 閸嶅繒绀岄崸鎰垼閵?*/
     float ratio;
     uint16_t width = (uint16_t)(s_map_x1 - s_map_x0 + 1u);
     float span = (float)(COARSE_ANGLE_MAX_DEG - COARSE_ANGLE_MIN_DEG);
@@ -1316,11 +1856,10 @@ static uint16_t s_angle_to_x(float angle)
     return s_clamp_u16(x, s_map_x0, s_map_x1);
 }
 
-/* 把垂直角度转换为热力图区域内的 Y 坐标。 */
+/* 閹跺﹤鐎惄纾嬵潡鎼达箒娴嗛幑顫礋閻戭厼濮忛崶鎯у隘閸╃喎鍞撮惃?Y 閸ф劖鐖ｉ妴?*/
 static uint16_t s_angle_to_y(float angle)
 {
-    /* 把垂直角度映射到热力图矩形内的 Y 像素坐标。
-     * 由于屏幕 Y 轴向下增大，因此这里使用“最大角在上方”的映射方式。 */
+    /* 閹跺﹤鐎惄纾嬵潡鎼达附妲х亸鍕煂閻戭厼濮忛崶鍓х叐瑜般垹鍞撮惃?Y 閸嶅繒绀岄崸鎰垼閵?     * 閻㈠彉绨仦蹇撶 Y 鏉炴潙鎮滄稉瀣杻婢堆嶇礉閸ョ姵顒濇潻娆撳櫡娴ｈ法鏁ら垾婊勬付婢堆嗩潡閸︺劋绗傞弬鍏夆偓婵堟畱閺勭姴鐨犻弬鐟扮础閵?*/
     float ratio;
     uint16_t height = (uint16_t)(s_map_y1 - s_map_y0 + 1u);
     float span = (float)(COARSE_ANGLE_MAX_DEG - COARSE_ANGLE_MIN_DEG);
@@ -1335,19 +1874,15 @@ static uint16_t s_angle_to_y(float angle)
     return s_clamp_u16(y, s_map_y0, s_map_y1);
 }
 
-/* 将 8bit 热力图按行块方式绘制到后台缓冲。 */
+/* 鐏?8bit 閻戭厼濮忛崶鐐瘻鐞涘苯娼￠弬鐟扮础缂佹ê鍩楅崚鏉挎倵閸欐壆绱﹂崘灞傗偓?*/
 static void s_render_field_rows(void)
 {
-    /* 将归一化后的热力图分块写入后台缓冲。
-     * 采用“按若干行一块”的写法，原因有三：
-     * - 控制临时缓冲大小，不必为整张图准备全尺寸中间区
-     * - 更适合 DMA2D/LTDC 这类块传输接口
-     * - 软件回退时也能复用同一套流程
-     *
-     * 块内处理顺序为：
-     * 1. 根据插值模式，把 `s_field_norm_u8` 放大到当前 LCD 行块
-     * 2. 若支持 L8 + CLUT 加速，则直接提交 8bit 数据
-     * 3. 否则手动查 `s_heat_lut` 转成 RGB565 再写屏 */
+    /* 鐏忓棗缍婃稉鈧崠鏍ф倵閻ㄥ嫮鍎归崝娑樻禈閸掑棗娼￠崘娆忓弳閸氬骸褰寸紓鎾冲暱閵?     * 闁插洨鏁ら垾婊勫瘻閼汇儱鍏辩悰灞肩閸фせ鈧繄娈戦崘娆愮《閿涘苯甯崶鐘虫箒娑撳绱?
+     * - 閹貉冨煑娑撳瓨妞傜紓鎾冲暱婢堆冪毈閿涘奔绗夎箛鍛礋閺佹潙绱堕崶鎯у櫙婢跺洤鍙忕亸鍝勵嚟娑擃參妫块崠?     * - 閺囨挳鈧倸鎮?DMA2D/LTDC 鏉╂瑧琚崸妞剧炊鏉堟挻甯撮崣?     * - 鏉烆垯娆㈤崶鐐衡偓鈧弮鏈电瘍閼宠棄顦查悽銊ユ倱娑撯偓婵傛绁︾粙?     *
+     * 閸ф鍞存径鍕倞妞ゅ搫绨稉鐚寸窗
+     * 1. 閺嶈宓侀幓鎺戔偓鍏寄佸蹇ョ礉閹?`s_field_norm_u8` 閺€鎯с亣閸掓澘缍嬮崜?LCD 鐞涘苯娼?
+     * 2. 閼汇儲鏁幐?L8 + CLUT 閸旂娀鈧噦绱濋崚娆戞纯閹恒儲褰佹禍?8bit 閺佺増宓?
+     * 3. 閸氾箑鍨幍瀣З閺?`s_heat_lut` 鏉烆剚鍨?RGB565 閸愬秴鍟撶仦?*/
     uint16_t map_w = (uint16_t)(s_map_x1 - s_map_x0 + 1u);
     uint16_t map_h = (uint16_t)(s_map_y1 - s_map_y0 + 1u);
     uint8_t blit_rows = s_clamp_u8(s_cfg.blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
@@ -1381,7 +1916,7 @@ static void s_render_field_rows(void)
 
             if (use_bilinear != 0u)
             {
-                /* 双线性路径：使用预缓存坐标和权重进行 2x2 插值。 */
+                /* 閸欏瞼鍤庨幀褑鐭惧鍕剁窗娴ｈ法鏁ゆ０鍕处鐎涙ê娼楅弽鍥ф嫲閺夊啴鍣告潻娑滎攽 2x2 閹绘帒鈧鈧?*/
                 uint16_t y0 = s_row_y0_cache[y];
                 uint16_t y1 = s_row_y1_cache[y];
                 uint16_t wy = s_row_wy256_cache[y];
@@ -1402,13 +1937,13 @@ static void s_render_field_rows(void)
                     uint32_t vx0 = v00 * wx0 + v01 * wx;
                     uint32_t vx1 = v10 * wx0 + v11 * wx;
                     uint32_t q = (vx0 * wy0 + vx1 * wy + 32768u) >> 16;
-                    /* 结果理论上落在 0..255，仍保守做一次裁剪。 */
+                    /* 缂佹挻鐏夐悶鍡氼啈娑撳﹨鎯ら崷?0..255閿涘奔绮涙穱婵嗙暓閸嬫矮绔村▎陇顥嗛崜顏傗偓?*/
                     dst[x] = (q > 255u) ? 255u : (uint8_t)q;
                 }
             }
             else
             {
-                /* 最近邻路径：直接按缓存索引取值。 */
+                /* 閺堚偓鏉╂垿鍋︾捄顖氱窞閿涙氨娲块幒銉﹀瘻缂傛挸鐡ㄧ槐銏犵穿閸欐牕鈧鈧?*/
                 uint16_t y_idx = s_row_near_cache[y];
                 const uint8_t *src = &s_field_norm_u8[(uint32_t)y_idx * APP_DISPLAY_FIELD_W];
                 for (x = 0u; x < map_w; x++)
@@ -1425,7 +1960,7 @@ static void s_render_field_rows(void)
                                s_blit_l8_buf,
                                map_w) == 0u)
         {
-            /* 若不能直接按 8bit 调色板路径提交，则手动转 RGB565。 */
+            /* 閼汇儰绗夐懗鐣屾纯閹恒儲瀵?8bit 鐠嬪啳澹婇弶鑳熅瀵板嫭褰佹禍銈忕礉閸掓瑦澧滈崝銊ㄦ祮 RGB565閵?*/
             for (row = 0u; row < rows; row++)
             {
                 uint8_t *src = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];
@@ -1438,24 +1973,20 @@ static void s_render_field_rows(void)
                 }
             }
 
-            if (ltdc_color_fill_async(s_map_x0,
-                                      (uint16_t)(s_map_y0 + y_blk),
-                                      s_map_x1,
-                                      (uint16_t)(s_map_y0 + y_blk + rows - 1u),
-                                      s_blit_buf) == 0u)
-            {
-                /* 最后的同步软件回退路径。 */
-                lcd_color_fill(s_map_x0,
-                               (uint16_t)(s_map_y0 + y_blk),
-                               s_map_x1,
-                               (uint16_t)(s_map_y0 + y_blk + rows - 1u),
-                               s_blit_buf);
-            }
+            s_submit_rgb565_block(s_map_x0,
+                                  (uint16_t)(s_map_y0 + y_blk),
+                                  s_map_x1,
+                                  (uint16_t)(s_map_y0 + y_blk + rows - 1u),
+                                  s_blit_buf);
+        }
+        else if (s_flush_temp_draw() != 0u)
+        {
+            continue;
         }
     }
-}
 
-/* 绘制侧边文本诊断区域。 */
+}
+/* 缂佹ê鍩楁笟褑绔熼弬鍥ㄦ拱鐠囧﹥鏌囬崠鍝勭厵閵?*/
 static void s_draw_overlay(const Sound_Pos_t *pos,
                            uint32_t frame_seq,
                            uint32_t peak_idx,
@@ -1464,103 +1995,66 @@ static void s_draw_overlay(const Sound_Pos_t *pos,
                            float field_peak,
                            uint8_t sai_dma_active)
 {
-    /* 绘制右侧文字诊断区域。
-     * 文本区域与热力图绘制分离的原因是：文字没必要每帧都完全刷新。
-     * 这样可以：
-     * - 降低 CPU 占用
-     * - 减少字符重绘导致的闪烁
-     * - 在较慢的 LCD 路径下保持主体热力图更流畅 */
     char line[80];
-    static char title[] = "Acoustic Imaging";
-
-    if (s_text_x >= (lcddev.width - APP_DISPLAY_MARGIN_PX))
+    static char title0[] = "Acoustic";
+    static char title1[] = "Imaging";
+    uint16_t panel_x0 = s_text_x;
+    uint16_t panel_x1 = s_ui_x1;
+    uint16_t panel_w;
+    if ((panel_x0 >= lcddev.width) || (panel_x1 < panel_x0))
     {
         return;
     }
-
-    lcd_fill(s_text_x,
-             (uint16_t)(APP_DISPLAY_MARGIN_PX + 20u),
-             (uint16_t)(lcddev.width - APP_DISPLAY_MARGIN_PX),
-             s_map_y1,
-             BLACK);
-    lcd_show_string(s_text_x,
-                    APP_DISPLAY_MARGIN_PX,
-                    (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX),
-                    16,
-                    16,
-                    title,
-                    CYAN);
-    (void)snprintf(line, sizeof(line), "X:%6.1f", (double)pos->x_angle);
-    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 24u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, YELLOW);
-    (void)snprintf(line, sizeof(line), "Y:%6.1f", (double)pos->y_angle);
-    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 42u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, YELLOW);
+    panel_w = (uint16_t)(panel_x1 - panel_x0 + 1u);
+    lcd_fill(panel_x0, 0u, panel_x1, (uint16_t)(lcddev.height - 1u), BLACK);
+    if (panel_x0 > 0u)
+    {
+        lcd_fill((uint16_t)(panel_x0 - 1u), 0u, (uint16_t)(panel_x0 - 1u), (uint16_t)(lcddev.height - 1u), WHITE);
+    }
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 8u, (uint16_t)(panel_w - 16u), 16u, 16u, title0, CYAN);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 26u, (uint16_t)(panel_w - 16u), 16u, 16u, title1, CYAN);
+    (void)snprintf(line, sizeof(line), "X:%5.1f", (double)pos->x_angle);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 58u, (uint16_t)(panel_w - 16u), 16u, 16u, line, YELLOW);
+    (void)snprintf(line, sizeof(line), "Y:%5.1f", (double)pos->y_angle);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 76u, (uint16_t)(panel_w - 16u), 16u, 16u, line, YELLOW);
     (void)snprintf(line, sizeof(line), "E:%0.3f", isfinite(pos->energy) ? (double)pos->energy : 0.0);
-    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 60u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, GREEN);
-    (void)snprintf(line, sizeof(line), "F:%lu Pk:%c", (unsigned long)frame_seq, (peak_idx < COARSE_TOTAL) ? 'C' : 'F');
-    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 78u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, CYAN);
-    (void)snprintf(line, sizeof(line), "Pk:(%0.1f,%0.1f)", (double)peak_theta, (double)peak_phi);
-    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 96u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, WHITE);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 94u, (uint16_t)(panel_w - 16u), 16u, 16u, line, GREEN);
+    (void)snprintf(line, sizeof(line), "F:%lu P:%c", (unsigned long)frame_seq, (peak_idx < COARSE_TOTAL) ? 'C' : 'F');
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 112u, (uint16_t)(panel_w - 16u), 16u, 16u, line, CYAN);
+    (void)snprintf(line, sizeof(line), "Tx:%0.1f", (double)peak_theta);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 130u, (uint16_t)(panel_w - 16u), 16u, 16u, line, WHITE);
+    (void)snprintf(line, sizeof(line), "Ty:%0.1f", (double)peak_phi);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 148u, (uint16_t)(panel_w - 16u), 16u, 16u, line, WHITE);
     (void)snprintf(line,
                    sizeof(line),
-                   "Mode:%s/%s/%s",
+                   "M:%s/%s/%s",
                    App_Display_ModeName(s_mode),
                    App_Display_InterpName((App_Display_Interp_t)s_cfg.interp_mode),
                    App_Display_NormName((App_Display_Norm_t)s_cfg.norm_mode));
-    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 114u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, CYAN);
-    (void)snprintf(line, sizeof(line), "Nf:%0.2e G:%0.2f dB:%0.0f", (double)s_last_noise_floor, (double)s_cfg.gamma, (double)s_cfg.db_floor);
-    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 132u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, YELLOW);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 178u, (uint16_t)(panel_w - 16u), 16u, 16u, line, CYAN);
+    (void)snprintf(line, sizeof(line), "N:%0.1e", (double)s_last_noise_floor);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 196u, (uint16_t)(panel_w - 16u), 16u, 16u, line, YELLOW);
+    (void)snprintf(line, sizeof(line), "Pk:%0.1e", (double)field_peak);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 214u, (uint16_t)(panel_w - 16u), 16u, 16u, line, LIGHTGREEN);
 #if (APP_DISPLAY_DIAG_OVERLAY != 0u)
-    (void)snprintf(line, sizeof(line), "PkE:%0.2e EMA:%0.2e", (double)field_peak, (double)s_peak_ema);
-    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 150u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, LIGHTGREEN);
-    (void)snprintf(line,
-                   sizeof(line),
-                   "D2D TO:%lu SW:%lu Q:%lu/%lu",
-                   (unsigned long)g_ltdc_dma2d_timeout_count,
-                   (unsigned long)g_ltdc_dma2d_sw_fallback_count,
-                   (unsigned long)g_dma2d_queue_overflow_count,
-                   (unsigned long)g_dma2d_queue_depth_peak);
-    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 168u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, GREEN);
-    (void)snprintf(line,
-                   sizeof(line),
-                   "Swap:%lu Err:%lu SAI:%s",
-                   (unsigned long)g_ltdc_swap_count,
-                   (unsigned long)g_ltdc_swap_error_count,
-                   (sai_dma_active != 0u) ? "ON" : "OFF");
-    lcd_show_string(s_text_x, (uint16_t)(APP_DISPLAY_MARGIN_PX + 186u), (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX), 16, 16, line, LIGHTBLUE);
-    (void)snprintf(line,
-                   sizeof(line),
-                   "UART RX:%lu ERR:%lu %s",
-                   (unsigned long)g_ui_cli_rx_ok_count,
-                   (unsigned long)g_ui_cli_rx_err_count,
-                   (g_ui_cli_rx_alive != 0u) ? "OK" : "NO-RX");
-    lcd_show_string(s_text_x,
-                    (uint16_t)(APP_DISPLAY_MARGIN_PX + 204u),
-                    (uint16_t)(lcddev.width - s_text_x - APP_DISPLAY_MARGIN_PX),
-                    16,
-                    16,
-                    line,
-                    RED);
+    (void)snprintf(line, sizeof(line), "D2D %lu/%lu", (unsigned long)g_ltdc_dma2d_timeout_count, (unsigned long)g_ltdc_dma2d_sw_fallback_count);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 244u, (uint16_t)(panel_w - 16u), 16u, 16u, line, GREEN);
+    (void)snprintf(line, sizeof(line), "Sw %lu/%lu", (unsigned long)g_ltdc_swap_count, (unsigned long)g_ltdc_swap_error_count);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 262u, (uint16_t)(panel_w - 16u), 16u, 16u, line, LIGHTBLUE);
+    (void)snprintf(line, sizeof(line), "SAI:%s", (sai_dma_active != 0u) ? "ON" : "OFF");
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 280u, (uint16_t)(panel_w - 16u), 16u, 16u, line, LIGHTBLUE);
+    (void)snprintf(line, sizeof(line), "UART %lu/%lu", (unsigned long)g_ui_cli_rx_ok_count, (unsigned long)g_ui_cli_rx_err_count);
+    lcd_show_string((uint16_t)(panel_x0 + 8u), 298u, (uint16_t)(panel_w - 16u), 16u, 16u, line, RED);
 #endif
 }
 
-/* 渲染一整帧声学成像画面。
- * 这是模块对外最核心的逐帧入口。 */
+/* 濞撳弶鐓嬫稉鈧弫鏉戞姎婢规澘顒熼幋鎰剼閻㈠娼伴妴? * 鏉╂瑦妲稿Ο鈥虫健鐎电懓顦婚張鈧弽绋跨妇閻ㄥ嫰鈧劕鎶氶崗銉ュ經閵?*/
 void App_Display_Render(const Sound_Pos_t *pos,
                         const SRP_VisFrame_t *vis_frame,
+                        const App_CameraFrame_t *camera_frame,
                         uint32_t frame_seq,
                         uint8_t sai_dma_active)
 {
-    /* UI 任务每帧调用的总入口，时序刻意保持固定：
-     * 1. 检查模块状态；若上一次缓冲交换尚未完成，则直接跳过本帧
-     * 2. 用算法快照构建连续显示场
-     * 3. 做动态归一化，得到可显示强度
-     * 4. 把热力图写入后台缓冲
-     * 5. 叠加边框、准星和峰值框
-     * 6. 按分频策略决定是否刷新文本栏
-     * 7. 刷新底层绘制并申请缓冲交换
-     *
-     * 这里“swap pending 就跳过”的策略是明确的实时性取舍：
-     * 宁可丢掉中间帧，也不要把旧帧排队堆积到显示链路后面。 */
     float field_peak;
     uint32_t t_perf;
     uint32_t peak_idx = 0u;
@@ -1568,23 +2062,18 @@ void App_Display_Render(const Sound_Pos_t *pos,
     float peak_phi = 0.0f;
     uint8_t refresh_text;
     uint8_t back_slot;
-
+    uint8_t camera_valid;
     if ((s_ready == 0u) || (pos == NULL) || (vis_frame == NULL))
     {
         return;
     }
-    if (ltdc_is_swap_pending() != 0u)
+    if (ltdc_wait_for_swap_complete(s_display_frame_budget_ms()) != 0u)
     {
-        /* 交换未完成就不继续画，避免旧帧排队。 */
         return;
     }
-
     t_perf = App_Perf_BeginCycles();
     field_peak = s_prepare_field(vis_frame);
     App_Perf_EndCycles(APP_PERF_SEC_DISP_PREPARE, t_perf);
-    /* 用非对称 EMA 更新参考峰值：
-     * - 当新峰值更高时，快速跟上，保证新声源出现时能立刻“亮起来”
-     * - 当峰值回落时，缓慢衰减，避免整张图一帧亮一帧暗地跳动 */
     if (field_peak > s_peak_ema)
     {
         s_peak_ema += s_cfg.ema_attack * (field_peak - s_peak_ema);
@@ -1597,32 +2086,74 @@ void App_Display_Render(const Sound_Pos_t *pos,
     {
         s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
     }
-
     t_perf = App_Perf_BeginCycles();
     s_update_norm_field(field_peak, frame_seq);
     App_Perf_EndCycles(APP_PERF_SEC_DISP_NORM, t_perf);
-
+    camera_valid = (uint8_t)((camera_frame != NULL) &&
+                             (camera_frame->valid != 0u) &&
+                             (camera_frame->pixels != NULL) &&
+                             (camera_frame->width != 0u) &&
+                             (camera_frame->height != 0u));
     t_perf = App_Perf_BeginCycles();
-    s_render_field_rows();
+    s_clear_scene_gutters();
+    if (((camera_valid != 0u) ||
+         ((s_camera_view_mode == APP_DISPLAY_CAMERA_VIEW_CAMERA_FREEZE) && (s_camera_freeze_valid != 0u))) &&
+        (s_camera_view_mode != APP_DISPLAY_CAMERA_VIEW_HEAT_ONLY))
     {
-        uint16_t bx0 = (s_map_x0 > 0u) ? (uint16_t)(s_map_x0 - 1u) : s_map_x0;
-        uint16_t by0 = (s_map_y0 > 0u) ? (uint16_t)(s_map_y0 - 1u) : s_map_y0;
-        uint16_t bx1 = ((uint32_t)s_map_x1 + 1u < lcddev.width) ? (uint16_t)(s_map_x1 + 1u) : s_map_x1;
-        uint16_t by1 = ((uint32_t)s_map_y1 + 1u < lcddev.height) ? (uint16_t)(s_map_y1 + 1u) : s_map_y1;
-        s_draw_rect_async(bx0, by0, bx1, by1, WHITE);
-    }
+        s_dbg_camera_path_count++;
+        s_dbg_camera_input_seq = (camera_valid != 0u) ? camera_frame->seq : s_camera_cache_seq;
+        if (s_camera_view_mode == APP_DISPLAY_CAMERA_VIEW_CAMERA_ONLY)
+        {
+            s_render_camera_frame_rows(camera_frame);
+        }
+        else if (s_camera_view_mode == APP_DISPLAY_CAMERA_VIEW_CAMERA_FREEZE)
+        {
+            App_CameraFrame_t frozen_frame;
 
+            if (s_camera_freeze_valid == 0u)
+            {
+                (void)s_capture_frozen_camera_frame(camera_frame);
+            }
+
+            memset(&frozen_frame, 0, sizeof(frozen_frame));
+            if (s_camera_freeze_valid != 0u)
+            {
+                frozen_frame.pixels = s_camera_cache_pixels;
+                frozen_frame.width = s_camera_freeze_w;
+                frozen_frame.height = s_camera_freeze_h;
+                frozen_frame.stride = s_camera_freeze_stride;
+                frozen_frame.seq = s_camera_cache_seq;
+                frozen_frame.valid = 1u;
+                s_render_camera_frame_rows(&frozen_frame);
+            }
+        }
+        else
+        {
+            s_render_field_alpha_rows(camera_frame, APP_CAMERA_OVERLAY_COLOR_565);
+            s_dbg_camera_overlay_count++;
+        }
+    }
+    if ((((camera_valid == 0u) &&
+          !((s_camera_view_mode == APP_DISPLAY_CAMERA_VIEW_CAMERA_FREEZE) && (s_camera_freeze_valid != 0u))) ||
+         (s_camera_view_mode == APP_DISPLAY_CAMERA_VIEW_HEAT_ONLY)))
+    {
+        s_camera_cache_valid = 0u;
+        s_fill_rect_async(s_camera_x0, s_camera_y0, s_camera_x1, s_camera_y1, BLACK);
+        s_render_field_rows();
+    }
+    s_draw_rect_async(s_map_x0, s_map_y0, s_map_x1, s_map_y1, WHITE);
+    if (s_text_x > 0u)
+    {
+        s_draw_vline_async((uint16_t)(s_text_x - 1u), 0u, (uint16_t)(lcddev.height - 1u), WHITE);
+    }
     if (vis_frame->peak_idx < SRP_GRID_TOTAL)
     {
-        /* 读取算法报告的峰值位置。 */
         peak_idx = vis_frame->peak_idx;
         peak_theta = vis_frame->theta_deg[peak_idx];
         peak_phi = vis_frame->phi_deg[peak_idx];
     }
     s_apply_output_remap(&peak_theta, &peak_phi);
-
     {
-        /* 准星对应最终输出位置，而不是热力图峰值位置。 */
         float ax = s_clamp_f32(pos->x_angle, (float)COARSE_ANGLE_MIN_DEG, (float)COARSE_ANGLE_MAX_DEG);
         float ay = s_clamp_f32(pos->y_angle, (float)COARSE_ANGLE_MIN_DEG, (float)COARSE_ANGLE_MAX_DEG);
         uint16_t cx = s_angle_to_x(ax);
@@ -1635,9 +2166,7 @@ void App_Display_Render(const Sound_Pos_t *pos,
         s_draw_hline_async(xl, cy, xr, WHITE);
         s_draw_vline_async(cx, yt, yb, WHITE);
     }
-
     {
-        /* 方框对应热力图峰值位置，用于显示当前最强能量点。 */
         uint16_t px = s_angle_to_x(peak_theta);
         uint16_t py = s_angle_to_y(peak_phi);
         uint16_t r = APP_DISPLAY_PEAK_MARKER_RADIUS_PX;
@@ -1648,7 +2177,6 @@ void App_Display_Render(const Sound_Pos_t *pos,
         s_draw_rect_async(x0, y0, x1, y1, WHITE);
     }
     App_Perf_EndCycles(APP_PERF_SEC_DISP_RENDER, t_perf);
-
     back_slot = s_backbuf_slot();
     refresh_text = 0u;
     if (frame_seq <= 1u)
@@ -1667,14 +2195,12 @@ void App_Display_Render(const Sound_Pos_t *pos,
     {
         if (back_slot <= 1u)
         {
-            /* 双缓冲各自维护一份“最近文字刷新帧号”。 */
             s_last_text_refresh_frame[back_slot] = frame_seq;
         }
         t_perf = App_Perf_BeginCycles();
         s_draw_overlay(pos, frame_seq, peak_idx, peak_theta, peak_phi, field_peak, sai_dma_active);
         App_Perf_EndCycles(APP_PERF_SEC_DISP_OVERLAY, t_perf);
     }
-
     t_perf = App_Perf_BeginCycles();
     s_commit_frame();
     App_Perf_EndCycles(APP_PERF_SEC_DISP_COMMIT, t_perf);

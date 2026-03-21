@@ -1,0 +1,1366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NECCS 声学相机项目文档</title>
+<style>
+  :root {
+    --primary: #1a73e8;
+    --primary-dark: #1557b0;
+    --accent: #34a853;
+    --warn: #fbbc04;
+    --danger: #ea4335;
+    --bg: #f8f9fa;
+    --surface: #ffffff;
+    --border: #dadce0;
+    --text: #202124;
+    --text-sec: #5f6368;
+    --code-bg: #f1f3f4;
+    --shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08);
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+  #sidebar {
+    position: fixed; top: 0; left: 0;
+    width: 260px; height: 100vh;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 20px 0;
+    z-index: 100;
+  }
+  #sidebar .logo {
+    padding: 0 20px 16px;
+    font-size: 16px; font-weight: 700;
+    color: var(--primary);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  #sidebar .logo span { font-size: 11px; color: var(--text-sec); display: block; font-weight: 400; margin-top: 2px; }
+  #sidebar nav a {
+    display: block;
+    padding: 6px 20px;
+    color: var(--text-sec);
+    text-decoration: none;
+    font-size: 13.5px;
+    border-left: 3px solid transparent;
+    transition: all .15s;
+  }
+  #sidebar nav a:hover { color: var(--primary); background: #e8f0fe; border-left-color: var(--primary); }
+  #sidebar nav .nav-section {
+    padding: 10px 20px 4px;
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .8px;
+    color: var(--text-sec);
+  }
+  #sidebar nav a.sub { padding-left: 32px; font-size: 13px; }
+  #content {
+    margin-left: 260px;
+    padding: 40px 48px;
+    max-width: 1060px;
+  }
+  h1 { font-size: 30px; font-weight: 700; color: var(--primary); margin-bottom: 8px; }
+  h2 { font-size: 22px; font-weight: 700; margin: 48px 0 16px; padding-bottom: 8px;
+       border-bottom: 2px solid var(--border); color: var(--text); }
+  h3 { font-size: 17px; font-weight: 700; margin: 28px 0 10px; color: var(--text); }
+  h4 { font-size: 14px; font-weight: 700; margin: 18px 0 6px; color: var(--text-sec); text-transform: uppercase; letter-spacing: .5px; }
+  p { margin: 8px 0 12px; }
+  ul, ol { margin: 6px 0 12px 20px; }
+  li { margin: 4px 0; }
+  strong { color: var(--text); }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: 'Consolas', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 13px;
+  }
+  pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    overflow-x: auto;
+    margin: 12px 0 18px;
+    font-size: 13px;
+    line-height: 1.6;
+    font-family: 'Consolas', 'Cascadia Code', monospace;
+    box-shadow: var(--shadow);
+  }
+  pre .c  { color: #6c7086; font-style: italic; }
+  pre .kw { color: #cba6f7; }
+  pre .fn { color: #89b4fa; }
+  pre .str{ color: #a6e3a1; }
+  pre .num{ color: #fab387; }
+  pre .mac{ color: #fab387; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin: 16px 0;
+    box-shadow: var(--shadow);
+  }
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .card-sm {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    box-shadow: var(--shadow);
+  }
+  .card-sm h4 { margin-top: 0; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: .3px;
+  }
+  .badge-blue   { background: #e8f0fe; color: var(--primary); }
+  .badge-green  { background: #e6f4ea; color: #137333; }
+  .badge-yellow { background: #fef9c3; color: #854d0e; }
+  .badge-red    { background: #fce8e6; color: #c5221f; }
+  .badge-gray   { background: #f1f3f4; color: var(--text-sec); }
+  .flow { display: flex; flex-direction: column; gap: 0; margin: 16px 0; }
+  .flow-row { display: flex; align-items: stretch; gap: 0; }
+  .flow-box {
+    background: var(--surface);
+    border: 1.5px solid var(--primary);
+    border-radius: 6px;
+    padding: 10px 16px;
+    min-width: 160px;
+    text-align: center;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--primary);
+    box-shadow: var(--shadow);
+    flex: 1;
+  }
+  .flow-box.green  { border-color: var(--accent); color: #137333; }
+  .flow-box.orange { border-color: #e67e22; color: #a04000; }
+  .flow-box small  { display: block; font-size: 11.5px; font-weight: 400; color: var(--text-sec); margin-top: 3px; }
+  .flow-arrow-down { text-align: center; font-size: 18px; color: var(--text-sec); padding: 2px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0 20px;
+    font-size: 13.5px;
+    background: var(--surface);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  th {
+    background: #e8f0fe;
+    color: var(--primary-dark);
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  td { padding: 8px 14px; border-top: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: #f8f9ff; }
+  .note, .warn, .tip {
+    border-left: 4px solid;
+    padding: 10px 16px;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+  .note { background: #e8f0fe; border-color: var(--primary); }
+  .warn { background: #fef9c3; border-color: var(--warn); }
+  .tip  { background: #e6f4ea; border-color: var(--accent); }
+  .memmap { display: flex; flex-direction: column; gap: 4px; margin: 16px 0; font-family: 'Consolas', monospace; font-size: 13px; }
+  .mem-row { display: flex; align-items: center; gap: 12px; border-radius: 4px; padding: 6px 12px; border: 1px solid var(--border); }
+  .mem-addr { color: var(--primary); width: 110px; flex-shrink: 0; }
+  .mem-name { font-weight: 700; width: 180px; flex-shrink: 0; }
+  .mem-desc { color: var(--text-sec); }
+  .mem-row.dma   { background: #fce8e6; }
+  .mem-row.dtcm  { background: #e6f4ea; }
+  .mem-row.axi   { background: #e8f0fe; }
+  .mem-row.sdram { background: #fef9c3; }
+  .mem-sub { padding-left: 32px; font-size: 12.5px; }
+  .hero {
+    background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
+    color: white;
+    border-radius: var(--radius);
+    padding: 32px 36px;
+    margin-bottom: 32px;
+  }
+  .hero h1 { color: white; font-size: 28px; }
+  .hero p { color: rgba(255,255,255,0.85); margin-top: 8px; }
+  .hero .tags { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .hero .tag { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); padding: 3px 10px; border-radius: 20px; font-size: 12.5px; color: white; }
+  .section-anchor { scroll-margin-top: 24px; }
+  .perf-bar { margin: 8px 0; }
+  .perf-bar-label { font-size: 13px; display: flex; justify-content: space-between; }
+  .perf-bar-bg { height: 8px; background: var(--border); border-radius: 4px; margin-top: 4px; }
+  .perf-bar-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--accent), var(--primary)); }
+  #sidebar::-webkit-scrollbar { width: 4px; }
+  #sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  @media (max-width: 768px) { #sidebar { display: none; } #content { margin-left: 0; padding: 24px 20px; } }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div class="logo">
+    NECCS 声学相机
+    <span>STM32H743 · FreeRTOS · SRP-PHAT</span>
+  </div>
+  <nav>
+    <div class="nav-section">概览</div>
+    <a href="#overview">项目简介</a>
+    <a href="#hardware">硬件平台</a>
+    <a href="#memory">内存布局</a>
+
+    <div class="nav-section">系统架构</div>
+    <a href="#arch">整体架构</a>
+    <a href="#boot">启动流程</a>
+    <a href="#rtos">RTOS 任务</a>
+    <a href="#dataflow">数据流</a>
+
+    <div class="nav-section">音频采集</div>
+    <a href="#mic" class="sub">麦克风阵列</a>
+    <a href="#pcmd3180" class="sub">PCMD3180 驱动</a>
+    <a href="#sai-dma" class="sub">SAI + DMA</a>
+    <a href="#preprocess" class="sub">数据预处理</a>
+
+    <div class="nav-section">算法核心</div>
+    <a href="#fft" class="sub">FFT 频域变换</a>
+    <a href="#gcc-phat" class="sub">GCC-PHAT</a>
+    <a href="#srp" class="sub">SRP 波束成形</a>
+    <a href="#coarse-fine" class="sub">粗搜 + 精搜</a>
+    <a href="#lut" class="sub">预计算 LUT</a>
+    <a href="#quality" class="sub">质量评估</a>
+
+    <div class="nav-section">显示输出</div>
+    <a href="#display" class="sub">热力图渲染</a>
+    <a href="#ltdc" class="sub">LTDC 双缓冲</a>
+    <a href="#dma2d" class="sub">DMA2D 加速</a>
+
+    <div class="nav-section">调试工具</div>
+    <a href="#debug">调试输出</a>
+    <a href="#cli">CLI 命令</a>
+
+    <div class="nav-section">参考</div>
+    <a href="#files">关键文件</a>
+    <a href="#config">参数配置</a>
+    <a href="#perf">性能指标</a>
+  </nav>
+</div>
+
+<div id="content">
+
+<div class="hero">
+  <h1>NECCS 声学相机</h1>
+  <p>基于 STM32H743 + 16 路麦克风阵列的实时声源定位与热力图显示系统。<br>
+     采用 SRP-PHAT 波束成形算法，支持 ±60° 水平/垂直声源定位，30 FPS 实时显示。</p>
+  <div class="tags">
+    <span class="tag">STM32H743IIT6 @ 480MHz</span>
+    <span class="tag">16-ch PDM 麦克风</span>
+    <span class="tag">SRP-PHAT 算法</span>
+    <span class="tag">FreeRTOS</span>
+    <span class="tag">800×480 LCD</span>
+    <span class="tag">CMSIS-DSP</span>
+  </div>
+</div>
+
+<!-- ==================== 项目简介 ==================== -->
+<h2 id="overview" class="section-anchor">项目简介</h2>
+<p>
+  NECCS 是一款嵌入式实时声学相机系统，能够实时确定声源在空间中的方位角（水平角和垂直角），
+  并以热力图的形式显示在 800×480 RGB LCD 屏幕上。
+</p>
+<div class="card-grid">
+  <div class="card-sm">
+    <h4>功能特性</h4>
+    <ul>
+      <li>16 路麦克风同步采集</li>
+      <li>SRP-PHAT 声源定位</li>
+      <li>±60° 水平 + 垂直定位</li>
+      <li>30 FPS 热力图实时显示</li>
+      <li>VOFA+ 实时调试输出</li>
+      <li>运行时 CLI 参数调整</li>
+    </ul>
+  </div>
+  <div class="card-sm">
+    <h4>关键性能</h4>
+    <ul>
+      <li>采样率：48 kHz / 16 bit</li>
+      <li>帧长：256 点（5.33 ms/帧）</li>
+      <li>算法延迟：~5 ms/帧</li>
+      <li>定位精度：±5°（精搜后）</li>
+      <li>频率范围：562 Hz ~ 7.9 kHz</li>
+      <li>麦克风对数：40 对</li>
+    </ul>
+  </div>
+  <div class="card-sm">
+    <h4>开发环境</h4>
+    <ul>
+      <li>IDE：Keil MDK (AC5)</li>
+      <li>HAL 库：STM32H7xx HAL</li>
+      <li>RTOS：FreeRTOS v10</li>
+      <li>DSP：CMSIS-DSP v1.9</li>
+      <li>调试：VOFA+ 上位机</li>
+      <li>LUT 生成：Python 3</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ==================== 硬件平台 ==================== -->
+<h2 id="hardware" class="section-anchor">硬件平台</h2>
+
+<h3>核心器件</h3>
+<table>
+  <thead><tr><th>器件</th><th>型号</th><th>作用</th><th>接口</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>主控 MCU</strong></td>
+      <td>STM32H743IIT6</td>
+      <td>480 MHz Cortex-M7，运行算法和 RTOS，FPU 全开</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><strong>音频前端 A</strong></td>
+      <td>TI PCMD3180 (I2C addr 0x4C)</td>
+      <td>8 路 PDM 转 TDM，输出 TDM 时隙 0~7</td>
+      <td>软件 I²C + TDM (SAI1)</td>
+    </tr>
+    <tr>
+      <td><strong>音频前端 B</strong></td>
+      <td>TI PCMD3180 (I2C addr 0x4D)</td>
+      <td>8 路 PDM 转 TDM，输出 TDM 时隙 8~15</td>
+      <td>软件 I²C + TDM (SAI1)</td>
+    </tr>
+    <tr>
+      <td><strong>麦克风</strong></td>
+      <td>MEMS PDM 麦克风 × 16</td>
+      <td>声音采集，构成 4×4 平面均匀阵列（URA）</td>
+      <td>PDM 差分信号</td>
+    </tr>
+    <tr>
+      <td><strong>SDRAM</strong></td>
+      <td>W9825G6KH</td>
+      <td>32 MB 外部 RAM，存放 LCD 帧缓冲</td>
+      <td>FMC @ 120 MHz</td>
+    </tr>
+    <tr>
+      <td><strong>LCD</strong></td>
+      <td>800×480 RGB 并口</td>
+      <td>显示声学热力图</td>
+      <td>LTDC（RGB565）</td>
+    </tr>
+    <tr>
+      <td><strong>调试串口</strong></td>
+      <td>USART1</td>
+      <td>VOFA+ 数据输出 / CLI 命令输入</td>
+      <td>921600 baud, 8N1</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>时钟树</h3>
+<div class="card">
+<pre><span class="c">/* 时钟配置（SystemClock_Config）
+ *
+ * HSE（25 MHz 外部晶振）
+ *   └─► PLL1：PLLM=5, PLLN=192, PLLP=2
+ *       ├─► SYSCLK  = 25/5×192/2 = 480 MHz  （CPU 主频）
+ *       ├─► HCLK    = 480 / 2   = 240 MHz  （AHB 总线 / FMC）
+ *       └─► APBx    = 240 / 2   = 120 MHz  （APB1/2/3/4）
+ *
+ *   └─► PLL3（由 ltdc_clk_set 动态配置）
+ *       └─► LTDC 像素时钟（随面板 ID 调整）
+ *
+ * FMC → SDRAM：SDCLK = HCLK/2 = 120 MHz，CAS 延迟 = 2
+ */</span></pre>
+</div>
+
+<!-- ==================== 内存布局 ==================== -->
+<h2 id="memory" class="section-anchor">内存布局</h2>
+<p>
+  STM32H743 具有多个内存区域，各有不同的访问速度和缓存特性。
+  本项目根据数据访问模式将缓冲区精心分配到合适区域，最大化性能。
+</p>
+
+<div class="memmap">
+  <div class="mem-row dma">
+    <span class="mem-addr">0x30000000</span>
+    <span class="mem-name">SRAM1（16 KB）</span>
+    <span class="mem-desc"><strong>Non-Cacheable</strong>（MPU 配置）— DMA 安全区，CPU 读取保证数据最新</span>
+  </div>
+  <div class="mem-row dma mem-sub">
+    <span class="mem-addr"></span>
+    <span class="mem-name">Mic_Rx_Buffer</span>
+    <span class="mem-desc">SAI DMA 接收区，16384 字节（PING 8192 B + PONG 8192 B）</span>
+  </div>
+
+  <div class="mem-row dtcm" style="margin-top:8px;">
+    <span class="mem-addr">0x20000000</span>
+    <span class="mem-name">DTCM（128 KB）</span>
+    <span class="mem-desc"><strong>零等待</strong>（紧耦合到 Cortex-M7）— CPU 密集计算区，无缓存延迟</span>
+  </div>
+  <div class="mem-row dtcm mem-sub">
+    <span class="mem-addr"></span>
+    <span class="mem-name">Mic_Process_Buffer</span>
+    <span class="mem-desc">解交织后时域 float32，16 × 256 × 4 B = 16 KB</span>
+  </div>
+  <div class="mem-row dtcm mem-sub">
+    <span class="mem-addr"></span>
+    <span class="mem-name">Mic_Freq_Buffer</span>
+    <span class="mem-desc">FFT 频域复数 float32，16 × 256 × 4 B = 16 KB</span>
+  </div>
+  <div class="mem-row dtcm mem-sub">
+    <span class="mem-addr"></span>
+    <span class="mem-name">Hanning_Window</span>
+    <span class="mem-desc">汉宁窗系数，256 × 4 B = 1 KB</span>
+  </div>
+  <div class="mem-row dtcm mem-sub">
+    <span class="mem-addr"></span>
+    <span class="mem-name">S_Rfft</span>
+    <span class="mem-desc">RFFT 实例（含旋转因子表），频繁访问，零等待至关重要</span>
+  </div>
+
+  <div class="mem-row axi" style="margin-top:8px;">
+    <span class="mem-addr">0x24000000</span>
+    <span class="mem-name">AXI SRAM（512 KB）</span>
+    <span class="mem-desc"><strong>Cacheable</strong> — 大容量中间结果，顺序访问缓存命中率高</span>
+  </div>
+  <div class="mem-row axi mem-sub">
+    <span class="mem-addr"></span>
+    <span class="mem-name">GCC_PHAT_Buffer</span>
+    <span class="mem-desc">GCC-PHAT 白化互相关，40 对 × 40 bins × 2（复数）× 4 B ≈ 12.8 KB</span>
+  </div>
+  <div class="mem-row axi mem-sub">
+    <span class="mem-addr"></span>
+    <span class="mem-name">SRP_Power</span>
+    <span class="mem-desc">SRP 功率网格，129 点 × 4 B ≈ 516 B</span>
+  </div>
+
+  <div class="mem-row sdram" style="margin-top:8px;">
+    <span class="mem-addr">0xC0000000</span>
+    <span class="mem-name">SDRAM（32 MB）</span>
+    <span class="mem-desc"><strong>Cacheable</strong> — 帧缓冲区（LTDC 双缓冲）</span>
+  </div>
+  <div class="mem-row sdram mem-sub">
+    <span class="mem-addr"></span>
+    <span class="mem-name">Frame Buffer × 2</span>
+    <span class="mem-desc">RGB565，800 × 480 × 2 B × 2 帧 = 1.5 MB</span>
+  </div>
+</div>
+
+<div class="note">
+  <strong>为什么 DMA 缓冲区必须在 Non-Cacheable 区？</strong><br>
+  Cortex-M7 的数据缓存（D-Cache）对 DMA 写入是透明的——DMA 直接写入物理内存，
+  但 CPU 可能从缓存中读到旧数据。将 DMA 目标区域配置为 Non-Cacheable，
+  CPU 每次都从物理内存读取，保证数据一致性，无需手动 <code>SCB_InvalidateDCache</code>。
+</div>
+
+<!-- ==================== 整体架构 ==================== -->
+<h2 id="arch" class="section-anchor">整体架构</h2>
+<p>系统分为四个层次，从上到下依次为：应用层、算法层、驱动层、硬件层。</p>
+
+<div class="card">
+  <table style="margin:0; box-shadow:none; font-size:13.5px;">
+    <tr>
+      <th style="background:#fef9c3; color:#a04000; width:140px;">应用层</th>
+      <td>app_main_task（任务调度 / 队列 / 性能统计） &nbsp;/&nbsp;
+          app_display（热力图渲染） &nbsp;/&nbsp;
+          app_data_output（VOFA+ 调试输出）</td>
+    </tr>
+    <tr>
+      <th style="background:#e6f4ea; color:#137333;">算法层</th>
+      <td>ai_preprocess（解交织） &nbsp;/&nbsp;
+          ai_beamforming（FFT + SRP-PHAT） &nbsp;/&nbsp;
+          ai_srp_lut（预计算 LUT）</td>
+    </tr>
+    <tr>
+      <th style="background:#e8f0fe; color:#1557b0;">驱动层</th>
+      <td>pcmd3180（音频前端配置） &nbsp;/&nbsp;
+          ltdc（LCD 控制器） &nbsp;/&nbsp;
+          dma2d_accel（图形加速） &nbsp;/&nbsp;
+          sdram（外部 RAM）</td>
+    </tr>
+    <tr>
+      <th style="background:#fce8e6; color:#c5221f;">硬件层</th>
+      <td>SAI1（TDM 音频接收） &nbsp;/&nbsp;
+          DMA（数据搬运） &nbsp;/&nbsp;
+          FMC（SDRAM 访问） &nbsp;/&nbsp;
+          LTDC（显示时序生成）</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ==================== 启动流程 ==================== -->
+<h2 id="boot" class="section-anchor">启动流程</h2>
+<p>从上电复位到第一帧音频开始处理，系统经历以下有序的初始化步骤：</p>
+
+<div class="flow">
+  <div class="flow-row"><div class="flow-box">① MPU_Config()<small>CubeMX 默认 MPU（后续会被覆盖）</small></div></div>
+  <div class="flow-arrow-down">↓</div>
+  <div class="flow-row"><div class="flow-box">② HAL_Init()<small>复位所有外设 · 配置 SysTick · 设置中断优先级分组</small></div></div>
+  <div class="flow-arrow-down">↓</div>
+  <div class="flow-row"><div class="flow-box">③ App_MPU_Config() + cpu_cache_enable()<small>自定义 MPU：SRAM1=Non-Cacheable / SDRAM=Cacheable · 启用 I-Cache + D-Cache</small></div></div>
+  <div class="flow-arrow-down">↓</div>
+  <div class="flow-row"><div class="flow-box">④ SystemClock_Config()<small>HSE 25 MHz → PLL1 → SYSCLK 480 MHz</small></div></div>
+  <div class="flow-arrow-down">↓</div>
+  <div class="flow-row"><div class="flow-box">⑤ sdram_init()<small>FMC 初始化 + W9825G6KH 上电时序（发送 PRECHARGE/AUTO-REFRESH/MRS 命令）</small></div></div>
+  <div class="flow-arrow-down">↓</div>
+  <div class="flow-row"><div class="flow-box">⑥ MX_GPIO / DMA / USART1 Init<small>基础外设：GPIO 复用 · DMA 通道 · 调试串口</small></div></div>
+  <div class="flow-arrow-down">↓</div>
+  <div class="flow-row"><div class="flow-box green">⑦ App_Display_Init()<small>LTDC + DMA2D + LCD 背光/复位（先显示可提前呈现启动画面）</small></div></div>
+  <div class="flow-arrow-down">↓</div>
+  <div class="flow-row"><div class="flow-box">⑧ MX_SAI1_Init()<small>SAI1 Block_A：主机模式接收 / TDM16 / 16bit / 48 kHz</small></div></div>
+  <div class="flow-arrow-down">↓</div>
+  <div class="flow-row"><div class="flow-box">⑨ app_run_boot_tests()<small>SDRAM 冒烟测试：采样步长 4KB 写入并回读，结果通过串口输出</small></div></div>
+  <div class="flow-arrow-down">↓</div>
+  <div class="flow-row"><div class="flow-box orange">⑩ MX_FREERTOS_Init() → osKernelStart()<small>创建初始任务 → 启动调度器 → main() 不再返回</small></div></div>
+</div>
+
+<h3>PCMD3180InitTask（一次性初始化任务）</h3>
+<p>FreeRTOS 启动后该任务以高于默认的优先级运行，完成音频链路初始化后自删除：</p>
+<ol>
+  <li>软件 I²C 初始化（GPIO 模拟）</li>
+  <li><code>PCMD3180_Init_Device(0x4C, 0)</code> — Chip A，TDM 时隙 0~7</li>
+  <li><code>PCMD3180_Init_Device(0x4D, 8)</code> — Chip B，TDM 时隙 8~15</li>
+  <li><code>App_Stream_Init()</code> — RFFT 实例 + Hanning 窗生成 + SRP-PHAT 状态初始化</li>
+  <li><code>App_Task_Init()</code> — 创建 Audio_Pipeline_Task 和 UI_Display_Task，创建两个队列</li>
+  <li><code>HAL_SAI_Receive_DMA(&hsai_BlockA1, Mic_Rx_Buffer, DMA_BUFFER_SIZE)</code> — 启动 DMA 循环接收</li>
+  <li><code>vTaskDelete(NULL)</code> — 自删除，释放资源</li>
+</ol>
+
+<!-- ==================== RTOS 任务 ==================== -->
+<h2 id="rtos" class="section-anchor">RTOS 任务架构</h2>
+
+<table>
+  <thead><tr><th>任务名</th><th>优先级</th><th>堆栈</th><th>触发方式</th><th>职责</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>PCMD3180InitTask</code></td>
+      <td><span class="badge badge-red">Normal+2</span></td>
+      <td>512 字（2 KB）</td>
+      <td>调度器启动后立即运行</td>
+      <td>音频硬件初始化，完成后自删除</td>
+    </tr>
+    <tr>
+      <td><code>Audio_Pipeline_Task</code></td>
+      <td><span class="badge badge-blue">优先级 4</span></td>
+      <td>2048 字（8 KB）</td>
+      <td>xQueueReceive（等待 DMA 事件）</td>
+      <td>解交织 → FFT → SRP-PHAT → 发送定位结果</td>
+    </tr>
+    <tr>
+      <td><code>UI_Display_Task</code></td>
+      <td><span class="badge badge-green">优先级 4</span></td>
+      <td>2048 字（8 KB）</td>
+      <td>xQueueReceive（33 ms 超时）</td>
+      <td>渲染热力图 → 叠加 UI → 刷新 LCD</td>
+    </tr>
+    <tr>
+      <td><code>defaultTask</code></td>
+      <td><span class="badge badge-gray">Normal</span></td>
+      <td>256 字（1 KB）</td>
+      <td>空闲时运行</td>
+      <td>保留，空转（可扩展为看门狗等）</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>任务间通信</h3>
+<div class="card">
+  <table style="margin:0; box-shadow:none; font-size:13.5px;">
+    <thead><tr><th>队列</th><th>元素类型</th><th>长度</th><th>生产者</th><th>消费者</th><th>发送 API</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>xAudioFrameQueue</code></td>
+        <td><code>Audio_FrameEvent_t</code></td>
+        <td>1</td>
+        <td>SAI DMA ISR</td>
+        <td>Audio_Pipeline_Task</td>
+        <td><code>xQueueOverwriteFromISR</code></td>
+      </tr>
+      <tr>
+        <td><code>xPositionQueue</code></td>
+        <td><code>Sound_Pos_t</code></td>
+        <td>1</td>
+        <td>Audio_Pipeline_Task</td>
+        <td>UI_Display_Task</td>
+        <td><code>xQueueOverwrite</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="note">
+  <strong>队列长度为 1 的设计哲学：</strong>实时声学系统只关心最新帧。
+  当 UI 渲染速度跟不上音频处理速度时，旧的定位结果被自动覆盖——
+  这确保显示延迟始终保持最小，而不是随队列积压线性增长。
+</div>
+
+<!-- ==================== 数据流 ==================== -->
+<h2 id="dataflow" class="section-anchor">完整数据流</h2>
+
+<div class="flow">
+  <div class="flow-row"><div class="flow-box">16路 PDM 麦克风<small>MEMS 声学传感器，输出 PDM 差分信号</small></div></div>
+  <div class="flow-arrow-down">↓ 64× 过采样 PDM 信号</div>
+  <div class="flow-row"><div class="flow-box">PCMD3180 × 2<small>片上 ΣΔ 抽取滤波器，PDM → PCM 16bit，48 kHz TDM16 输出</small></div></div>
+  <div class="flow-arrow-down">↓ SAI1 TDM16（交织 int16，16通道/帧）</div>
+  <div class="flow-row"><div class="flow-box">SAI1 + DMA（循环模式）<small>DMA 持续写入 Mic_Rx_Buffer（SRAM1 Non-Cacheable）</small></div></div>
+  <div class="flow-arrow-down">↓ HAL_SAI_RxHalfCpltCallback / RxCpltCallback（ISR）</div>
+  <div class="flow-row"><div class="flow-box orange">xAudioFrameQueue（长度 1，覆盖）<small>事件：PING/PONG 标识 + 单调序号</small></div></div>
+  <div class="flow-arrow-down">↓ xQueueReceive（Audio_Pipeline_Task 阻塞等待）</div>
+  <div class="flow-row"><div class="flow-box green">① Deinterleave_Using_Matrix()<small>交织 int16 → 平面 float32（SIMD 矩阵转置，~0.3 ms）</small></div></div>
+  <div class="flow-arrow-down">↓ Mic_Process_Buffer（DTCM，16ch × 256 float32）</div>
+  <div class="flow-row"><div class="flow-box green">② AI_FFT_Process()<small>去直流 → Hanning 加窗 → 256pt RFFT × 16ch（~0.8 ms）</small></div></div>
+  <div class="flow-arrow-down">↓ Mic_Freq_Buffer（DTCM，复数频域，16ch × 256 float32）</div>
+  <div class="flow-row"><div class="flow-box green">③ AI_SRP_PHAT_Process()<small>GCC-PHAT → 粗搜 81pt → Top-3 NMS → 精搜 48pt → 质量评估（~4 ms）</small></div></div>
+  <div class="flow-arrow-down">↓ Sound_Pos_t（x_angle, y_angle, energy）</div>
+  <div class="flow-row"><div class="flow-box orange">xPositionQueue（长度 1，覆盖）</div></div>
+  <div class="flow-arrow-down">↓ xQueueReceive（UI_Display_Task，33 ms 超时）</div>
+  <div class="flow-row"><div class="flow-box">④ App_Display_Render()<small>SRP 功率场 → 96×96 标量场 → 平滑 → 归一化 → 伪彩色 → 帧缓冲</small></div></div>
+  <div class="flow-arrow-down">↓ DMA2D 写入后缓冲 → ltdc_request_swap() → VSYNC 换页</div>
+  <div class="flow-row"><div class="flow-box green">800×480 LCD 热力图实时显示</div></div>
+</div>
+
+<!-- ==================== 麦克风阵列 ==================== -->
+<h2 id="mic" class="section-anchor">麦克风阵列</h2>
+
+<h3>物理布局（4×4 URA）</h3>
+<div class="card">
+<pre><span class="c">/* 坐标系（正面看向声学相机）：
+ *   +X 轴：向右
+ *   +Y 轴：向上
+ *   +Z 轴：向前（垂直阵列平面，声源方向）
+ *
+ * 麦克风编号布局（示意，实际间距由阵列设计决定）：
+ *   [12][13][14][15]   ← 顶行（Y 最大）
+ *   [ 8][ 9][10][11]
+ *   [ 4][ 5][ 6][ 7]
+ *   [ 0][ 1][ 2][ 3]   ← 底行（Y 最小）
+ *
+ * 麦克风间距约束：
+ *   最小半波长间距 = c / (2 × f_max) = 343 / (2 × 7875) ≈ 2.18 cm
+ *   间距过大会导致空间混叠（相位模糊），间距过小降低分辨率
+ */</span></pre>
+</div>
+
+<h3>麦克风对选择策略</h3>
+<p>
+  从 16 个麦克风的 C(16,2) = 120 个可能对中，
+  按<strong>基线长度降序</strong>选择 40 对。
+  长基线对方向分辨率高但易产生空间模糊，短基线对消除模糊但分辨率低，
+  两者组合使用可兼顾精度和鲁棒性。
+</p>
+
+<!-- ==================== PCMD3180 ==================== -->
+<h2 id="pcmd3180" class="section-anchor">PCMD3180 驱动</h2>
+
+<h3>芯片特性</h3>
+<ul>
+  <li>8 路 PDM 输入（支持 4 个立体声 MEMS 麦克风）</li>
+  <li>TDM 输出，支持 16/24/32 bit，最多 16 时隙</li>
+  <li>片上可配置 HPF（高通滤波器），去除直流和低频噪声</li>
+  <li>I²C 控制接口，7-bit 地址（A0/A1 引脚配置）</li>
+  <li>Slave 模式：BCLK 和 FSYNC 由外部 SAI 提供</li>
+</ul>
+
+<h3>完整初始化序列</h3>
+<div class="card">
+<pre><span class="c">/* PCMD3180_Init_Device(devAddr, startSlot) 完整流程 */</span>
+
+<span class="fn">PCMD_Ctrl_Reset</span>(devAddr);             <span class="c">// 1. 写 0x01 到 REG_SW_RESET → 软复位</span>
+<span class="fn">vTaskDelay</span>(<span class="num">10</span>);                        <span class="c">// 2. 等待 10ms，PLL 和内部电路稳定</span>
+<span class="fn">PCMD_Ctrl_Sleep</span>(devAddr, <span class="num">1</span>);           <span class="c">// 3. 进入 Sleep（写 REG_SLEEP_CFG=0x02）</span>
+                                         <span class="c">//    注意：寄存器配置必须在 Sleep 中进行！</span>
+<span class="fn">PCMD_Config_ASI_Format</span>(devAddr);      <span class="c">// 4. ASI：TDM16 格式 / 16bit / Offset=1</span>
+<span class="fn">PCMD_Config_TDM_Slots</span>(devAddr, startSlot); <span class="c">// 5. 分配 8 个连续 TDM 时隙（0 或 8）</span>
+<span class="fn">PCMD_Config_PDM_IO</span>(devAddr);          <span class="c">// 6. PDM 时钟 64× OSR，GPO1 输出 PDM CLK</span>
+<span class="fn">PCMD_Config_DSP</span>(devAddr);             <span class="c">// 7. 启用 HPF（高通滤波，截止频率约 20 Hz）</span>
+<span class="fn">PCMD_Config_Channels</span>(devAddr);        <span class="c">// 8. 8 路输入全部配置为 PDM 模式</span>
+<span class="fn">PCMD_Config_Clock_Mode</span>(devAddr);      <span class="c">// 9. Slave 模式，时钟源 = BCLK（由 SAI 提供）</span>
+<span class="fn">PCMD_Enable_Blocks</span>(devAddr);          <span class="c">// 10. 使能：输入通道 + ASI 输出 + PLL + ADC</span>
+<span class="fn">PCMD_Ctrl_Sleep</span>(devAddr, <span class="num">0</span>);          <span class="c">// 11. 退出 Sleep，进入 Active 状态</span>
+<span class="fn">vTaskDelay</span>(<span class="num">10</span>);                        <span class="c">// 12. 等待上电稳定</span>
+<span class="fn">PCMD_Check_Health</span>(devAddr);           <span class="c">// 13. 读 REG_DEV_STS0/1，检查 PLL 锁定和 ASI 状态</span></pre>
+</div>
+
+<div class="warn">
+  <strong>重要：</strong>PCMD3180 寄存器配置<strong>必须在 Sleep 模式下进行</strong>。
+  若在 Active 状态写入配置寄存器，配置可能不会生效，导致 TDM 时隙错乱或采样率错误。
+</div>
+
+<!-- ==================== SAI + DMA ==================== -->
+<h2 id="sai-dma" class="section-anchor">SAI + DMA 双缓冲</h2>
+
+<h3>PING/PONG 双缓冲机制</h3>
+<p>
+  DMA 以<strong>循环（Circular）模式</strong>持续将 TDM 数据写入 <code>Mic_Rx_Buffer</code>。
+  缓冲区分为 PING（前半）和 PONG（后半）两个区域，DMA 和 CPU 始终操作不同半区。
+</p>
+
+<div class="card">
+<pre><span class="c">/* 时序示意（每 5.33ms 一帧）：
+ *
+ * DMA：  ←── 写 PING ───→ ←── 写 PONG ───→ ←── 写 PING ───→ ...
+ * ISR：                  ↑HalfCplt          ↑CpltCallback
+ *             （PONG 可读）                  （PING 可读）
+ * CPU：       [处理 PONG]                   [处理 PING]
+ *                         [处理 PING]
+ *
+ * Mic_Rx_Buffer 布局：
+ *   [0      .. 8191 ]  = PING 区（前半）→ DMA Half Complete 时已就绪
+ *   [8192   .. 16383]  = PONG 区（后半）→ DMA Full Complete 时已就绪
+ *
+ * 每半区包含：16 通道 × 256 采样 × 2 字节 = 8192 字节（1 帧）
+ */</span></pre>
+</div>
+
+<h3>DMA 中断回调</h3>
+<table>
+  <thead><tr><th>回调</th><th>触发时机</th><th>推送事件</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>HAL_SAI_RxHalfCpltCallback</code></td>
+      <td>DMA 写完 PING 区（前半完成）</td>
+      <td>推送 <code>AUDIO_DMA_HALF_PING</code> 到 xAudioFrameQueue</td>
+    </tr>
+    <tr>
+      <td><code>HAL_SAI_RxCpltCallback</code></td>
+      <td>DMA 写完 PONG 区（循环一圈）</td>
+      <td>推送 <code>AUDIO_DMA_HALF_PONG</code> 到 xAudioFrameQueue</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  每个事件携带单调递增的 <code>seq</code> 字段。音频任务对比收到的 seq 与
+  上次 seq，若差值 > 1，说明发生了丢帧（队列覆盖）。
+  丢帧次数通过 <code>g_audio_frame_seq_isr</code> 可在调试时监控。
+</p>
+
+<!-- ==================== 预处理 ==================== -->
+<h2 id="preprocess" class="section-anchor">数据预处理（解交织）</h2>
+
+<h3>问题描述</h3>
+<p>
+  SAI DMA 收到的 TDM 数据按时间交织：同一时刻所有通道的采样值连续排列。
+  FFT 处理需要每个通道连续的时间序列（平面格式），需要做格式转换。
+</p>
+
+<h3>矩阵转置方法</h3>
+<p>
+  将交织数据视为 <strong>256行 × 16列</strong> 的矩阵（行=时刻，列=通道），
+  转置后得到 <strong>16行 × 256列</strong> 的矩阵（行=通道，列=时刻），
+  即所需的平面格式。
+  使用 CMSIS-DSP 的 <code>arm_mat_trans_q15</code>，底层通过 SIMD 指令
+  VTRN/VZIP 并行处理，速度比手写循环快约 4 倍。
+</p>
+
+<div class="card">
+<pre><span class="c">/* Deinterleave_Using_Matrix 实现 */</span>
+arm_matrix_instance_q15 mat_src, mat_dst;
+
+<span class="c">/* 源矩阵：256 行 × 16 列（交织，每行是一个时刻的所有通道采样）*/</span>
+<span class="fn">arm_mat_init_q15</span>(&mat_src, frame_size, num_channels, src_interleaved_q15);
+
+<span class="c">/* 目标矩阵：16 行 × 256 列（平面，每行是一个通道的全部采样）*/</span>
+<span class="fn">arm_mat_init_q15</span>(&mat_dst, num_channels, frame_size, dst_planar_q15);
+
+<span class="fn">arm_mat_trans_q15</span>(&mat_src, &mat_dst);  <span class="c">// SIMD 转置，~0.15 ms</span>
+
+<span class="c">/* q15 → float32：val / 32768.0，归一化到 [-1.0, 1.0]
+ * 使用 SIMD VCVT 指令，~0.15 ms */</span>
+<span class="fn">arm_q15_to_float</span>(dst_planar_q15, dst_planar_f32, frame_size * num_channels);</pre>
+</div>
+
+<!-- ==================== FFT ==================== -->
+<h2 id="fft" class="section-anchor">FFT 频域变换</h2>
+
+<h3>AI_FFT_Process() 流程</h3>
+<p>对 16 路信号分别执行去直流、加窗、256 点实数 FFT，共约 0.8 ms。</p>
+
+<div class="card">
+<pre><span class="kw">for</span> (uint32_t ch = <span class="num">0</span>; ch &lt; MIC_CHANNELS; ch++) {
+    float32_t *in  = Mic_Process_Buffer + ch * FRAME_LEN;
+    float32_t *out = Mic_Freq_Buffer    + ch * FRAME_LEN;
+
+    <span class="c">/* 步骤 1: 去直流（DC offset removal）
+     * 消除麦克风偏置，避免 DC 分量污染低频 bin
+     * arm_mean_f32: 计算均值（SIMD 累加）
+     * arm_offset_f32: 整体减去均值（SIMD 减法） */</span>
+    float32_t mean;
+    <span class="fn">arm_mean_f32</span>(in, FRAME_LEN, &mean);
+    <span class="fn">arm_offset_f32</span>(in, -mean, in, FRAME_LEN);
+
+    <span class="c">/* 步骤 2: Hanning 窗（频谱泄漏抑制）
+     * w[n] = 0.5 × (1 - cos(2πn/N))，n = 0..255
+     * 作用：使信号两端平滑过渡到 0，减少截断效应
+     * arm_mult_f32: 逐点乘法（SIMD 向量乘）*/</span>
+    <span class="fn">arm_mult_f32</span>(in, Hanning_Window, in, FRAME_LEN);
+
+    <span class="c">/* 步骤 3: 256 点实数 FFT（RFFT）
+     * 输出为 packed 格式，256 个 float32：
+     *   [0]       DC 实部
+     *   [1]       奈奎斯特（24 kHz）实部
+     *   [2k]      bin k 实部  （k=1..127，频率 k×187.5 Hz）
+     *   [2k+1]    bin k 虚部
+     * ifftFlag=0 表示正向 FFT（时域→频域）*/</span>
+    <span class="fn">arm_rfft_fast_f32</span>(&S_Rfft, in, out, <span class="num">0</span>);
+}</pre>
+</div>
+
+<h3>频率分辨率与 SRP 频段</h3>
+<table>
+  <thead><tr><th>参数</th><th>值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>频率分辨率 Δf</td><td>187.5 Hz/bin</td><td>= 采样率 / 帧长 = 48000 / 256</td></tr>
+    <tr><td>SRP 起始 bin</td><td>bin 3 = 562.5 Hz</td><td>跳过 DC 和极低频噪声</td></tr>
+    <tr><td>SRP 结束 bin</td><td>bin 42 = 7875 Hz</td><td>覆盖人声主频段，避免高频噪声</td></tr>
+    <tr><td>SRP bin 总数</td><td>40 个</td><td>= 42 - 3 + 1</td></tr>
+    <tr><td>有效频率范围</td><td>562 Hz ~ 7875 Hz</td><td>覆盖语音核心频段</td></tr>
+  </tbody>
+</table>
+
+<!-- ==================== GCC-PHAT ==================== -->
+<h2 id="gcc-phat" class="section-anchor">GCC-PHAT 广义互相关</h2>
+
+<h3>算法原理</h3>
+<p>
+  <strong>GCC-PHAT</strong>（Generalized Cross-Correlation with Phase Transform）
+  通过计算两路麦克风信号的互相关，估计声音到达两个麦克风的时延差（TDOA）。
+  PHAT 白化操作将互相关谱归一化为单位幅度，保留纯相位信息，
+  这使得算法对混响和宽带噪声具有较强的鲁棒性。
+</p>
+
+<div class="card">
+<pre><span class="c">/* 对每对麦克风 (i, j)，在 SRP 频率范围（bin 3~42）内计算 GCC-PHAT */</span>
+
+<span class="kw">for</span> (uint32_t k = SRP_FREQ_BIN_START; k &lt;= SRP_FREQ_BIN_END; k++) {
+
+    <span class="c">/* 取通道 i 在 bin k 处的复数频谱：X_i = Re_i + j×Im_i */</span>
+    float32_t Re_i = Mic_Freq_Buffer[i * FRAME_LEN + 2*k    ];
+    float32_t Im_i = Mic_Freq_Buffer[i * FRAME_LEN + 2*k + 1];
+    float32_t Re_j = Mic_Freq_Buffer[j * FRAME_LEN + 2*k    ];
+    float32_t Im_j = Mic_Freq_Buffer[j * FRAME_LEN + 2*k + 1];
+
+    <span class="c">/* 步骤 1: 交叉功率谱 G = X_i × conj(X_j)
+     * Re_G = Re_i×Re_j + Im_i×Im_j
+     * Im_G = Im_i×Re_j - Re_i×Im_j  */</span>
+    float32_t Re_G = Re_i * Re_j + Im_i * Im_j;
+    float32_t Im_G = Im_i * Re_j - Re_i * Im_j;
+
+    <span class="c">/* 步骤 2: PHAT 白化 — 除以幅度，保留相位
+     * |G| = sqrt(Re_G² + Im_G²)
+     * G_phat = G / (|G| + ε)   ← ε 防止除零 */</span>
+    float32_t mag = sqrtf(Re_G*Re_G + Im_G*Im_G) + PHAT_EPSILON;
+    GCC_PHAT_Buffer[pair][k - SRP_FREQ_BIN_START][0] = Re_G / mag;
+    GCC_PHAT_Buffer[pair][k - SRP_FREQ_BIN_START][1] = Im_G / mag;
+}</pre>
+</div>
+
+<!-- ==================== SRP ==================== -->
+<h2 id="srp" class="section-anchor">SRP 可控响应功率</h2>
+
+<h3>核心公式</h3>
+<p>
+  对候选方向 (θ, φ)，预期时延差为：
+  <code>τ = (dx × sin(θ) × cos(φ) + dy × sin(φ)) / c</code>
+</p>
+<p>
+  该方向的 SRP 功率（所有麦克风对、所有频率 bin 的贡献之和）：
+</p>
+
+<div class="card">
+<pre><span class="c">/* SRP_Accumulate_Point(theta_deg, phi_deg) 伪代码 */</span>
+
+float32_t power = <span class="num">0.0f</span>;
+
+<span class="kw">for</span> (uint32_t p = <span class="num">0</span>; p &lt; SRP_PAIR_COUNT; p++) {
+
+    <span class="c">/* 根据麦克风对位移和候选方向计算 TDOA（单位：秒）*/</span>
+    float32_t tau = (srp_pair_dx[p] * sinf(theta) * cosf(phi)
+                   + srp_pair_dy[p] * sinf(phi)) / SPEED_OF_SOUND;
+
+    <span class="c">/* 相位递推初始化（起始 bin = SRP_FREQ_BIN_START）
+     * 相位增量：Δφ = 2π × Δf × tau（相邻 bin 之间固定）
+     * 只需在循环开始时计算 4 次三角函数，之后递推 */</span>
+    float32_t phi0    = <span class="num">2.0f</span> * PI * SRP_FREQ_BIN_START * DELTA_F * tau;
+    float32_t dphi    = <span class="num">2.0f</span> * PI * DELTA_F * tau;
+    float32_t cos_phi = cosf(phi0), sin_phi = sinf(phi0);
+    float32_t cos_dp  = cosf(dphi), sin_dp  = sinf(dphi);
+
+    <span class="kw">for</span> (uint32_t k = <span class="num">0</span>; k &lt; SRP_FREQ_BINS; k++) {
+        <span class="c">/* GCC-PHAT 贡献：Re_phat × cos(φ_k) + Im_phat × sin(φ_k)
+         * 等价于取复数乘积的实部 */</span>
+        power += GCC_PHAT_Buffer[p][k][<span class="num">0</span>] * cos_phi
+               + GCC_PHAT_Buffer[p][k][<span class="num">1</span>] * sin_phi;
+
+        <span class="c">/* 相位递推（利用和角公式，避免重复 cos/sin 调用）*/</span>
+        float32_t new_cos = cos_phi * cos_dp - sin_phi * sin_dp;
+        float32_t new_sin = sin_phi * cos_dp + cos_phi * sin_dp;
+        cos_phi = new_cos; sin_phi = new_sin;
+    }
+}
+<span class="kw">return</span> power;  <span class="c">// 越大说明声源越可能在 (theta, phi) 方向</span></pre>
+</div>
+
+<!-- ==================== 粗搜精搜 ==================== -->
+<h2 id="coarse-fine" class="section-anchor">粗搜 + 精搜两级策略</h2>
+
+<div class="card-grid">
+  <div class="card-sm">
+    <h4>粗搜（Coarse Scan）</h4>
+    <ul>
+      <li>网格：9 × 9 = <strong>81 个</strong>扫描点</li>
+      <li>角度范围：水平 ±60°，垂直 ±60°</li>
+      <li>步长：15°/点（每维度）</li>
+      <li>TDOA：直接查 Flash LUT，无需实时计算</li>
+      <li>耗时：~2 ms（含 LUT 查表 + 40 对相位累加）</li>
+    </ul>
+  </div>
+  <div class="card-sm">
+    <h4>精搜（Fine Scan）</h4>
+    <ul>
+      <li>对粗搜结果 Top-3 峰值（NMS 过滤邻近峰）</li>
+      <li>每峰值周围 4 × 4 = <strong>16 个</strong>扫描点</li>
+      <li>总计：3 × 16 = <strong>48 个</strong>扫描点</li>
+      <li>每峰值范围：±10°，步长 5°</li>
+      <li>TDOA：实时计算（精搜角度不规则，无法预表格）</li>
+      <li>耗时：~1 ms</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Top-K NMS 选峰算法</h3>
+<p>
+  粗搜 81 个点中选出 3 个分散的峰值，用于精搜。
+  使用<strong>非极大值抑制（NMS）</strong>避免选到相邻的旁瓣：
+</p>
+<ol>
+  <li>按 SRP 功率降序排列 81 个粗搜点</li>
+  <li>从最大值开始，逐个检查候选点</li>
+  <li>若候选点与已选峰值的网格曼哈顿距离 ≤ <code>SRP_TOPK_NMS_RADIUS</code>（=1），则跳过</li>
+  <li>直到选出 3 个相互分散的峰值为止</li>
+</ol>
+
+<!-- ==================== LUT ==================== -->
+<h2 id="lut" class="section-anchor">预计算查找表（LUT）</h2>
+
+<p>
+  粗搜的 TDOA 值（81 个扫描点 × 40 对麦克风）在编译前由 Python 脚本预计算，
+  以 <code>const float32_t</code> 数组的形式存入 Flash，约 13 KB。
+  运行时直接查表，无需执行三角函数，极大加快粗搜速度。
+</p>
+
+<table>
+  <thead><tr><th>数据</th><th>维度</th><th>大小</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>srp_pair_idx</code></td><td>[40][2]</td><td>80 B</td><td>40 对麦克风的通道索引 (i, j)</td></tr>
+    <tr><td><code>srp_pair_dx</code></td><td>[40]</td><td>160 B</td><td>X 方向位移（米），用于精搜实时计算</td></tr>
+    <tr><td><code>srp_pair_dy</code></td><td>[40]</td><td>160 B</td><td>Y 方向位移（米），用于精搜实时计算</td></tr>
+    <tr><td><code>coarse_theta_deg</code></td><td>[9]</td><td>36 B</td><td>粗搜水平角度表（-60° 到 +60°，步长 15°）</td></tr>
+    <tr><td><code>coarse_phi_deg</code></td><td>[9]</td><td>36 B</td><td>粗搜垂直角度表（-60° 到 +60°，步长 15°）</td></tr>
+    <tr><td><code>tdoa_coarse_lut</code></td><td>[81][40]</td><td>12.96 KB</td><td>预计算 TDOA（秒），粗搜核心数据</td></tr>
+  </tbody>
+</table>
+
+<div class="warn">
+  <strong>重新生成 LUT：</strong>若修改了麦克风阵列物理布局（间距、排列），
+  必须重新运行 <code>tools/generate_srp_lut.py</code>，
+  并将生成的 <code>ai_srp_lut.c</code> 重新添加到 Keil MDK 项目
+  的 <code>User/Algorithm</code> 分组。
+</div>
+
+<!-- ==================== 质量评估 ==================== -->
+<h2 id="quality" class="section-anchor">质量评估与置信度</h2>
+
+<h3>三个质量指标</h3>
+<table>
+  <thead><tr><th>指标</th><th>计算公式</th><th>物理意义</th><th>阈值</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>对比度</strong> (contrast)</td>
+      <td>(P_max - P_second) / P_max</td>
+      <td>主峰突出程度。值越小，声场越模糊（多声源或强混响）</td>
+      <td>≥ 0.03</td>
+    </tr>
+    <tr>
+      <td><strong>质量</strong> (quality)</td>
+      <td>(P_max - P_far_second) / P_max</td>
+      <td>排除 ±5° 旁瓣后的对比度，更严格的单声源判断</td>
+      <td>≥ 0.01</td>
+    </tr>
+    <tr>
+      <td><strong>能量</strong> (energy)</td>
+      <td>P_max / P_reference</td>
+      <td>归一化声源能量，低值可能表示无声源或信噪比差</td>
+      <td>≥ 0.05</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>低置信度策略（可在 ai_config.h 配置）</h3>
+<table>
+  <thead><tr><th>策略宏</th><th>行为</th><th>适用场景</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>SRP_LOWCONF_REPORT_NEW</code>（默认）</td>
+      <td>始终输出最新结果，无论置信度</td>
+      <td>实时响应优先，允许抖动</td>
+    </tr>
+    <tr>
+      <td><code>SRP_LOWCONF_HOLD_LAST</code></td>
+      <td>置信度低时保持上次有效结果</td>
+      <td>需要稳定输出（如控制系统）</td>
+    </tr>
+    <tr>
+      <td><code>SRP_LOWCONF_MIXED</code></td>
+      <td>保持 N 帧后接受新结果（N 由 HOLD_FRAMES 配置）</td>
+      <td>平衡稳定性与响应速度</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ==================== 显示 ==================== -->
+<h2 id="display" class="section-anchor">热力图渲染</h2>
+
+<h3>渲染流水线（App_Display_Render）</h3>
+<div class="flow">
+  <div class="flow-row"><div class="flow-box">SRP 功率数据<small>粗搜 81 点 + 精搜 48 点（来自 SRP_VisFrame_t）</small></div></div>
+  <div class="flow-arrow-down">↓ 将每个扫描点按角度坐标投影到网格</div>
+  <div class="flow-row"><div class="flow-box">96×96 标量场（低分辨率）<small>每格存储映射到该区域的 SRP 功率均值</small></div></div>
+  <div class="flow-arrow-down">↓ 精搜结果高斯融合（fine_fusion_enable=1 时）</div>
+  <div class="flow-row"><div class="flow-box">高斯平滑<small>可分离高斯核（sigma=1.05），smooth_passes 次（0~3）</small></div></div>
+  <div class="flow-arrow-down">↓ EMA 动态归一化</div>
+  <div class="flow-row"><div class="flow-box">dB 映射 + 伽马校正<small>EMA 追踪峰值 → 转 dB → 归一化到 [0,1] → gamma 校正 → 噪声门限</small></div></div>
+  <div class="flow-arrow-down">↓ 伪彩色映射（蓝→青→绿→黄→红）</div>
+  <div class="flow-row"><div class="flow-box">双线性插值放大<small>96×96 → 显示区域分辨率（DMA2D L8 调色板加速）</small></div></div>
+  <div class="flow-arrow-down">↓ DMA2D 异步写入后缓冲</div>
+  <div class="flow-row"><div class="flow-box">叠加文字 + 十字光标<small>显示角度、能量、帧率、SAI 活跃状态</small></div></div>
+  <div class="flow-arrow-down">↓ ltdc_request_swap() → VSYNC 换页</div>
+  <div class="flow-row"><div class="flow-box green">前缓冲切换 → LCD 无撕裂显示</div></div>
+</div>
+
+<h3>显示模式</h3>
+<table>
+  <thead><tr><th>模式</th><th>插值</th><th>平滑次数</th><th>归一化</th><th>适用场景</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-blue">FAST</span></td>
+      <td>最近邻</td>
+      <td>0</td>
+      <td>快速</td>
+      <td>CPU 负载高时，追求最高帧率</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-green">BALANCED（默认）</span></td>
+      <td>双线性</td>
+      <td>1</td>
+      <td>完整 EMA</td>
+      <td>日常使用，平衡质量与性能</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-yellow">CLEAN</span></td>
+      <td>双线性</td>
+      <td>2~3</td>
+      <td>完整 EMA</td>
+      <td>演示场景，追求最佳视觉效果</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ==================== LTDC ==================== -->
+<h2 id="ltdc" class="section-anchor">LTDC 双缓冲</h2>
+
+<p>
+  系统使用<strong>双帧缓冲</strong>技术消除显示撕裂。
+  两个帧缓冲均位于 SDRAM（每个 800×480×2=768 KB，RGB565 格式）：
+</p>
+<ul>
+  <li><strong>前缓冲（Front Buffer）</strong>：LTDC 正在扫描并输出到 LCD</li>
+  <li><strong>后缓冲（Back Buffer）</strong>：CPU 和 DMA2D 正在渲染下一帧</li>
+</ul>
+<p>
+  渲染完成后调用 <code>ltdc_request_swap()</code> 设置换页请求标志。
+  LTDC 在下一个<strong>垂直消隐期（VSYNC）</strong>的中断回调中切换图层地址，
+  保证换页发生在非显示期间，LCD 上完全无撕裂。
+</p>
+
+<!-- ==================== DMA2D ==================== -->
+<h2 id="dma2d" class="section-anchor">DMA2D 图形加速</h2>
+
+<p>
+  STM32H7 内置 <strong>DMA2D（Chrom-Art Accelerator）</strong>是专用的图形像素搬运引擎，
+  可在 CPU 处理算法的同时异步搬运像素数据，大幅降低显示对 CPU 的占用。
+</p>
+
+<table>
+  <thead><tr><th>操作</th><th>API 函数</th><th>典型用途</th></tr></thead>
+  <tbody>
+    <tr><td>矩形单色填充</td><td><code>ltdc_fill_async</code></td><td>清屏、绘制背景色块</td></tr>
+    <tr><td>RGB565 位块传输</td><td><code>ltdc_color_fill_async</code></td><td>将渲染好的热力图像素写入帧缓冲</td></tr>
+    <tr><td>L8 调色板格式转换</td><td><code>ltdc_l8_fill_async</code></td><td>8 位热力图索引 → RGB565 输出（最高效）</td></tr>
+    <tr><td>A8 透明度混合</td><td><code>ltdc_a8_blend_async</code></td><td>文字、图标与背景的 Alpha 混合</td></tr>
+    <tr><td>等待传输完成</td><td><code>ltdc_draw_flush</code></td><td>同步点，带超时保护（防止死锁）</td></tr>
+  </tbody>
+</table>
+
+<div class="tip">
+  <strong>降级保护：</strong>当 DMA2D 超时或硬件故障时，系统自动回退到 CPU 软件填充路径（sw_fallback）。
+  超时次数通过 <code>g_ltdc_dma2d_timeout_count</code> 实时统计，可在调试时监控硬件健康状态。
+</div>
+
+<!-- ==================== 调试 ==================== -->
+<h2 id="debug" class="section-anchor">调试输出（VOFA+）</h2>
+
+<p>
+  系统通过 USART1（921600 baud，8N1）向 <strong>VOFA+</strong> 上位机发送实时调试数据，
+  使用 <strong>JustFloat 协议</strong>：多个 float32 紧排 + 尾帧 <code>0x00 0x00 0x80 0x7F</code>。
+</p>
+
+<h3>VOFA+ 连接配置</h3>
+<ul>
+  <li>协议：JustFloat</li>
+  <li>串口波特率：921600</li>
+  <li>数据位：8，停止位：1，无校验</li>
+</ul>
+
+<table>
+  <thead><tr><th>模式</th><th>函数</th><th>VOFA+ 通道数</th><th>内容</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-gray">Mode 0</span></td>
+      <td><code>VOFA_Send_Channel_RMS</code></td>
+      <td>16</td>
+      <td>16 路麦克风 RMS 有效值（检查麦克风是否正常工作）</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-blue">Mode 1</span></td>
+      <td><code>VOFA_Send_FFT_Magnitude</code></td>
+      <td>128</td>
+      <td>指定通道的 FFT 幅度谱（检查 FFT 和麦克风频响）</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-green">Mode 3</span></td>
+      <td><code>VOFA_Send_SRP_Result</code></td>
+      <td>92</td>
+      <td>声源角度 + 能量 + 81 点粗搜热力图 + 8 项诊断计数</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Mode 3 数据结构（92 个 float32）</h3>
+<div class="card">
+<pre><span class="c">/* 通道布局：
+ * [  0]   x_angle                水平角（度）
+ * [  1]   y_angle                垂直角（度）
+ * [  2]   energy                 归一化能量 [0, 1]
+ * [3..83] coarse_power[81]       粗搜 9×9 网格 SRP 功率（热力图数据）
+ * [ 84]   g_audio_both_flags_count  PING+PONG 同时收到的异常次数
+ * [ 85]   uart_tx_drop_count     UART 发送丢包次数（CPU 忙时丢弃）
+ * [ 86]   g_srp_invalid_count    SRP 计算结果无效次数（NaN/越界）
+ * [ 87]   coarse_power_hold_count   粗搜功率保持计数
+ * [ 88]   g_srp_low_contrast_count  低对比度结果计数
+ * [ 89]   g_srp_last_contrast    上次对比度值（调参参考）
+ * [ 90]   g_srp_last_quality     上次质量指标（调参参考）
+ * [ 91]   frame_seq              当前音频帧序号（可检测 ISR 丢帧）
+ */</span></pre>
+</div>
+
+<!-- ==================== CLI ==================== -->
+<h2 id="cli" class="section-anchor">CLI 命令</h2>
+
+<p>通过 USART1 发送 ASCII 文本命令可在运行时调整系统参数（无需重新编译烧录）。</p>
+
+<table>
+  <thead><tr><th>命令</th><th>参数</th><th>功能</th><th>示例</th></tr></thead>
+  <tbody>
+    <tr><td><code>fps</code></td><td><code>&lt;N&gt;</code></td><td>设置 UI 目标帧率（1~60）</td><td><code>fps 30</code></td></tr>
+    <tr><td><code>decim</code></td><td><code>&lt;N&gt;</code></td><td>音频算法抽帧（每 N 帧运行一次 SRP，减小 CPU 负载）</td><td><code>decim 2</code></td></tr>
+    <tr><td><code>perf</code></td><td><code>&lt;0|1&gt;</code></td><td>开/关性能统计周期打印</td><td><code>perf 1</code></td></tr>
+    <tr><td><code>perf dump</code></td><td>—</td><td>立即打印一次性能统计结果</td><td><code>perf dump</code></td></tr>
+    <tr><td><code>mode</code></td><td><code>&lt;fast|balanced|clean&gt;</code></td><td>切换热力图显示模式</td><td><code>mode balanced</code></td></tr>
+    <tr><td><code>display cfg</code></td><td><code>&lt;key&gt; &lt;val&gt;</code></td><td>调整显示运行时参数</td><td><code>display cfg gamma 1.3</code></td></tr>
+    <tr><td><code>display cfg</code></td><td><code>smooth_passes &lt;N&gt;</code></td><td>设置高斯平滑次数（0~3）</td><td><code>display cfg smooth_passes 2</code></td></tr>
+    <tr><td><code>display cfg</code></td><td><code>ema_attack &lt;f&gt;</code></td><td>设置 EMA 峰值追踪上升速度</td><td><code>display cfg ema_attack 0.7</code></td></tr>
+  </tbody>
+</table>
+
+<!-- ==================== 关键文件 ==================== -->
+<h2 id="files" class="section-anchor">关键文件索引</h2>
+
+<table>
+  <thead><tr><th>文件</th><th>路径</th><th>职责</th></tr></thead>
+  <tbody>
+    <tr><td><code>main.c</code></td><td>Core/Src/</td><td>系统入口、初始化顺序、SAI DMA ISR 回调</td></tr>
+    <tr><td><code>freertos.c</code></td><td>Core/Src/</td><td>FreeRTOS 初始化，创建 PCMD3180InitTask 和 defaultTask</td></tr>
+    <tr><td><code>mpu.c</code></td><td>Core/Src/</td><td>自定义 MPU 配置（Non-Cacheable DMA 区 + Cacheable SDRAM）</td></tr>
+    <tr><td><code>sai.c</code></td><td>Core/Src/</td><td>SAI1 配置（CubeMX 生成，TDM16 主机接收模式）</td></tr>
+    <tr><td><strong>ai_config.h</strong></td><td>User/Algorithm/</td><td><strong>全局算法参数</strong>（MIC_CHANNELS / FRAME_LEN / 网格 / 频率范围 / 策略）</td></tr>
+    <tr><td><code>ai_preprocess.c/h</code></td><td>User/Algorithm/</td><td>解交织：CMSIS 矩阵转置 + q15→float32</td></tr>
+    <tr><td><code>ai_beamforming.c/h</code></td><td>User/Algorithm/</td><td>FFT + GCC-PHAT + SRP 粗/精搜 + 质量评估 + 诊断变量</td></tr>
+    <tr><td><code>ai_srp_lut.c/h</code></td><td>User/Algorithm/</td><td>预计算 TDOA LUT（由 tools/generate_srp_lut.py 生成）</td></tr>
+    <tr><td><code>app_main_task.c/h</code></td><td>User/App/</td><td>FreeRTOS 任务定义、队列创建、运行时配置、性能计时</td></tr>
+    <tr><td><code>app_data_stream.c/h</code></td><td>User/App/</td><td>缓冲区定义（DMA/DTCM/AXI 内存分配）和初始化</td></tr>
+    <tr><td><code>app_display.c/h</code></td><td>User/App/</td><td>热力图渲染全流水线（标量场→平滑→归一化→伪彩色→LCD）</td></tr>
+    <tr><td><code>app_display_cfg.h</code></td><td>User/App/</td><td>编译期显示参数（分辨率 / EMA / 平滑 / 精搜融合等）</td></tr>
+    <tr><td><code>app_data_output.c/h</code></td><td>User/App/</td><td>VOFA+ JustFloat 格式调试输出（RMS / FFT / SRP）</td></tr>
+    <tr><td><code>pcmd3180.c/h</code></td><td>User/Hardware/</td><td>PCMD3180 全寄存器定义和完整初始化 API</td></tr>
+    <tr><td><code>soft_i2c.c/h</code></td><td>User/Hardware/</td><td>GPIO 模拟 I²C（用于配置 PCMD3180）</td></tr>
+    <tr><td><code>ltdc.c/h</code></td><td>User/BSP/LCD/</td><td>LTDC 驱动：面板 ID 识别 / 双缓冲 / VSYNC 换页</td></tr>
+    <tr><td><code>dma2d_accel.c/h</code></td><td>User/BSP/LCD/</td><td>DMA2D 异步图形传输封装（含超时和软件回退）</td></tr>
+    <tr><td><code>sdram.c/h</code></td><td>User/BSP/</td><td>W9825G6KH SDRAM 初始化（FMC 配置 + 上电命令序列）</td></tr>
+  </tbody>
+</table>
+
+<!-- ==================== 参数配置 ==================== -->
+<h2 id="config" class="section-anchor">参数配置指南</h2>
+
+<h3>扫描角度范围</h3>
+<div class="card">
+<pre><span class="c">/* ai_config.h */</span>
+<span class="mac">#define COARSE_ANGLE_MIN_DEG  (-60.0f)</span>  <span class="c">// 粗搜最小角度</span>
+<span class="mac">#define COARSE_ANGLE_MAX_DEG  ( 60.0f)</span>  <span class="c">// 粗搜最大角度</span>
+<span class="mac">#define COARSE_GRID_SIZE      9u</span>         <span class="c">// 每维度点数，步长 = 120°/8 = 15°</span>
+<span class="mac">#define FINE_SPAN_DEG         10.0f</span>      <span class="c">// 精搜每峰值 ±10°</span>
+<span class="mac">#define FINE_GRID_SIZE        4u</span>         <span class="c">// 精搜每维度点数，步长 = 20°/4 = 5°</span></pre>
+</div>
+
+<h3>SRP 频率范围</h3>
+<div class="card">
+<pre><span class="c">/* ai_config.h */</span>
+<span class="mac">#define SRP_FREQ_BIN_START  3u</span>   <span class="c">// 起始 bin: 3 × 187.5 = 562.5 Hz</span>
+<span class="mac">#define SRP_FREQ_BIN_END    42u</span>  <span class="c">// 结束 bin: 42 × 187.5 = 7875 Hz</span>
+<span class="c">// 人声优先：bin 3~21 (562 Hz ~ 4 kHz)
+// 宽频音源：bin 1~63 (187 Hz ~ 11.8 kHz)</span></pre>
+</div>
+
+<h3>麦克风对数（须重新生成 LUT）</h3>
+<div class="card">
+<pre><span class="c">/* ai_config.h */</span>
+<span class="mac">#define SRP_PAIR_COUNT  40u</span>  <span class="c">// 减少→速度更快，增加→精度更高（须 ≤ C(16,2)=120）</span>
+<span class="c">// 修改后必须重新运行 tools/generate_srp_lut.py 生成新 LUT！</span></pre>
+</div>
+
+<h3>输出方向重映射</h3>
+<div class="card">
+<pre><span class="c">/* ai_config.h — 适配不同麦克风阵列安装方向 */</span>
+<span class="mac">#define SRP_OUTPUT_REMAP_PRESET  0u</span>  <span class="c">// 0=自定义, 1=顺时针90°, 2=逆时针90°, 3=180°</span>
+<span class="mac">#define SRP_OUTPUT_SWAP_XY    0u</span>     <span class="c">// 1=交换水平和垂直角</span>
+<span class="mac">#define SRP_OUTPUT_INVERT_X   0u</span>     <span class="c">// 1=水平角取反（左右镜像）</span>
+<span class="mac">#define SRP_OUTPUT_INVERT_Y   0u</span>     <span class="c">// 1=垂直角取反（上下翻转）</span></pre>
+</div>
+
+<!-- ==================== 性能 ==================== -->
+<h2 id="perf" class="section-anchor">性能指标</h2>
+
+<div class="card">
+  <h4>各阶段耗时（@ 480 MHz Cortex-M7，16ch × 256 点）</h4>
+
+  <div class="perf-bar">
+    <div class="perf-bar-label"><span>① 解交织（矩阵转置 + q15→float32）</span><span>~0.3 ms</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar-fill" style="width:5.6%"></div></div>
+  </div>
+  <div class="perf-bar">
+    <div class="perf-bar-label"><span>② FFT × 16 通道（去直流 + 加窗 + RFFT）</span><span>~0.8 ms</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar-fill" style="width:15%"></div></div>
+  </div>
+  <div class="perf-bar">
+    <div class="perf-bar-label"><span>③ GCC-PHAT（40 对 × 40 bins）</span><span>~1.0 ms</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar-fill" style="width:18.8%"></div></div>
+  </div>
+  <div class="perf-bar">
+    <div class="perf-bar-label"><span>④ SRP 粗搜（81 点 LUT 查表）</span><span>~2.0 ms</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar-fill" style="width:37.5%"></div></div>
+  </div>
+  <div class="perf-bar">
+    <div class="perf-bar-label"><span>⑤ SRP 精搜（48 点实时计算）</span><span>~1.0 ms</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar-fill" style="width:18.8%"></div></div>
+  </div>
+  <div class="perf-bar">
+    <div class="perf-bar-label"><span>总音频流水线</span><span style="color:var(--danger)">~5.1 ms（帧预算 5.33 ms，余量 4.9%）</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar-fill" style="width:96%; background:linear-gradient(90deg,#fbbc04,#ea4335)"></div></div>
+  </div>
+</div>
+
+<div class="card-grid">
+  <div class="card-sm">
+    <h4>内存使用汇总</h4>
+    <ul>
+      <li>SRAM1（DMA 缓冲）：16 KB</li>
+      <li>DTCM（算法缓冲）：约 34 KB</li>
+      <li>AXI SRAM（中间结果）：约 14 KB</li>
+      <li>Flash（LUT + 代码）：LUT 约 13 KB</li>
+      <li>SDRAM（帧缓冲双缓冲）：1.5 MB</li>
+    </ul>
+  </div>
+  <div class="card-sm">
+    <h4>实时性保障机制</h4>
+    <ul>
+      <li>帧周期：5.33 ms（256点/48kHz）</li>
+      <li>ISR 到任务唤醒：&lt;1 µs</li>
+      <li>RTOS：抢占式调度，优先级 4</li>
+      <li>丢帧策略：队列覆盖（不积压）</li>
+      <li>UI 刷新：33 ms（30 FPS）</li>
+    </ul>
+  </div>
+</div>
+
+<div class="warn">
+  <strong>性能裕量警示：</strong>音频流水线耗时约占帧预算的 96%，裕量极小。
+  若需提高扫描精度（更大 COARSE_GRID_SIZE 或更多 SRP_PAIR_COUNT），
+  建议先通过 <code>decim N</code> 命令将算法调用频率降低到每 N 帧一次，
+  再评估性能裕量。
+</div>
+
+<!-- FOOTER -->
+<div style="margin-top:64px; padding-top:24px; border-top:1px solid var(--border);
+            color:var(--text-sec); font-size:13px; text-align:center;">
+  NECCS 声学相机项目文档 &nbsp;·&nbsp;
+  STM32H743IIT6 + FreeRTOS + SRP-PHAT &nbsp;·&nbsp;
+  2026-03-05
+</div>
+
+</div><!-- /#content -->
+
+<script>
+(function() {
+  const links = document.querySelectorAll('#sidebar nav a');
+  const sections = document.querySelectorAll('.section-anchor');
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => { l.style.color=''; l.style.borderLeftColor=''; l.style.background=''; });
+        const a = document.querySelector('#sidebar nav a[href="#' + e.target.id + '"]');
+        if (a) {
+          a.style.color = 'var(--primary)';
+          a.style.borderLeftColor = 'var(--primary)';
+          a.style.background = '#e8f0fe';
+        }
+      }
+    });
+  }, { rootMargin: '-30% 0px -65% 0px' });
+  sections.forEach(el => observer.observe(el));
+})();
+</script>
+</body>
+</html>

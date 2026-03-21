@@ -24,6 +24,7 @@
 #include "stm32h7xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app_camera.h"
 #include "LCD/ltdc.h"
 #include "LCD/dma2d_accel.h"
 #include "usart.h"
@@ -182,6 +183,20 @@ void DMA1_Stream0_IRQHandler(void)
 }
 
 /**
+  * @brief Handle DMA1 Stream1 IRQ (DCMI RX DMA).
+  */
+void DMA1_Stream1_IRQHandler(void)
+{
+  /* USER CODE BEGIN DMA1_Stream1_IRQn 0 */
+
+  /* USER CODE END DMA1_Stream1_IRQn 0 */
+  App_Camera_DMA_IRQHandler();
+  /* USER CODE BEGIN DMA1_Stream1_IRQn 1 */
+
+  /* USER CODE END DMA1_Stream1_IRQn 1 */
+}
+
+/**
   * @brief Handle TIM6 global IRQ (HAL time base source).
   */
 void TIM6_DAC_IRQHandler(void)
@@ -221,6 +236,20 @@ void USART1_IRQHandler(void)
   /* USER CODE BEGIN USART1_IRQn 1 */
 
   /* USER CODE END USART1_IRQn 1 */
+}
+
+/**
+  * @brief Handle DCMI IRQ.
+  */
+void DCMI_IRQHandler(void)
+{
+  /* USER CODE BEGIN DCMI_IRQn 0 */
+
+  /* USER CODE END DCMI_IRQn 0 */
+  App_Camera_DCMI_IRQHandler();
+  /* USER CODE BEGIN DCMI_IRQn 1 */
+
+  /* USER CODE END DCMI_IRQn 1 */
 }
 
 /**

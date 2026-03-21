@@ -1,0 +1,89 @@
+﻿{
+    "generated_at":  "2026-03-18T19:53:32+08:00",
+    "repo_root":  "D:\\HEU\\NECCS\\NECCS",
+    "git":  {
+                "branch":  "camera",
+                "head":  "cbd851720b938caaff0118141c2f3e57df379185",
+                "latest_commit_subject":  "feat:",
+                "latest_commit_date":  "2026-03-18T19:27:59+08:00",
+                "dirty_files":  3,
+                "recent_commits":  [
+                                       "cbd8517 feat:",
+                                       "5b76b89 feat:",
+                                       "a4bbcd5 refactor: :art: 工程整理/清空工作区，为摄像头接入做准备",
+                                       "13a939c style: :building_construction: 工程重构",
+                                       "e9d4d42 style: :art: 继续完善注释",
+                                       "c9e923b style: :art: 添加完善注释",
+                                       "b340fd7 refactor(runtime): unify display runtime config and refresh module docs",
+                                       "3628151 fix(cli): improve uart cfg command handling and sync latest runtime updates"
+                                   ]
+            },
+    "modules":  [
+                    {
+                        "Module":  "Boot and platform init",
+                        "Path":  "START/Core/Src/main.c",
+                        "Note":  "HAL init, MPU/cache, clocks, peripheral setup."
+                    },
+                    {
+                        "Module":  "MPU memory layout",
+                        "Path":  "START/Core/Src/mpu.c",
+                        "Note":  "DMA-safe vs cacheable memory regions."
+                    },
+                    {
+                        "Module":  "Main RTOS tasks",
+                        "Path":  "START/User/App/app_main_task.c",
+                        "Note":  "Audio pipeline and UI loop, runtime knobs, CLI."
+                    },
+                    {
+                        "Module":  "Task API and perf enum",
+                        "Path":  "START/User/App/app_main_task.h",
+                        "Note":  "Public handles/counters and perf section ids."
+                    },
+                    {
+                        "Module":  "Display render pipeline",
+                        "Path":  "START/User/App/app_display.c",
+                        "Note":  "Field prep, norm, upsample, overlay, commit."
+                    },
+                    {
+                        "Module":  "Display runtime config API",
+                        "Path":  "START/User/App/app_display.h",
+                        "Note":  "Modes, interpolation, normalization config."
+                    },
+                    {
+                        "Module":  "Display compile-time knobs",
+                        "Path":  "START/User/App/app_display_cfg.h",
+                        "Note":  "Field size, smoothing, dynamic range, defaults."
+                    },
+                    {
+                        "Module":  "UART/VOFA output",
+                        "Path":  "START/User/App/app_data_output.c",
+                        "Note":  "Data streaming and baud assumptions."
+                    }
+                ],
+    "runtime_knobs":  {
+                          "UI_FPS_MIN":  null,
+                          "UI_FPS_MAX":  null,
+                          "UI_FPS_DEFAULT":  null,
+                          "AUDIO_ALGO_DECIM_DEFAULT":  null,
+                          "APP_DISPLAY_FIELD_W":  null,
+                          "APP_DISPLAY_FIELD_H":  null,
+                          "APP_DISPLAY_DYNAMIC_DB_FLOOR":  null,
+                          "APP_DISPLAY_DYNAMIC_GAMMA":  null,
+                          "APP_DISPLAY_BILINEAR_SAMPLING":  null
+                      },
+    "rtos":  {
+                 "tasks":  {
+
+                           },
+                 "queues":  [
+                                "xAudioFrameQueue",
+                                "xPositionQueue"
+                            ]
+             },
+    "ui_cli_commands":  {
+
+                        },
+    "perf_sections":  {
+
+                      }
+}
