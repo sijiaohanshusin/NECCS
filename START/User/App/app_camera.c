@@ -289,7 +289,6 @@ static HAL_StatusTypeDef s_camera_start_stream(uint8_t reset_seq, uint8_t announ
 {
     s_camera_force_idle();
     s_camera_reset_capture_state(reset_seq);
-    s_camera_pending_restart = 0u;
 
     __HAL_UNLOCK(&s_hdcmi);
     __HAL_UNLOCK(&s_hdma_dcmi);
@@ -315,6 +314,7 @@ static HAL_StatusTypeDef s_camera_start_stream(uint8_t reset_seq, uint8_t announ
         s_camera_streaming = 0u;
         s_camera_error_code = HAL_DCMI_GetError(&s_hdcmi);
         s_camera_dma_error_code = s_hdma_dcmi.ErrorCode;
+        s_camera_pending_restart = 1u;
         return HAL_ERROR;
     }
 
@@ -324,6 +324,7 @@ static HAL_StatusTypeDef s_camera_start_stream(uint8_t reset_seq, uint8_t announ
     s_camera_capture_index = 0u;
     s_camera_streaming = 0u;
     s_camera_wait_vsync_start = 1u;
+    s_camera_pending_restart = 0u;
     __HAL_DCMI_ENABLE_IT(&s_hdcmi, DCMI_IT_VSYNC);
 
     if (announce_start != 0u)
@@ -719,7 +720,7 @@ uint8_t App_Camera_Retry(void)
     }
 
     App_Camera_Start();
-    return (s_camera_streaming != 0u) ? 0u : 1u;
+    return ((s_camera_streaming != 0u) || (s_camera_wait_vsync_start != 0u)) ? 0u : 1u;
 #endif
 }
 
