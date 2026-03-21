@@ -1,4 +1,4 @@
-﻿/**
+/**
  ****************************************************************************************************
  * @file        ltdc.c
  * @version     V1.0
@@ -15,6 +15,8 @@
 #include "LCD/lcd.h"
 #include "LCD/dma2d_accel.h"
 #include "LCD/tft_spi.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 
 LTDC_HandleTypeDef  g_ltdc_handle;       /* LTDC 句柄 */
@@ -73,16 +75,27 @@ volatile uint16_t g_ltdc_panel_id = 0u;
 volatile uint32_t g_ltdc_swap_count = 0u;
 volatile uint32_t g_ltdc_swap_pending_count = 0u;
 volatile uint32_t g_ltdc_swap_error_count = 0u;
+volatile uint32_t g_ltdc_fifo_underrun_count = 0u;
+volatile uint32_t g_ltdc_transfer_error_count = 0u;
+volatile uint32_t g_ltdc_last_error_code = 0u;
 
 static volatile uint8_t s_front_buf_idx = 0u;
 static volatile uint8_t s_back_buf_idx = 0u;
 static volatile uint8_t s_swap_pending = 0u;
+static volatile uint8_t s_swap_reload_pending = 0u;
+static volatile uint8_t s_swap_front_target_idx = 0u;
+static volatile uint8_t s_swap_back_target_idx = 0u;
 
 #define LTDC_DMA2D_TIMEOUT_LOOP   0X1FFFFFU
+#define LTDC_PRESENT_DIRECT_MODE  0u
 
 static uint32_t *ltdc_draw_buf_ptr(void)
 {
+#if (LTDC_PRESENT_DIRECT_MODE != 0u)
+    return g_ltdc_framebuf[s_front_buf_idx];
+#else
     return g_ltdc_framebuf[s_back_buf_idx];
+#endif
 }
 
 static void ltdc_fill_sw_rect(uint32_t psx, uint32_t psy, uint32_t pex, uint32_t pey, uint32_t color)
@@ -150,10 +163,39 @@ static void ltdc_color_fill_sw_rect(uint32_t psx, uint32_t psy, uint32_t pex, ui
 #endif
 }
 
+static void ltdc_copy_sw_rect(uint32_t psx,
+                              uint32_t psy,
+                              uint32_t pex,
+                              uint32_t pey,
+                              const uint16_t *src,
+                              uint16_t src_stride)
+{
+#if LTDC_PIXFORMAT == LTDC_PIXFORMAT_RGB565
+    uint32_t width = pex - psx + 1u;
+    uint16_t *base = (uint16_t *)ltdc_draw_buf_ptr();
+
+    for (uint32_t y = psy; y <= pey; y++)
+    {
+        uint16_t *dst_row = base + y * lcdltdc.pwidth + psx;
+        const uint16_t *src_row = src + (uint32_t)(y - psy) * (uint32_t)src_stride;
+
+        for (uint32_t x = 0u; x < width; x++)
+        {
+            dst_row[x] = src_row[x];
+        }
+    }
+#else
+    (void)psx;
+    (void)psy;
+    (void)pex;
+    (void)pey;
+    (void)src;
+    (void)src_stride;
+#endif
+}
 /**
- * @brief       LTDC 总开关
- * @param       sw         1:使能 0:关闭
- * @retval      无
+ * @brief       LTDC 总开�? * @param       sw         1:使能 0:关闭
+ * @retval      �?
  */
 void ltdc_switch(uint8_t sw)
 {
@@ -168,10 +210,10 @@ void ltdc_switch(uint8_t sw)
 }
 
 /**
- * @brief       图层开关
- * @param       layerx     图层号
+ * @brief       图层开�?
+ * @param       layerx     图层�?
  * @param       sw         1:使能 0:关闭
- * @retval      无
+ * @retval      �?
  */
 void ltdc_layer_switch(uint8_t layerx, uint8_t sw)
 {
@@ -189,8 +231,8 @@ void ltdc_layer_switch(uint8_t layerx, uint8_t sw)
 
 /**
  * @brief       选择当前活动图层
- * @param       layerx     图层号
- * @retval      无
+ * @param       layerx     图层�?
+ * @retval      �?
  */
 void ltdc_select_layer(uint8_t layerx)
 {
@@ -204,30 +246,182 @@ uint32_t ltdc_get_frontbuf_addr(void)
 
 uint32_t ltdc_get_backbuf_addr(void)
 {
+#if (LTDC_PRESENT_DIRECT_MODE != 0u)
+    return (uint32_t)g_ltdc_framebuf[s_front_buf_idx];
+#else
     return (uint32_t)g_ltdc_framebuf[s_back_buf_idx];
+#endif
+}
+
+static uint8_t ltdc_front_index_from_hw_locked(void)
+{
+    uint32_t front_addr = LTDC_Layer1->CFBAR;
+
+    if (front_addr == (uint32_t)g_ltdc_framebuf[0])
+    {
+        return 0u;
+    }
+    if (front_addr == (uint32_t)g_ltdc_framebuf[1])
+    {
+        return 1u;
+    }
+
+    return 0xFFu;
+}
+
+static void ltdc_sync_indices_from_hw_locked(void)
+{
+    uint8_t front_idx = ltdc_front_index_from_hw_locked();
+
+    if (front_idx < 2u)
+    {
+        s_front_buf_idx = front_idx;
+        s_back_buf_idx = (uint8_t)(front_idx ^ 1u);
+    }
+}
+
+static void ltdc_recover_swap_timeout_locked(void)
+{
+    uint8_t front_idx = ltdc_front_index_from_hw_locked();
+
+    if (front_idx < 2u)
+    {
+        s_front_buf_idx = front_idx;
+        s_back_buf_idx = (uint8_t)(front_idx ^ 1u);
+    }
+    else
+    {
+        s_front_buf_idx = s_swap_front_target_idx;
+        s_back_buf_idx = s_swap_back_target_idx;
+    }
+
+    s_swap_reload_pending = 0u;
+    s_swap_pending = 0u;
+    g_ltdc_swap_error_count++;
+}
+
+static void ltdc_try_complete_swap_locked(void)
+{
+    if ((s_swap_reload_pending != 0u) &&
+        ((g_ltdc_handle.Instance->SRCR & LTDC_SRCR_VBR) == 0u))
+    {
+        s_front_buf_idx = s_swap_front_target_idx;
+        s_back_buf_idx = s_swap_back_target_idx;
+        s_swap_reload_pending = 0u;
+        s_swap_pending = 0u;
+        g_ltdc_swap_count++;
+    }
 }
 
 void ltdc_request_swap(void)
 {
+#if (LTDC_PRESENT_DIRECT_MODE != 0u)
+    s_back_buf_idx = s_front_buf_idx;
+    s_swap_reload_pending = 0u;
+    s_swap_pending = 0u;
+    return;
+#else
     uint32_t primask = __get_PRIMASK();
     __disable_irq();
-    s_swap_pending = 1u;
-    g_ltdc_swap_pending_count++;
+    ltdc_sync_indices_from_hw_locked();
+    if ((s_swap_pending == 0u) && (s_swap_reload_pending == 0u))
+    {
+        s_swap_pending = 1u;
+        g_ltdc_swap_pending_count++;
+    }
     if (primask == 0u)
     {
         __enable_irq();
     }
+#endif
 }
-
 uint8_t ltdc_is_swap_pending(void)
 {
-    return s_swap_pending;
+#if (LTDC_PRESENT_DIRECT_MODE != 0u)
+    return 0u;
+#else
+    uint8_t pending;
+    uint32_t primask = __get_PRIMASK();
+
+    __disable_irq();
+    ltdc_try_complete_swap_locked();
+    if (s_swap_pending == 0u)
+    {
+        ltdc_sync_indices_from_hw_locked();
+    }
+    pending = s_swap_pending;
+    if (primask == 0u)
+    {
+        __enable_irq();
+    }
+
+    return pending;
+#endif
+}
+uint8_t ltdc_wait_for_swap_complete(uint32_t timeout_ms)
+{
+#if (LTDC_PRESENT_DIRECT_MODE != 0u)
+    (void)timeout_ms;
+    return 0u;
+#else
+    uint32_t start_tick = HAL_GetTick();
+
+    for (;;)
+    {
+        uint8_t pending;
+        uint32_t primask = __get_PRIMASK();
+
+        __disable_irq();
+        ltdc_try_complete_swap_locked();
+        pending = s_swap_pending;
+        if (primask == 0u)
+        {
+            __enable_irq();
+        }
+
+        if (pending == 0u)
+        {
+            return 0u;
+        }
+
+        if (timeout_ms == 0u)
+        {
+            break;
+        }
+        if ((HAL_GetTick() - start_tick) >= timeout_ms)
+        {
+            break;
+        }
+
+        if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING)
+        {
+            vTaskDelay(pdMS_TO_TICKS(1u));
+        }
+        else
+        {
+            HAL_Delay(1u);
+        }
+    }
+
+    {
+        uint32_t primask = __get_PRIMASK();
+
+        __disable_irq();
+        ltdc_recover_swap_timeout_locked();
+        if (primask == 0u)
+        {
+            __enable_irq();
+        }
+    }
+
+    return 0u;
+#endif
 }
 
 /**
  * @brief       设置显示方向
  * @param       dir        0:竖屏映射 1:横屏映射
- * @retval      无
+ * @retval      �?
  */
 void ltdc_display_dir(uint8_t dir)
 {
@@ -309,8 +503,8 @@ static uint8_t ltdc_rect_to_panel(uint16_t sx,
 /**
  * @brief       画点
  * @param       x, y       坐标
- * @param       color      颜色值
- * @retval      无
+ * @param       color      颜色�?
+ * @retval      �?
  */
 void ltdc_draw_point(uint16_t x, uint16_t y, uint32_t color)
 { 
@@ -355,7 +549,7 @@ void ltdc_draw_point(uint16_t x, uint16_t y, uint32_t color)
 /**
  * @brief       读点
  * @param       x, y       坐标
- * @retval      像素颜色值
+ * @retval      像素颜色�?
  */
 uint32_t ltdc_read_point(uint16_t x, uint16_t y)
 { 
@@ -400,7 +594,7 @@ uint32_t ltdc_read_point(uint16_t x, uint16_t y)
  * @param       sx, sy     起始坐标
  * @param       ex, ey     结束坐标
  * @param       color      填充颜色
- * @retval      无
+ * @retval      �?
  */
 uint8_t ltdc_fill_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint32_t color)
 {
@@ -465,6 +659,50 @@ uint8_t ltdc_color_fill_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey
     {
         g_ltdc_dma2d_sw_fallback_count++;
         ltdc_color_fill_sw_rect(psx, psy, pex, pey, color);
+        return 0u;
+    }
+    return 1u;
+#endif
+}
+
+uint8_t ltdc_copy_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, const uint16_t *src, uint16_t src_stride)
+{
+    uint32_t psx;
+    uint32_t psy;
+    uint32_t pex;
+    uint32_t pey;
+    uint16_t width;
+    uint16_t height;
+    uint16_t offline;
+    uint32_t addr;
+
+    if ((src == NULL) || (ltdc_rect_to_panel(sx, sy, ex, ey, &psx, &psy, &pex, &pey) == 0u))
+    {
+        return 0u;
+    }
+
+    width = (uint16_t)(pex - psx + 1u);
+    height = (uint16_t)(pey - psy + 1u);
+    if (src_stride < width)
+    {
+        return 0u;
+    }
+
+#if (LTDC_ENABLE_DMA2D == 0)
+    ltdc_copy_sw_rect(psx, psy, pex, pey, src, src_stride);
+    return 1u;
+#else
+    offline = (uint16_t)(lcdltdc.pwidth - width);
+    addr = (uint32_t)ltdc_draw_buf_ptr() + lcdltdc.pixsize * (lcdltdc.pwidth * psy + psx);
+    if (DMA2D_Accel_EnqueueCopy((uint32_t)src,
+                                addr,
+                                width,
+                                height,
+                                (uint16_t)(src_stride - width),
+                                offline) == 0u)
+    {
+        g_ltdc_dma2d_sw_fallback_count++;
+        ltdc_copy_sw_rect(psx, psy, pex, pey, src, src_stride);
         return 0u;
     }
     return 1u;
@@ -613,8 +851,8 @@ void ltdc_color_fill(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint16_
 
 /**
  * @brief       清屏
- * @param       color      背景色
- * @retval      无
+ * @param       color      背景�?
+ * @retval      �?
  */
 void ltdc_clear(uint32_t color)
 {
@@ -656,15 +894,15 @@ uint8_t ltdc_clk_set(uint32_t pll3n, uint32_t pll3m, uint32_t pll3r)
 
 /**
  * @brief       配置图层窗口
- * @param       layerx     图层号
- * @param       sx, sy     左上角坐标
+ * @param       layerx     图层�?
+ * @param       sx, sy     左上角坐�?
  * @param       width      宽度
  * @param       height     高度
- * @retval      无
+ * @retval      �?
  */
 void ltdc_layer_window_config(uint8_t layerx, uint16_t sx, uint16_t sy, uint16_t width, uint16_t height)
 {
-    HAL_LTDC_SetWindowPosition(&g_ltdc_handle, sx, sy, layerx);     /* 设置窗口的位置 */
+    HAL_LTDC_SetWindowPosition(&g_ltdc_handle, sx, sy, layerx);     /* 设置窗口的位�?*/
     HAL_LTDC_SetWindowSize(&g_ltdc_handle, width, height, layerx);  /* 设置窗口大小 */
   
     if (lcdltdc.pheight == 1280 && layerx == 0)
@@ -675,15 +913,15 @@ void ltdc_layer_window_config(uint8_t layerx, uint16_t sx, uint16_t sy, uint16_t
 
 /**
  * @brief       配置图层参数
- * @param       layerx     图层号
+ * @param       layerx     图层�?
  * @param       bufaddr    帧缓冲地址
  * @param       pixformat  像素格式
- * @param       alpha      全局透明度
- * @param       alpha0     默认透明度
+ * @param       alpha      全局透明�?
+ * @param       alpha0     默认透明�?
  * @param       bfac1      混合因子1
  * @param       bfac2      混合因子2
- * @param       bkcolor    背景色
- * @retval      无
+ * @param       bkcolor    背景�?
+ * @retval      �?
  */
 void ltdc_layer_parameter_config(uint8_t layerx, uint32_t bufaddr, uint8_t pixformat, uint8_t alpha, uint8_t alpha0, uint8_t bfac1, uint8_t bfac2, uint32_t bkcolor)
 {
@@ -693,14 +931,14 @@ void ltdc_layer_parameter_config(uint8_t layerx, uint32_t bufaddr, uint8_t pixfo
     playercfg.WindowY0 = 0;                                            /* 窗口起始Y坐标 */
     playercfg.WindowX1 = lcdltdc.pwidth;                               /* 窗口终止X坐标 */
     playercfg.WindowY1 = lcdltdc.pheight;                              /* 窗口终止Y坐标 */
-    playercfg.PixelFormat = pixformat;                                 /* 设置层像素格式 */
-    playercfg.Alpha = alpha;                                           /* 设置层恒定Alpha值 */
-    playercfg.Alpha0 = alpha0;                                         /* 设置默认颜色Alpha值 */
-    playercfg.BlendingFactor1 = (uint32_t)bfac1 << 8;                  /* 设置层混合系数1 */
-    playercfg.BlendingFactor2 = (uint32_t)bfac2;                       /* 设置层混合系数2 */
+    playercfg.PixelFormat = pixformat;                                 /* 设置层像素格�?*/
+    playercfg.Alpha = alpha;                                           /* 设置层恒定Alpha�?*/
+    playercfg.Alpha0 = alpha0;                                         /* 设置默认颜色Alpha�?*/
+    playercfg.BlendingFactor1 = (uint32_t)bfac1 << 8;                  /* 设置层混合系�? */
+    playercfg.BlendingFactor2 = (uint32_t)bfac2;                       /* 设置层混合系�? */
     playercfg.FBStartAdress = bufaddr;                                 /* 设置层颜色帧缓存起始地址 */
-    playercfg.ImageWidth = lcdltdc.pwidth;                             /* 设置颜色帧缓冲区的宽度 */
-    playercfg.ImageHeight = lcdltdc.pheight;                           /* 设置颜色帧缓冲区的高度 */
+    playercfg.ImageWidth = lcdltdc.pwidth;                             /* 设置颜色帧缓冲区的宽�?*/
+    playercfg.ImageHeight = lcdltdc.pheight;                           /* 设置颜色帧缓冲区的高�?*/
     playercfg.Backcolor.Red = (uint8_t)(bkcolor & 0X00FF0000) >> 16;   /* 背景颜色红色部分 */
     playercfg.Backcolor.Green = (uint8_t)(bkcolor & 0X0000FF00) >> 8;  /* 背景颜色绿色部分 */
     playercfg.Backcolor.Blue = (uint8_t)bkcolor & 0X000000FF;          /* 背景颜色蓝色部分 */
@@ -709,7 +947,7 @@ void ltdc_layer_parameter_config(uint8_t layerx, uint32_t bufaddr, uint8_t pixfo
 
 /**
  * @brief       读取 LCD 面板 ID
- * @note        通过 RGB 高位引脚状态识别面板
+ * @note        通过 RGB 高位引脚状态识别面�?
  * @retval      面板 ID
  */
 uint16_t ltdc_panelid_read(void)
@@ -724,7 +962,7 @@ uint16_t ltdc_panelid_read(void)
     gpio_init_struct.Pin = GPIO_PIN_6;                         /* R7引脚PG6 */
     gpio_init_struct.Mode = GPIO_MODE_INPUT;                   /* 输入 */
     gpio_init_struct.Pull = GPIO_PULLUP;                       /* 上拉 */
-    gpio_init_struct.Speed = GPIO_SPEED_HIGH;                  /* 高速 */
+    gpio_init_struct.Speed = GPIO_SPEED_HIGH;                  /* 高�?*/
     HAL_GPIO_Init(GPIOG, &gpio_init_struct);                   /* 初始化PG6 */
     
     gpio_init_struct.Pin = GPIO_PIN_2 | GPIO_PIN_7;            /* G7,B7引脚PI2,7 */
@@ -738,22 +976,22 @@ uint16_t ltdc_panelid_read(void)
     switch (idx)
     {
         case 0 :
-            return 0X4342;                    /* 4.3寸屏,480*272分辨率 */
+            return 0X4342;                    /* 4.3寸屏,480*272分辨�?*/
         
         case 1 :
-            return 0X7084;                    /* 7寸屏,800*480分辨率 */
+            return 0X7084;                    /* 7寸屏,800*480分辨�?*/
         
         case 2 :
-            return 0X7016;                    /* 7寸屏,1024*600分辨率 */
+            return 0X7016;                    /* 7寸屏,1024*600分辨�?*/
         
         case 3 :
-            return 0X5571;                    /* 5.5寸屏,720*1280分辨率 */
+            return 0X5571;                    /* 5.5寸屏,720*1280分辨�?*/
         
         case 4 :
-            return 0X4384;                    /* 4.3寸屏,800*480分辨率 */
+            return 0X4384;                    /* 4.3寸屏,800*480分辨�?*/
         
         case 5 :
-            return 0X1018;                    /* 10.1寸屏,1280*800分辨率 */
+            return 0X1018;                    /* 10.1寸屏,1280*800分辨�?*/
         
         default :
             return 0;
@@ -761,9 +999,9 @@ uint16_t ltdc_panelid_read(void)
 }
 
 /**
- * @brief       LTDC 初始化
- * @param       无
- * @retval      无
+ * @brief       LTDC 初始�?
+ * @param       �?
+ * @retval      �?
  */
 void ltdc_init(void)
 {
@@ -860,7 +1098,7 @@ void ltdc_init(void)
         lcdltdc.vfp = 13;           /* 垂直前廊 */
         ltdc_clk_set(300, 25, 9);   /* 设置像素时钟 33Mhz */ 
     }
-    else if (lcdid == 0X8081)       /* 8寸800*1280 RGB屏 */
+    else if (lcdid == 0X8081)       /* 8�?00*1280 RGB�?*/
     {
         lcdltdc.pwidth = 800;       /* 面板宽度,单位:像素 */
         lcdltdc.pheight = 1280;     /* 面板高度,单位:像素 */
@@ -872,7 +1110,7 @@ void ltdc_init(void)
         lcdltdc.vfp = 30;           /* 垂直前廊 */
         ltdc_clk_set(300, 25, 5);   /* 设置像素时钟 60Mhz */
     }
-    else if (lcdid == 0X1018)       /* 10.1寸1280*800 RGB屏 */
+    else if (lcdid == 0X1018)       /* 10.1�?280*800 RGB�?*/
     {
         lcdltdc.pwidth = 1280;      /* 面板宽度,单位:像素 */
         lcdltdc.pheight = 800;      /* 面板高度,单位:像素 */
@@ -904,8 +1142,8 @@ void ltdc_init(void)
 
     lcddev.id = lcdid;
 
-    lcddev.width = lcdltdc.pwidth;      /* 设置lcddev的宽度参数 */
-    lcddev.height = lcdltdc.pheight;    /* 设置lcddev的高度参数 */
+    lcddev.width = lcdltdc.pwidth;      /* 设置lcddev的宽度参�?*/
+    lcddev.height = lcdltdc.pheight;    /* 设置lcddev的高度参�?*/
     lcdltdc.pixformat = LTDC_PIXFORMAT; /* 颜色像素格式 */
 
 #if LTDC_PIXFORMAT == LTDC_PIXFORMAT_ARGB8888
@@ -934,24 +1172,27 @@ void ltdc_init(void)
     s_front_buf_idx = 0u;
     s_back_buf_idx = 1u;
     s_swap_pending = 0u;
+    s_swap_reload_pending = 0u;
+    s_swap_front_target_idx = 0u;
+    s_swap_back_target_idx = 1u;
     g_ltdc_swap_count = 0u;
     g_ltdc_swap_pending_count = 0u;
     g_ltdc_swap_error_count = 0u;
     
-    /* LTDC参数初始化 */
+    /* LTDC参数初始�?*/
     g_ltdc_handle.Instance = LTDC;
     
     if (lcdid == 0X8081)
     {
-        g_ltdc_handle.Init.HSPolarity = LTDC_HSPOLARITY_AH;     /* HSYNC高电平有效 */
+        g_ltdc_handle.Init.HSPolarity = LTDC_HSPOLARITY_AH;     /* HSYNC高电平有�?*/
     }
     else
     {
-        g_ltdc_handle.Init.HSPolarity = LTDC_HSPOLARITY_AL;     /* HSYNC低电平有效 */
+        g_ltdc_handle.Init.HSPolarity = LTDC_HSPOLARITY_AL;     /* HSYNC低电平有�?*/
     }
     
-    g_ltdc_handle.Init.VSPolarity = LTDC_VSPOLARITY_AL;         /* VSYNC低电平有效 */
-    g_ltdc_handle.Init.DEPolarity = LTDC_DEPOLARITY_AL;         /* DE低电平有效 */
+    g_ltdc_handle.Init.VSPolarity = LTDC_VSPOLARITY_AL;         /* VSYNC低电平有�?*/
+    g_ltdc_handle.Init.DEPolarity = LTDC_DEPOLARITY_AL;         /* DE低电平有�?*/
     g_ltdc_handle.State = HAL_LTDC_STATE_RESET;
     
     if (lcdid == 0X1018 || lcdid == 0X8081)
@@ -969,8 +1210,8 @@ void ltdc_init(void)
     g_ltdc_handle.Init.AccumulatedVBP = lcdltdc.vsw + lcdltdc.vbp - 1;                              /* 垂直后沿累计 */
     g_ltdc_handle.Init.AccumulatedActiveW = lcdltdc.hsw + lcdltdc.hbp + lcdltdc.pwidth - 1;         /* 有效宽度累计 */
     g_ltdc_handle.Init.AccumulatedActiveH = lcdltdc.vsw + lcdltdc.vbp + lcdltdc.pheight - 1;        /* 有效高度累计 */
-    g_ltdc_handle.Init.TotalWidth = lcdltdc.hsw + lcdltdc.hbp + lcdltdc.pwidth + lcdltdc.hfp - 1;   /* 总宽度 */
-    g_ltdc_handle.Init.TotalHeigh = lcdltdc.vsw + lcdltdc.vbp + lcdltdc.pheight + lcdltdc.vfp - 1;  /* 总高度 */
+    g_ltdc_handle.Init.TotalWidth = lcdltdc.hsw + lcdltdc.hbp + lcdltdc.pwidth + lcdltdc.hfp - 1;   /* 总宽�?*/
+    g_ltdc_handle.Init.TotalHeigh = lcdltdc.vsw + lcdltdc.vbp + lcdltdc.pheight + lcdltdc.vfp - 1;  /* 总高�?*/
     g_ltdc_handle.Init.Backcolor.Red = 0;                                                           /* 背景颜色红色部分 */
     g_ltdc_handle.Init.Backcolor.Green = 0;                                                         /* 背景颜色绿色部分 */
     g_ltdc_handle.Init.Backcolor.Blue = 0;                                                          /* 背景颜色蓝色部分 */
@@ -979,7 +1220,7 @@ void ltdc_init(void)
     DMA2D_Accel_Init();
     g_ltdc_init_stage = 5u;
 
-    /* LTDC层参数配置 */
+    /* LTDC层参数配�?*/
     ltdc_layer_parameter_config(0, (uint32_t)g_ltdc_framebuf[s_front_buf_idx], LTDC_PIXFORMAT, 255, 0, 6, 7, 0X000000);   /* 配置layer0 */
     ltdc_layer_window_config(0, 0, 0, lcdltdc.pwidth, lcdltdc.pheight);                                     /* 配置窗口 */
     g_ltdc_init_stage = 6u;
@@ -996,7 +1237,7 @@ void ltdc_init(void)
     /* Turn on backlight early for visibility, even if panel reset sequence stalls. */
     LTDC_BL(1);
     g_ltdc_init_stage = 61u;
-    if (lcdid != 0X5571)                   /* 5571无需硬复位 */
+    if (lcdid != 0X5571)                   /* 5571无需硬复�?*/
     {
         /* 执行LCD复位序列 */
         LTDC_RST(1);
@@ -1024,39 +1265,84 @@ void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *hltdc)
 {
     (void)hltdc;
 
-    if (s_swap_pending != 0u)
+#if (LTDC_PRESENT_DIRECT_MODE == 0u)
+    if ((s_swap_pending != 0u) && (s_swap_reload_pending == 0u))
     {
         uint8_t next_front = s_back_buf_idx;
         uint8_t next_back = s_front_buf_idx;
 
-        if (HAL_LTDC_SetAddress_NoReload(&g_ltdc_handle, (uint32_t)g_ltdc_framebuf[next_front], 0) == HAL_OK)
+        if (HAL_LTDC_SetAddress_NoReload(&g_ltdc_handle, (uint32_t)g_ltdc_framebuf[next_front], 0u) == HAL_OK)
         {
             if (HAL_LTDC_Reload(&g_ltdc_handle, LTDC_RELOAD_VERTICAL_BLANKING) == HAL_OK)
             {
-                s_front_buf_idx = next_front;
-                s_back_buf_idx = next_back;
-                s_swap_pending = 0u;
-                g_ltdc_swap_count++;
+                s_swap_front_target_idx = next_front;
+                s_swap_back_target_idx = next_back;
+                s_swap_reload_pending = 1u;
             }
             else
             {
+                s_swap_pending = 0u;
                 g_ltdc_swap_error_count++;
+                ltdc_sync_indices_from_hw_locked();
             }
         }
         else
         {
+            s_swap_pending = 0u;
             g_ltdc_swap_error_count++;
+            ltdc_sync_indices_from_hw_locked();
         }
     }
+#endif
 
     HAL_LTDC_ProgramLineEvent(&g_ltdc_handle, 0u);
 }
+void HAL_LTDC_ReloadEventCallback(LTDC_HandleTypeDef *hltdc)
+{
+    (void)hltdc;
+
+#if (LTDC_PRESENT_DIRECT_MODE != 0u)
+    return;
+#else
+    if (s_swap_reload_pending != 0u)
+    {
+        s_front_buf_idx = s_swap_front_target_idx;
+        s_back_buf_idx = s_swap_back_target_idx;
+        s_swap_reload_pending = 0u;
+        s_swap_pending = 0u;
+        g_ltdc_swap_count++;
+    }
+#endif
+}
 
 /**
- * @brief       LTDC 底层 MSP 初始化
+ * @brief       LTDC 底层 MSP 初始�?
  * @param       hltdc      LTDC 句柄
- * @retval      无
+ * @retval      �?
  */
+void HAL_LTDC_ErrorCallback(LTDC_HandleTypeDef *hltdc)
+{
+    uint32_t error_code;
+
+    if ((hltdc == NULL) || (hltdc != &g_ltdc_handle))
+    {
+        return;
+    }
+
+    error_code = hltdc->ErrorCode;
+    g_ltdc_last_error_code = error_code;
+
+    if ((error_code & HAL_LTDC_ERROR_FU) != 0u)
+    {
+        g_ltdc_fifo_underrun_count++;
+    }
+    if ((error_code & HAL_LTDC_ERROR_TE) != 0u)
+    {
+        g_ltdc_transfer_error_count++;
+    }
+
+    hltdc->ErrorCode = HAL_LTDC_ERROR_NONE;
+}
 void HAL_LTDC_MspInit(LTDC_HandleTypeDef *hltdc)
 {
     GPIO_InitTypeDef gpio_init_struct;
@@ -1072,7 +1358,7 @@ void HAL_LTDC_MspInit(LTDC_HandleTypeDef *hltdc)
     HAL_NVIC_SetPriority(DMA2D_IRQn, 6, 0);
     HAL_NVIC_EnableIRQ(DMA2D_IRQn);
 
-    /* LTDC RGB数据线映射说明 */
+    /* LTDC RGB数据线映射说�?*/
     /* LTDC_R7(PG6)...LTDC_B0(PG14) */
   
     /* 控制引脚时钟使能 */
@@ -1086,16 +1372,16 @@ void HAL_LTDC_MspInit(LTDC_HandleTypeDef *hltdc)
     gpio_init_struct.Pin = LTDC_BL_GPIO_PIN;                /* 背光引脚 */
     gpio_init_struct.Mode = GPIO_MODE_OUTPUT_PP;            /* 推挽输出 */
     gpio_init_struct.Pull = GPIO_PULLUP;                    /* 上拉 */
-    gpio_init_struct.Speed = GPIO_SPEED_HIGH;               /* 高速 */
-    HAL_GPIO_Init(LTDC_BL_GPIO_PORT, &gpio_init_struct);    /* 初始化背光引脚 */
+    gpio_init_struct.Speed = GPIO_SPEED_HIGH;               /* 高�?*/
+    HAL_GPIO_Init(LTDC_BL_GPIO_PORT, &gpio_init_struct);    /* 初始化背光引�?*/
 
     gpio_init_struct.Pin = LTDC_RST_GPIO_PIN;               /* 复位引脚 */
-    HAL_GPIO_Init(LTDC_RST_GPIO_PORT, &gpio_init_struct);   /* 初始化复位引脚 */
+    HAL_GPIO_Init(LTDC_RST_GPIO_PORT, &gpio_init_struct);   /* 初始化复位引�?*/
     
     gpio_init_struct.Pin = LTDC_DE_GPIO_PIN;                /* DE引脚 */     
     gpio_init_struct.Mode = GPIO_MODE_AF_PP;                /* 复用推挽 */
     gpio_init_struct.Pull = GPIO_NOPULL;                    /* 无上下拉 */
-    gpio_init_struct.Speed = GPIO_SPEED_HIGH;               /* 高速 */
+    gpio_init_struct.Speed = GPIO_SPEED_HIGH;               /* 高�?*/
     gpio_init_struct.Alternate = GPIO_AF14_LTDC;            /* LTDC复用 */
     HAL_GPIO_Init(LTDC_DE_GPIO_PORT, &gpio_init_struct);    /* 初始化DE引脚 */
     
@@ -1152,6 +1438,8 @@ void HAL_LTDC_MspInit(LTDC_HandleTypeDef *hltdc)
                      GPIO_PIN_6 | GPIO_PIN_7;
     HAL_GPIO_Init(GPIOI, &gpio_init_struct); 
 }
+
+
 
 
 

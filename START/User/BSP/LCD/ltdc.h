@@ -1,8 +1,7 @@
-﻿/**
+/**
  * @file    ltdc.h
  * @brief   LTDC + DMA2D 显示驱动接口
- * @details 提供 LCD 初始化、图层控制、像素读写、区域填充与双缓冲换页接口。
- */
+ * @details 提供 LCD 初始化、图层控制、像素读写、区域填充与双缓冲换页接口�? */
 
 #ifndef _LTDC_H
 #define _LTDC_H
@@ -140,9 +139,11 @@ uint32_t ltdc_get_frontbuf_addr(void);
 uint32_t ltdc_get_backbuf_addr(void);
 void ltdc_request_swap(void);
 uint8_t ltdc_is_swap_pending(void);
+uint8_t ltdc_wait_for_swap_complete(uint32_t timeout_ms);
 
 uint8_t ltdc_fill_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint32_t color);
 uint8_t ltdc_color_fill_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint16_t *color);
+uint8_t ltdc_copy_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, const uint16_t *src, uint16_t src_stride);
 uint8_t ltdc_l8_fill_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, const uint8_t *src_l8, uint16_t src_stride);
 uint8_t ltdc_a8_blend_async(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, const uint8_t *src_a8, uint16_t src_stride, uint16_t color565);
 uint8_t ltdc_draw_flush(uint32_t timeout_loop);

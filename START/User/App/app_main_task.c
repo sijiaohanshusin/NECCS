@@ -5,6 +5,7 @@
  */
 #include "app_main_task.h"
 
+#include "app_camera.h"
 #include "app_perf.h"
 #include "app_runtime.h"
 #include "app_task_cfg.h"
@@ -102,5 +103,7 @@ void App_Task_Init(void)
                           APP_UI_TASK_PRIO, /* Priority */
                           &xUITaskHandle);  /* Output handle */
     configASSERT(task_ok == pdPASS);
+
+    App_Camera_TaskInit();
     /* Initialization is complete; tasks start after vTaskStartScheduler(). */
 }

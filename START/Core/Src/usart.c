@@ -138,9 +138,23 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 /* Use the CubeMX-generated USART1 handle for stdio redirection. */
 extern UART_HandleTypeDef huart1;
 
+static void usart_write_char_best_effort(int ch, uint32_t timeout_ms)
+{
+    uint8_t byte = (uint8_t)ch;
+
+    if ((huart1.Instance != USART1) || (HAL_UART_GetState(&huart1) == HAL_UART_STATE_RESET))
+    {
+        return;
+    }
+
+    (void)HAL_UART_Transmit(&huart1, &byte, 1u, timeout_ms);
+}
+
 /* Redirect `printf` output to USART1 with mutex protection in task context. */
 int fputc(int ch, FILE *f)
 {
+    BaseType_t scheduler_running;
+
     (void)f;
 
     /* Never block inside ISR context. */
@@ -148,14 +162,16 @@ int fputc(int ch, FILE *f)
         return ch;
     }
 
-    if (txMutex != NULL) {
-        if (xSemaphoreTake(txMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 100);
+    scheduler_running = (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING) ? pdTRUE : pdFALSE;
+
+    if ((scheduler_running == pdTRUE) && (txMutex != NULL)) {
+        if (xSemaphoreTake(txMutex, 0u) == pdTRUE) {
+            usart_write_char_best_effort(ch, 2u);
             xSemaphoreGive(txMutex);
         }
     } else {
-        /* Early-boot fallback before mutex creation. */
-        HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 100);
+        /* Early boot and degraded-mode fallback: try once, then drop. */
+        usart_write_char_best_effort(ch, 2u);
     }
 
     return ch;

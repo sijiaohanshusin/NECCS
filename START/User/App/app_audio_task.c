@@ -12,180 +12,180 @@
 #include "app_task_cfg.h"
 
 /* ============================================================================
- * 外部变量 (External Variables)
+ * 澶栭儴鍙橀噺 (External Variables)
  * ============================================================================ */
 
-/** @brief 调试计数：每处理一帧音频递增一次 */
+/** @brief 璋冭瘯璁℃暟锛氭瘡澶勭悊涓€甯ч煶棰戦€掑涓€娆?*/
 extern int16_t found_val;
 
 static uint32_t s_clamp_u32(uint32_t v, uint32_t lo, uint32_t hi)
 {
-    if (v < lo)           /* 低于下限：直接返回下限值 */
+    if (v < lo)           /* 浣庝簬涓嬮檺锛氱洿鎺ヨ繑鍥炰笅闄愬€?*/
     {
         return lo;
     }
-    if (v > hi)           /* 高于上限：直接返回上限值 */
+    if (v > hi)           /* 楂樹簬涓婇檺锛氱洿鎺ヨ繑鍥炰笂闄愬€?*/
     {
         return hi;
     }
-    return v;             /* 在范围内：原值返回 */
+    return v;             /* 鍦ㄨ寖鍥村唴锛氬師鍊艰繑鍥?*/
 }
 
 /**
- * @brief   音频处理主任务
- * @details 处理流程：DMA 半缓冲事件 -> 解交织 -> FFT -> SRP-PHAT -> 结果投递。
+ * @brief   闊抽澶勭悊涓讳换鍔?
+ * @details 澶勭悊娴佺▼锛欴MA 鍗婄紦鍐蹭簨浠?-> 瑙ｄ氦缁?-> FFT -> SRP-PHAT -> 缁撴灉鎶曢€掋€?
  *
- * 关键点：
- * - 通过 `event.seq` 检测事件跳变并累计异常计数。
- * - 使用 `audio_algo_decim` 实现算法降采样，非执行帧复用上次定位结果。
- * - 复用 `Mic_Freq_Buffer` 作为临时 q15 平面缓冲，减少额外 RAM 占用。
+ * 鍏抽敭鐐癸細
+ * - 閫氳繃 `event.seq` 妫€娴嬩簨浠惰烦鍙樺苟绱寮傚父璁℃暟銆?
+ * - 浣跨敤 `audio_algo_decim` 瀹炵幇绠楁硶闄嶉噰鏍凤紝闈炴墽琛屽抚澶嶇敤涓婃瀹氫綅缁撴灉銆?
+ * - 澶嶇敤 `Mic_Freq_Buffer` 浣滀负涓存椂 q15 骞抽潰缂撳啿锛屽噺灏戦澶?RAM 鍗犵敤銆?
  *
- * 调试输出：
- * - `DEBUG_MODE=0`: 输出 RMS。
- * - `DEBUG_MODE=1`: 输出 FFT。
- * - `DEBUG_MODE=3`: 输出 SRP 结果。
+ * 璋冭瘯杈撳嚭锛?
+ * - `DEBUG_MODE=0`: 杈撳嚭 RMS銆?
+ * - `DEBUG_MODE=1`: 杈撳嚭 FFT銆?
+ * - `DEBUG_MODE=3`: 杈撳嚭 SRP 缁撴灉銆?
  *
- * @param   pvParameters  FreeRTOS 任务参数（未使用）
+ * @param   pvParameters  FreeRTOS 浠诲姟鍙傛暟锛堟湭浣跨敤锛?
  */
 void Audio_Pipeline_Task(void *pvParameters)
 {
-    (void)pvParameters;  /* 任务参数未使用，显式转换避免编译器 -Wunused-parameter 警告 */
+    (void)pvParameters;  /* 浠诲姟鍙傛暟鏈娇鐢紝鏄惧紡杞崲閬垮厤缂栬瘧鍣?-Wunused-parameter 璀﹀憡 */
 
-    /* ---- 任务局部状态变量（persistent across iterations） ---- */
+    /* ---- 浠诲姟灞€閮ㄧ姸鎬佸彉閲忥紙persistent across iterations锛?---- */
 
-    /** @brief 已执行解交织的总帧数（用于 DEBUG 节流判断） */
+    /** @brief 宸叉墽琛岃В浜ょ粐鐨勬€诲抚鏁帮紙鐢ㄤ簬 DEBUG 鑺傛祦鍒ゆ柇锛?*/
     static uint32_t s_frame_cnt = 0u;
 
-    /** @brief 上一个接收到的 ISR 帧序号，用于检测跳变（丢帧检测） */
+    /** @brief 涓婁竴涓帴鏀跺埌鐨?ISR 甯у簭鍙凤紝鐢ㄤ簬妫€娴嬭烦鍙橈紙涓㈠抚妫€娴嬶級 */
     uint32_t s_last_seq = 0u;
 
-    /** @brief 抽帧相位计数（0 ~ decim-1 循环），phase==0 时执行算法 */
+    /** @brief 鎶藉抚鐩镐綅璁℃暟锛? ~ decim-1 寰幆锛夛紝phase==0 鏃舵墽琛岀畻娉?*/
     uint32_t s_decim_phase = 0u;
 
-    /** @brief 本轮（含抽帧复用）要送往 UI 的声源位置 */
+    /** @brief 鏈疆锛堝惈鎶藉抚澶嶇敤锛夎閫佸線 UI 鐨勫０婧愪綅缃?*/
     Sound_Pos_t current_pos   = {0.0f, 0.0f, 0.0f};
 
-    /** @brief 上次 SRP-PHAT 算法计算得到的声源位置（抽帧时复用） */
+    /** @brief 涓婃 SRP-PHAT 绠楁硶璁＄畻寰楀埌鐨勫０婧愪綅缃紙鎶藉抚鏃跺鐢級 */
     Sound_Pos_t last_algo_pos = {0.0f, 0.0f, 0.0f};
 
-    /** @brief 是否已有至少一次有效算法结果（首帧强制执行算法，不抽帧） */
+    /** @brief 鏄惁宸叉湁鑷冲皯涓€娆℃湁鏁堢畻娉曠粨鏋滐紙棣栧抚寮哄埗鎵ц绠楁硶锛屼笉鎶藉抚锛?*/
     uint8_t has_last_algo = 0u;
 
-    /* ---- 帧处理工作变量 ---- */
+    /* ---- 甯у鐞嗗伐浣滃彉閲?---- */
 
-    Audio_FrameEvent_t event;  /* 从队列接收的 DMA 半缓冲事件 */
+    Audio_FrameEvent_t event;  /* 浠庨槦鍒楁帴鏀剁殑 DMA 鍗婄紦鍐蹭簨浠?*/
 
-    /** @brief 指向当前 DMA 半缓冲的起始地址（PING 或 PONG 区） */
+    /** @brief 鎸囧悜褰撳墠 DMA 鍗婄紦鍐茬殑璧峰鍦板潃锛圥ING 鎴?PONG 鍖猴級 */
     q15_t *p_current_dma_src;
 
-    /** @brief 解交织临时缓冲区，复用 Mic_Freq_Buffer（节省 RAM）
-     *         Mic_Freq_Buffer 存放 FFT 频域数据，但在解交织阶段频域计算尚未开始，
-     *         因此可以临时借用，FFT 阶段会用 FFT 结果覆盖此区域 */
+    /** @brief 瑙ｄ氦缁囦复鏃剁紦鍐插尯锛屽鐢?Mic_Freq_Buffer锛堣妭鐪?RAM锛?
+     *         Mic_Freq_Buffer 瀛樻斁 FFT 棰戝煙鏁版嵁锛屼絾鍦ㄨВ浜ょ粐闃舵棰戝煙璁＄畻灏氭湭寮€濮嬶紝
+     *         鍥犳鍙互涓存椂鍊熺敤锛孎FT 闃舵浼氱敤 FFT 缁撴灉瑕嗙洊姝ゅ尯鍩?*/
     q15_t *p_temp_planar = (q15_t *)Mic_Freq_Buffer;
 
     /* ================================================================
-     * 任务主循环（永不退出）
+     * 浠诲姟涓诲惊鐜紙姘镐笉閫€鍑猴級
      * ================================================================ */
     for (;;)
     {
-        /* ---- 阶段 1：等待 DMA 半缓冲完成事件 ---- */
-        /* portMAX_DELAY = 永久阻塞直到有数据，不占用 CPU */
+        /* ---- 闃舵 1锛氱瓑寰?DMA 鍗婄紦鍐插畬鎴愪簨浠?---- */
+        /* portMAX_DELAY = 姘镐箙闃诲鐩村埌鏈夋暟鎹紝涓嶅崰鐢?CPU */
         if (xQueueReceive(xAudioFrameQueue, &event, portMAX_DELAY) != pdTRUE)
         {
-            continue;  /* 理论上不会到达（portMAX_DELAY 下不会超时），保留作为防御代码 */
+            continue;  /* 鐞嗚涓婁笉浼氬埌杈撅紙portMAX_DELAY 涓嬩笉浼氳秴鏃讹級锛屼繚鐣欎綔涓洪槻寰′唬鐮?*/
         }
 
-        /* ---- 阶段 2：丢帧检测（通过序号跳变判断） ---- */
-        /* event.seq 由 ISR 侧单调递增写入；若本次 seq > last_seq+1，说明有帧被覆盖 */
+        /* ---- 闃舵 2锛氫涪甯ф娴嬶紙閫氳繃搴忓彿璺冲彉鍒ゆ柇锛?---- */
+        /* event.seq 鐢?ISR 渚у崟璋冮€掑鍐欏叆锛涜嫢鏈 seq > last_seq+1锛岃鏄庢湁甯ц瑕嗙洊 */
         if ((s_last_seq != 0u) && (event.seq > (s_last_seq + 1u)))
         {
-            /* 累计跳变量（可能跳多帧，如队列在两次 ISR 之间未被消费） */
+            /* 绱璺冲彉閲忥紙鍙兘璺冲甯э紝濡傞槦鍒楀湪涓ゆ ISR 涔嬮棿鏈娑堣垂锛?*/
             g_audio_both_flags_count += (event.seq - s_last_seq - 1u);
         }
-        s_last_seq = event.seq;  /* 更新上次序号基准 */
+        s_last_seq = event.seq;  /* 鏇存柊涓婃搴忓彿鍩哄噯 */
 
-        /* ---- 阶段 3：根据 half_id 选择正确的 DMA 缓冲区地址 ---- */
+        /* ---- 闃舵 3锛氭牴鎹?half_id 閫夋嫨姝ｇ‘鐨?DMA 缂撳啿鍖哄湴鍧€ ---- */
         if (event.half_id == AUDIO_DMA_HALF_PING)
         {
-            /* PING 区：DMA 缓冲区前半段，偏移 0 */
+            /* PING 鍖猴細DMA 缂撳啿鍖哄墠鍗婃锛屽亸绉?0 */
             p_current_dma_src = (q15_t *)&Mic_Rx_Buffer[0];
         }
         else if (event.half_id == AUDIO_DMA_HALF_PONG)
         {
-            /* PONG 区：DMA 缓冲区后半段，偏移 MIC_CHANNELS * FRAME_LEN */
+            /* PONG 鍖猴細DMA 缂撳啿鍖哄悗鍗婃锛屽亸绉?MIC_CHANNELS * FRAME_LEN */
             p_current_dma_src = (q15_t *)&Mic_Rx_Buffer[MIC_CHANNELS * FRAME_LEN];
         }
         else
         {
-            /* half_id 为非法值（理论上不应发生），记录异常并跳过本帧 */
+            /* half_id 涓洪潪娉曞€硷紙鐞嗚涓婁笉搴斿彂鐢燂級锛岃褰曞紓甯稿苟璺宠繃鏈抚 */
             g_audio_no_flag_count++;
             continue;
         }
 
-        /* ---- 阶段 4：算法抽帧决策 ---- */
+        /* ---- 闃舵 4锛氱畻娉曟娊甯у喅绛?---- */
         {
-            /* 读取当前抽帧比（运行时可通过 CLI 'cfg algodecim N' 修改） */
+            /* 璇诲彇褰撳墠鎶藉抚姣旓紙杩愯鏃跺彲閫氳繃 CLI 'cfg algodecim N' 淇敼锛?*/
             uint32_t decim = s_clamp_u32(App_RuntimeConfig_GetAudioAlgoDecim(),
                                          AUDIO_ALGO_DECIM_MIN,
                                          AUDIO_ALGO_DECIM_MAX);
 
-            /* run_algo 决策：
-             *   - 若从未执行过算法（首帧），强制执行（避免 UI 显示全零位置）
-             *   - 否则，仅在相位为 0 时执行（每 decim 帧执行一次） */
+            /* run_algo 鍐崇瓥锛?
+             *   - 鑻ヤ粠鏈墽琛岃繃绠楁硶锛堥甯э級锛屽己鍒舵墽琛岋紙閬垮厤 UI 鏄剧ず鍏ㄩ浂浣嶇疆锛?
+             *   - 鍚﹀垯锛屼粎鍦ㄧ浉浣嶄负 0 鏃舵墽琛岋紙姣?decim 甯ф墽琛屼竴娆★級 */
             uint8_t run_algo = (has_last_algo == 0u) ? 1u
                              : ((s_decim_phase == 0u) ? 1u : 0u);
 
-            /* 推进相位计数（0 -> 1 -> ... -> decim-1 -> 0 循环） */
+            /* 鎺ㄨ繘鐩镐綅璁℃暟锛? -> 1 -> ... -> decim-1 -> 0 寰幆锛?*/
             s_decim_phase++;
             if (s_decim_phase >= decim)
             {
-                s_decim_phase = 0u;  /* 回绕到 0，下次将再次执行算法 */
+                s_decim_phase = 0u;  /* 鍥炵粫鍒?0锛屼笅娆″皢鍐嶆鎵ц绠楁硶 */
             }
 
             if (run_algo != 0u)
             {
                 /* ============================================================
-                 * 执行完整算法流水线：解交织 -> FFT -> SRP-PHAT
+                 * 鎵ц瀹屾暣绠楁硶娴佹按绾匡細瑙ｄ氦缁?-> FFT -> SRP-PHAT
                  * ============================================================ */
-                uint32_t t_audio = App_Perf_BeginCycles();  /* 开始整体计时 */
-                uint32_t t_sec;                              /* 各子段计时起点 */
+                uint32_t t_audio = App_Perf_BeginCycles();  /* 寮€濮嬫暣浣撹鏃?*/
+                uint32_t t_sec;                              /* 鍚勫瓙娈佃鏃惰捣鐐?*/
 
-                found_val++;  /* 调试计数：统计实际执行算法的帧数（可通过调试器观察） */
+                found_val++;  /* 璋冭瘯璁℃暟锛氱粺璁″疄闄呮墽琛岀畻娉曠殑甯ф暟锛堝彲閫氳繃璋冭瘯鍣ㄨ瀵燂級 */
 
-                /* ---- 子阶段 A：解交织 + 类型转换 ---- */
-                /* 将 DMA 交织格式（ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...）
-                 * 转换为平面格式（ch0_s0..ch0_sN, ch1_s0..ch1_sN, ...）
-                 * 同时完成 q15 -> float 类型转换并存入 Mic_Process_Buffer */
+                /* ---- 瀛愰樁娈?A锛氳В浜ょ粐 + 绫诲瀷杞崲 ---- */
+                /* 灏?DMA 浜ょ粐鏍煎紡锛坈h0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...锛?
+                 * 杞崲涓哄钩闈㈡牸寮忥紙ch0_s0..ch0_sN, ch1_s0..ch1_sN, ...锛?
+                 * 鍚屾椂瀹屾垚 q15 -> float 绫诲瀷杞崲骞跺瓨鍏?Mic_Process_Buffer */
                 t_sec = App_Perf_BeginCycles();
-                Deinterleave_Using_Matrix(p_current_dma_src,  /* 源：交织 DMA 缓冲 */
-                                          p_temp_planar,       /* 临时平面 q15 缓冲 */
-                                          Mic_Process_Buffer,  /* 目标：float 平面缓冲 */
-                                          FRAME_LEN,           /* 每通道采样点数 */
-                                          MIC_CHANNELS);       /* 麦克风通道数 */
+                Deinterleave_Using_Matrix(p_current_dma_src,  /* 婧愶細浜ょ粐 DMA 缂撳啿 */
+                                          p_temp_planar,       /* 涓存椂骞抽潰 q15 缂撳啿 */
+                                          Mic_Process_Buffer,  /* 鐩爣锛歠loat 骞抽潰缂撳啿 */
+                                          FRAME_LEN,           /* 姣忛€氶亾閲囨牱鐐规暟 */
+                                          MIC_CHANNELS);       /* 楹﹀厠椋庨€氶亾鏁?*/
                 App_Perf_EndCycles(APP_PERF_SEC_AUDIO_DEINT, t_sec);
 
-                s_frame_cnt++;  /* 递增解交织帧计数（用于 DEBUG 节流） */
+                s_frame_cnt++;  /* 閫掑瑙ｄ氦缁囧抚璁℃暟锛堢敤浜?DEBUG 鑺傛祦锛?*/
 
 #ifdef DEBUG_ENABLE
 #if (DEBUG_MODE == 0)
-                /* DEBUG 模式 0：每 DEBUG_THROTTLE_FRAMES 帧输出一次 RMS 数据到 VOFA+ */
+                /* DEBUG 妯″紡 0锛氭瘡 DEBUG_THROTTLE_FRAMES 甯ц緭鍑轰竴娆?RMS 鏁版嵁鍒?VOFA+ */
                 if ((s_frame_cnt % DEBUG_THROTTLE_FRAMES) == 0u)
                 {
-                    VOFA_Send_Channel_RMS();  /* 发送各通道 RMS 到串口波形工具 */
+                    VOFA_Send_Channel_RMS();  /* 鍙戦€佸悇閫氶亾 RMS 鍒颁覆鍙ｆ尝褰㈠伐鍏?*/
                 }
 #endif
 #endif
 
-                /* ---- 子阶段 B：FFT 频域变换 ---- */
-                /* 对 Mic_Process_Buffer 中的各通道时域信号执行 FFT，
-                 * 结果写入 Mic_Freq_Buffer（覆盖了解交织阶段的临时数据） */
+                /* ---- 瀛愰樁娈?B锛欶FT 棰戝煙鍙樻崲 ---- */
+                /* 瀵?Mic_Process_Buffer 涓殑鍚勯€氶亾鏃跺煙淇″彿鎵ц FFT锛?
+                 * 缁撴灉鍐欏叆 Mic_Freq_Buffer锛堣鐩栦簡瑙ｄ氦缁囬樁娈电殑涓存椂鏁版嵁锛?*/
                 t_sec = App_Perf_BeginCycles();
-                AI_FFT_Process();  /* 内部使用 CMSIS-DSP arm_cfft_q15，加窗+变换 */
+                AI_FFT_Process();  /* 鍐呴儴浣跨敤 CMSIS-DSP arm_cfft_q15锛屽姞绐?鍙樻崲 */
                 App_Perf_EndCycles(APP_PERF_SEC_AUDIO_FFT, t_sec);
 
 #ifdef DEBUG_ENABLE
 #if (DEBUG_MODE == 1)
-                /* DEBUG 模式 1：输出指定通道的 FFT 频谱幅度 */
+                /* DEBUG 妯″紡 1锛氳緭鍑烘寚瀹氶€氶亾鐨?FFT 棰戣氨骞呭害 */
                 if ((s_frame_cnt % DEBUG_THROTTLE_FRAMES) == 0u)
                 {
                     VOFA_Send_FFT_Magnitude(DEBUG_SPECTRUM_CHANNEL);
@@ -193,16 +193,16 @@ void Audio_Pipeline_Task(void *pvParameters)
 #endif
 #endif
 
-                /* ---- 子阶段 C：SRP-PHAT 声源定位 ---- */
-                /* 基于频域互功率谱相位变换计算声源方位角，
-                 * 结果（x_angle, y_angle, energy）写入 current_pos */
+                /* ---- 瀛愰樁娈?C锛歋RP-PHAT 澹版簮瀹氫綅 ---- */
+                /* 鍩轰簬棰戝煙浜掑姛鐜囪氨鐩镐綅鍙樻崲璁＄畻澹版簮鏂逛綅瑙掞紝
+                 * 缁撴灉锛坸_angle, y_angle, energy锛夊啓鍏?current_pos */
                 t_sec = App_Perf_BeginCycles();
-                AI_SRP_PHAT_Process(&current_pos);  /* 核心算法，最耗时的部分 */
+                AI_SRP_PHAT_Process(&current_pos);  /* 鏍稿績绠楁硶锛屾渶鑰楁椂鐨勯儴鍒?*/
                 App_Perf_EndCycles(APP_PERF_SEC_AUDIO_SRP, t_sec);
 
 #ifdef DEBUG_ENABLE
 #if (DEBUG_MODE == 3)
-                /* DEBUG 模式 3：输出 SRP 定位结果（角度+能量）到 VOFA+ */
+                /* DEBUG 妯″紡 3锛氳緭鍑?SRP 瀹氫綅缁撴灉锛堣搴?鑳介噺锛夊埌 VOFA+ */
                 if ((s_frame_cnt % DEBUG_THROTTLE_FRAMES) == 0u)
                 {
                     VOFA_Send_SRP_Result(&current_pos);
@@ -210,26 +210,26 @@ void Audio_Pipeline_Task(void *pvParameters)
 #endif
 #endif
 
-                App_Perf_EndCycles(APP_PERF_SEC_AUDIO_TOTAL, t_audio); /* 结束整体计时 */
+                App_Perf_EndCycles(APP_PERF_SEC_AUDIO_TOTAL, t_audio); /* 缁撴潫鏁翠綋璁℃椂 */
 
-                last_algo_pos = current_pos;  /* 缓存本次结果，供抽帧时复用 */
-                has_last_algo = 1u;           /* 标记已有有效算法结果 */
-                App_Perf_CountAudioProc();    /* 递增算法处理帧计数（性能速率统计用） */
+                last_algo_pos = current_pos;  /* 缂撳瓨鏈缁撴灉锛屼緵鎶藉抚鏃跺鐢?*/
+                has_last_algo = 1u;           /* 鏍囪宸叉湁鏈夋晥绠楁硶缁撴灉 */
+                App_Perf_CountAudioProc();    /* 閫掑绠楁硶澶勭悊甯ц鏁帮紙鎬ц兘閫熺巼缁熻鐢級 */
             }
             else
             {
-                /* 抽帧阶段：跳过算法，直接复用上次结果 */
-                /* 这样 UI 任务仍能收到数据（不会饿死），只是位置更新频率降低 */
+                /* 鎶藉抚闃舵锛氳烦杩囩畻娉曪紝鐩存帴澶嶇敤涓婃缁撴灉 */
+                /* 杩欐牱 UI 浠诲姟浠嶈兘鏀跺埌鏁版嵁锛堜笉浼氶タ姝伙級锛屽彧鏄綅缃洿鏂伴鐜囬檷浣?*/
                 current_pos = last_algo_pos;
             }
         }
 
-        /* ---- 阶段 5：将定位结果投递到 UI 任务 ---- */
-        /* xQueueOverwrite：若队列已满（UI 任务还未消费），直接覆盖旧数据，
-         * 保证 UI 始终拿到最新位置，不因队列满而阻塞音频任务 */
+        /* ---- 闃舵 5锛氬皢瀹氫綅缁撴灉鎶曢€掑埌 UI 浠诲姟 ---- */
+        /* xQueueOverwrite锛氳嫢闃熷垪宸叉弧锛圲I 浠诲姟杩樻湭娑堣垂锛夛紝鐩存帴瑕嗙洊鏃ф暟鎹紝
+         * 淇濊瘉 UI 濮嬬粓鎷垮埌鏈€鏂颁綅缃紝涓嶅洜闃熷垪婊¤€岄樆濉為煶棰戜换鍔?*/
         xQueueOverwrite(xPositionQueue, &current_pos);
-
-        /* 主动出让 CPU，让同优先级的 UI 任务有机会立即运行处理刚投递的数据 */
         taskYIELD();
+
+        /* 涓诲姩鍑鸿 CPU锛岃鍚屼紭鍏堢骇鐨?UI 浠诲姟鏈夋満浼氱珛鍗宠繍琛屽鐞嗗垰鎶曢€掔殑鏁版嵁 */
     }
 }
