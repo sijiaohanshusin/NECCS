@@ -9,6 +9,7 @@
 #include "app_main_task.h"
 #include "app_perf.h"
 #include "app_runtime.h"
+#include "app_spectrum.h"
 #include "app_task_cfg.h"
 
 /* ============================================================================
@@ -182,6 +183,7 @@ void Audio_Pipeline_Task(void *pvParameters)
                 t_sec = App_Perf_BeginCycles();
                 AI_FFT_Process();  /* 鍐呴儴浣跨敤 CMSIS-DSP arm_cfft_q15锛屽姞绐?鍙樻崲 */
                 App_Perf_EndCycles(APP_PERF_SEC_AUDIO_FFT, t_sec);
+                App_Spectrum_PublishFromFft(event.seq);
 
 #ifdef DEBUG_ENABLE
 #if (DEBUG_MODE == 1)
