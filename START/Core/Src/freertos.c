@@ -31,6 +31,7 @@
 #include "app_data_stream.h"
 #include "app_main_task.h"
 #include "app_boot_diag.h"
+#include "app_touch.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -275,6 +276,7 @@ void PCMD3180InitTask(void *argument)
   /* 步骤 1: 初始化软 I2C（创建并启用总线互斥量） */
   s_boot_diag_mark(APP_BOOT_DIAG_STAGE_SOFT_I2C, 0u);
   Soft_I2C_Init();
+  App_Touch_Init();
 
   /* 步骤 2: 初始化音频算法运行态（RFFT/Hanning/SRP-PHAT） */
   s_boot_diag_mark(APP_BOOT_DIAG_STAGE_APP_STREAM, 0u);

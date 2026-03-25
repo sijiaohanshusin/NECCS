@@ -16,6 +16,7 @@
 #include "app_display.h"
 #include "app_main_task.h"
 #include "app_perf.h"
+#include "app_touch_test.h"
 
 #include "LCD/lcd.h"
 #include "LCD/ltdc.h"
@@ -2201,6 +2202,7 @@ void App_Display_Render(const Sound_Pos_t *pos,
         s_draw_overlay(pos, frame_seq, peak_idx, peak_theta, peak_phi, field_peak, sai_dma_active);
         App_Perf_EndCycles(APP_PERF_SEC_DISP_OVERLAY, t_perf);
     }
+    App_TouchTest_Render();
     t_perf = App_Perf_BeginCycles();
     s_commit_frame();
     App_Perf_EndCycles(APP_PERF_SEC_DISP_COMMIT, t_perf);

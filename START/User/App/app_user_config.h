@@ -18,6 +18,10 @@
 #define APP_CAMERA_OVERLAY_COLOR_565      0xFC60u
 #define APP_CAMERA_OVERLAY_ALPHA_MAX      192u
 
+#define APP_TOUCH_ENABLE                  1u
+#define APP_TOUCH_RETRY_MS                1000u
+#define APP_TOUCH_TEST_ENABLE             1u
+
 /* ============================================================================
  * 调试与串口输出配置
  * ============================================================================ */

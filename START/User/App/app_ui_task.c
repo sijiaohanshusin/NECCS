@@ -9,7 +9,7 @@
 #include "app_display.h"
 #include "app_main_task.h"
 #include "app_perf.h"
-#include "app_task_cfg.h"
+#include "app_touch.h"
 #include "app_ui_cli.h"
 #include "LCD/ltdc.h"
 
@@ -244,6 +244,7 @@ void UI_Display_Task(void *pvParameters)
         /* ---- 濮濄儵顎?1閿涙艾顦╅悶?CLI 鏉堟挸鍙嗛敍鍦睞RT 閸涙垝鎶ょ悰宀嬬礆 ---- */
         /* 濮ｅ繐鎶氶柈鍊熺枂鐠?CLI閿涘奔绻氱拠浣疯閸欙絽鎳℃禒銈呮惙鎼存柨娆㈡潻?<= 1 鐢冩噯閺堢噦绱欓埉?0ms@20fps�?*/
         ui_cli_poll();
+        App_Touch_Poll();
 
         /* ---- 濮濄儵顎?2閿涙碍妯夌粈鍝勫灥婵瀵查柌宥堢槸闁槒绶?---- */
         /* 閼汇儲妯夌粈鍝勭湴閺堫亜姘ㄧ紒顏庣礄�?LCD 閸掓繂顫愰崠鏍с亼鐠愩儻绱氶敍灞剧槨闂?UI_RETRY_INIT_MS(1000ms) 闁插秷鐦稉鈧�?*/
