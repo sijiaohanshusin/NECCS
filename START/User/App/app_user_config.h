@@ -208,6 +208,16 @@
 #define APP_DISPLAY_PEAK_MARKER_RADIUS_PX  4u       /**< 峰值框半径。 */
 #define APP_DISPLAY_SAI_ACTIVE_HOLD_FRAMES 10u      /**< SAI 活跃状态保持帧数。 */
 
+#define APP_SPECTRUM_INFO_ENABLE           0u       /**< 是否显示频谱状态/调试文字。默认关闭，仅保留主图与坐标。 */
+#define APP_SPECTRUM_FREQ_SCALE_MODE       1u       /**< 频率坐标模式：0=线性，1=对数。音频频谱默认更常用对数坐标。 */
+#define APP_SPECTRUM_LOW_FREQ_AT_BOTTOM    1u       /**< 频率方向：1=低频在下，高频在上；0=低频在上。 */
+#define APP_SPECTRUM_DISPLAY_MIN_HZ        ((float)SAMPLING_RATE / (float)FRAME_LEN) /**< 频谱显示最低频率，默认从首个非 DC bin 开始。 */
+#define APP_SPECTRUM_DB_FLOOR              (-48.0f) /**< 频谱显示底噪下限，单位 dB。 */
+#define APP_SPECTRUM_BAR_ATTACK            0.58f    /**< 频谱条上升平滑系数。 */
+#define APP_SPECTRUM_BAR_DECAY             0.36f    /**< 频谱条下降平滑系数。 */
+#define APP_SPECTRUM_REF_ATTACK            0.85f    /**< 显示参考峰值上升系数。 */
+#define APP_SPECTRUM_REF_DECAY             0.04f    /**< 显示参考峰值下降系数。 */
+
 /* ============================================================================
  * 显示模式预设
  * ============================================================================ */
@@ -291,6 +301,14 @@
 
 #if (APP_DISPLAY_BLIT_ROWS_MAX < 1u) || (APP_DISPLAY_BLIT_ROWS_MAX > 16u)
 #error "APP_DISPLAY_BLIT_ROWS_MAX must be in [1,16]"
+#endif
+
+#if (APP_SPECTRUM_FREQ_SCALE_MODE > 1u)
+#error "APP_SPECTRUM_FREQ_SCALE_MODE must be 0 or 1"
+#endif
+
+#if (APP_SPECTRUM_INFO_ENABLE > 1u) || (APP_SPECTRUM_LOW_FREQ_AT_BOTTOM > 1u)
+#error "APP_SPECTRUM_* boolean options must be 0 or 1"
 #endif
 
 #if (APP_DISPLAY_MODE_FAST_BLIT_ROWS < 1u) || (APP_DISPLAY_MODE_FAST_BLIT_ROWS > APP_DISPLAY_BLIT_ROWS_MAX)

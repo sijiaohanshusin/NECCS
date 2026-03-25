@@ -16,6 +16,7 @@
 #include "app_display.h"
 #include "app_main_task.h"
 #include "app_perf.h"
+#include "app_spectrum.h"
 
 #include "LCD/lcd.h"
 #include "LCD/ltdc.h"
@@ -35,6 +36,13 @@
 #define APP_DISPLAY_CAMERA_CACHE_ADDR 0xC0600000u
 #define APP_DISPLAY_CAMERA_CACHE_BYTES (APP_DISPLAY_CAMERA_VIEW_W * APP_DISPLAY_CAMERA_VIEW_H * 2u)
 #define APP_DISPLAY_CAMERA_CACHE_LIMIT 0xC2000000u
+#define APP_DISPLAY_SPECTRUM_AXIS_LABEL_W 36u
+#define APP_DISPLAY_SPECTRUM_MARGIN_L    4u
+#define APP_DISPLAY_SPECTRUM_MARGIN_R    4u
+#define APP_DISPLAY_SPECTRUM_MARGIN_T    4u
+#define APP_DISPLAY_SPECTRUM_MARGIN_B    18u
+#define APP_DISPLAY_SPECTRUM_GUIDE_DIVS  4u
+#define APP_DISPLAY_SPECTRUM_MIN_MAG     1.0e-12f
 #if ((APP_CAMERA_ENABLE != 0u) && ((APP_DISPLAY_CAMERA_CACHE_ADDR + APP_DISPLAY_CAMERA_CACHE_BYTES) > APP_DISPLAY_CAMERA_CACHE_LIMIT))
 #error "Camera display cache must stay inside SDRAM"
 #endif
@@ -66,7 +74,6 @@ static uint8_t s_kernel_ready = 0u;
 static uint8_t s_norm_lut_valid = 0u;
 static float s_norm_lut_db_floor = APP_DISPLAY_DYNAMIC_DB_FLOOR;
 static float s_norm_lut_gamma = APP_DISPLAY_DYNAMIC_GAMMA;
-static uint32_t s_last_text_refresh_frame[2] = {0u, 0u};
 static uint32_t s_fb_addr_a = 0u;
 static uint32_t s_fb_addr_b = 0u;
 static uint16_t s_cache_map_w = 0u;
@@ -86,6 +93,11 @@ static uint32_t s_dbg_camera_path_count = 0u;
 static uint32_t s_dbg_camera_overlay_count = 0u;
 static uint32_t s_dbg_camera_input_seq = 0u;
 static App_Display_CameraView_t s_camera_view_mode = APP_DISPLAY_CAMERA_VIEW_OVERLAY;
+static float s_spectrum_ema[APP_SPECTRUM_BIN_COUNT];
+static App_SpectrumFrame_t s_last_spectrum_frame;
+static float s_spectrum_ref_mag = APP_DISPLAY_SPECTRUM_MIN_MAG;
+static uint8_t s_spectrum_ema_valid = 0u;
+static uint8_t s_spectrum_frame_valid = 0u;
 
 /* 瀹搞儰缍旂紓鎾冲暱閸栭缚顕╅弰搴窗
  * - `s_field_a` / `s_field_b`
@@ -800,8 +812,6 @@ void App_Display_Init(void)
     s_build_heat_lut();
     s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
     s_last_noise_floor = 0.0f;
-    s_last_text_refresh_frame[0] = 0u;
-    s_last_text_refresh_frame[1] = 0u;
     s_fb_addr_a = 0u;
     s_fb_addr_b = 0u;
     s_cache_map_w = 0u;
@@ -821,6 +831,11 @@ void App_Display_Init(void)
     s_dbg_camera_input_seq = 0u;
     s_camera_view_mode = APP_DISPLAY_CAMERA_VIEW_OVERLAY;
     s_norm_lut_valid = 0u;
+    memset(s_spectrum_ema, 0, sizeof(s_spectrum_ema));
+    memset(&s_last_spectrum_frame, 0, sizeof(s_last_spectrum_frame));
+    s_spectrum_ref_mag = APP_DISPLAY_SPECTRUM_MIN_MAG;
+    s_spectrum_ema_valid = 0u;
+    s_spectrum_frame_valid = 0u;
     App_Display_SetMode((App_Display_Mode_t)APP_DISPLAY_DEFAULT_MODE);
     g_display_init_stage = 2u;
     lcd_init();
@@ -1987,65 +2002,576 @@ static void s_render_field_rows(void)
 
 }
 /* 缂佹ê鍩楁笟褑绔熼弬鍥ㄦ拱鐠囧﹥鏌囬崠鍝勭厵閵?*/
+static App_FreqBand_t s_spectrum_clamp_band(App_FreqBand_t band, uint16_t bin_count)
+{
+    uint16_t last_bin;
+
+    if (bin_count == 0u)
+    {
+        return App_Spectrum_DefaultBand();
+    }
+
+    last_bin = (uint16_t)(bin_count - 1u);
+    if (band.start_bin > last_bin)
+    {
+        band.start_bin = last_bin;
+    }
+    if (band.end_bin > last_bin)
+    {
+        band.end_bin = last_bin;
+    }
+    if (band.end_bin < band.start_bin)
+    {
+        band.end_bin = band.start_bin;
+    }
+
+    return band;
+}
+
+static uint16_t s_spectrum_display_min_bin(uint16_t bin_count)
+{
+    uint16_t min_bin = App_Spectrum_HzToBin(APP_SPECTRUM_DISPLAY_MIN_HZ);
+
+    if (bin_count == 0u)
+    {
+        return 0u;
+    }
+    if (min_bin == 0u)
+    {
+        min_bin = 1u;
+    }
+    if (min_bin >= bin_count)
+    {
+        min_bin = (uint16_t)(bin_count - 1u);
+    }
+
+    return min_bin;
+}
+
+static float s_spectrum_axis_min_hz(uint16_t bin_count)
+{
+    return App_Spectrum_BinToHz(s_spectrum_display_min_bin(bin_count));
+}
+
+static float s_spectrum_axis_max_hz(uint16_t bin_count)
+{
+    if (bin_count == 0u)
+    {
+        return DELTA_F;
+    }
+
+    return App_Spectrum_BinToHz((uint16_t)(bin_count - 1u));
+}
+
+static float s_spectrum_freq_norm(float hz, float min_hz, float max_hz)
+{
+    float clamped_hz = s_clamp_f32(hz, min_hz, max_hz);
+
+    if (max_hz <= min_hz)
+    {
+        return 0.0f;
+    }
+
+    #if (APP_SPECTRUM_FREQ_SCALE_MODE != 0u)
+    {
+        float log_min = logf(min_hz);
+        float log_max = logf(max_hz);
+
+        return (logf(clamped_hz) - log_min) / (log_max - log_min);
+    }
+    #else
+    return (clamped_hz - min_hz) / (max_hz - min_hz);
+    #endif
+}
+
+static uint16_t s_spectrum_freq_to_y(float hz,
+                                     uint16_t plot_y0,
+                                     uint16_t plot_h,
+                                     float min_hz,
+                                     float max_hz)
+{
+    float norm;
+    float y_pos;
+
+    if (plot_h <= 1u)
+    {
+        return plot_y0;
+    }
+
+    norm = s_spectrum_freq_norm(hz, min_hz, max_hz);
+    if (APP_SPECTRUM_LOW_FREQ_AT_BOTTOM != 0u)
+    {
+        y_pos = (float)plot_y0 + ((float)(plot_h - 1u) * (1.0f - norm));
+    }
+    else
+    {
+        y_pos = (float)plot_y0 + ((float)(plot_h - 1u) * norm);
+    }
+
+    return (uint16_t)(y_pos + 0.5f);
+}
+
+static uint16_t s_spectrum_bin_to_y(uint16_t bin,
+                                    uint16_t plot_y0,
+                                    uint16_t plot_h,
+                                    float min_hz,
+                                    float max_hz)
+{
+    return s_spectrum_freq_to_y(App_Spectrum_BinToHz(bin), plot_y0, plot_h, min_hz, max_hz);
+}
+
+static uint16_t s_spectrum_db_to_bar_x(float rel_db,
+                                       uint16_t plot_x0,
+                                       uint16_t plot_w)
+{
+    float norm;
+
+    if (plot_w <= 1u)
+    {
+        return plot_x0;
+    }
+
+    norm = (rel_db - APP_SPECTRUM_DB_FLOOR) / (0.0f - APP_SPECTRUM_DB_FLOOR);
+    norm = s_clamp_f32(norm, 0.0f, 1.0f);
+    return (uint16_t)(plot_x0 + ((float)(plot_w - 1u) * norm) + 0.5f);
+}
+
+static void s_spectrum_format_freq_label(char *buf, size_t buf_size, float hz)
+{
+    if ((buf == NULL) || (buf_size == 0u))
+    {
+        return;
+    }
+
+    if (hz >= 1000.0f)
+    {
+        float khz = hz / 1000.0f;
+
+        if ((khz >= 10.0f) || (fabsf(khz - floorf(khz + 0.5f)) < 0.05f))
+        {
+            (void)snprintf(buf, buf_size, "%0.0fk", (double)khz);
+        }
+        else
+        {
+            (void)snprintf(buf, buf_size, "%0.1fk", (double)khz);
+        }
+    }
+    else
+    {
+        (void)snprintf(buf, buf_size, "%0.0f", (double)hz);
+    }
+}
+
+static void s_spectrum_draw_freq_tick(uint16_t panel_x0,
+                                      uint16_t plot_x0,
+                                      uint16_t plot_x1,
+                                      uint16_t plot_y0,
+                                      uint16_t plot_y1,
+                                      uint16_t y,
+                                      float hz,
+                                      uint32_t color)
+{
+    char label[16];
+    int32_t label_y = (int32_t)y - 8;
+
+    if ((y < plot_y0) || (y > plot_y1))
+    {
+        return;
+    }
+
+    s_spectrum_format_freq_label(label, sizeof(label), hz);
+    lcd_draw_line(plot_x0, y, plot_x1, y, color);
+
+    if (label_y < 0)
+    {
+        label_y = 0;
+    }
+    if ((uint32_t)label_y + 16u > lcddev.height)
+    {
+        label_y = (int32_t)lcddev.height - 16;
+    }
+
+    lcd_show_string((uint16_t)(panel_x0 + 2u),
+                    (uint16_t)label_y,
+                    (uint16_t)(APP_DISPLAY_SPECTRUM_AXIS_LABEL_W - 4u),
+                    16u,
+                    16u,
+                    label,
+                    WHITE);
+}
+
+static void s_spectrum_draw_guides(uint16_t panel_x0,
+                                   uint16_t plot_x0,
+                                   uint16_t plot_x1,
+                                   uint16_t plot_y0,
+                                   uint16_t plot_y1,
+                                   float min_hz,
+                                   float max_hz)
+{
+    uint16_t plot_w = (uint16_t)(plot_x1 - plot_x0 + 1u);
+    uint16_t plot_h = (uint16_t)(plot_y1 - plot_y0 + 1u);
+    uint32_t i;
+    char db_floor_label[16];
+    static const float k_log_ticks[] = {500.0f, 1000.0f, 2000.0f, 4000.0f, 8000.0f, 16000.0f};
+    static const float k_lin_ticks[] = {6000.0f, 12000.0f, 18000.0f};
+
+    for (i = 1u; i < APP_DISPLAY_SPECTRUM_GUIDE_DIVS; i++)
+    {
+        uint16_t x = (uint16_t)(plot_x0 + (((uint32_t)(plot_w - 1u) * i) / APP_DISPLAY_SPECTRUM_GUIDE_DIVS));
+
+        lcd_draw_line(x, plot_y0, x, plot_y1, GRAYBLUE);
+    }
+
+    s_spectrum_draw_freq_tick(panel_x0,
+                              plot_x0,
+                              plot_x1,
+                              plot_y0,
+                              plot_y1,
+                              s_spectrum_freq_to_y(min_hz, plot_y0, plot_h, min_hz, max_hz),
+                              min_hz,
+                              WHITE);
+    s_spectrum_draw_freq_tick(panel_x0,
+                              plot_x0,
+                              plot_x1,
+                              plot_y0,
+                              plot_y1,
+                              s_spectrum_freq_to_y(max_hz, plot_y0, plot_h, min_hz, max_hz),
+                              max_hz,
+                              WHITE);
+
+    if (APP_SPECTRUM_FREQ_SCALE_MODE != 0u)
+    {
+        for (i = 0u; i < (sizeof(k_log_ticks) / sizeof(k_log_ticks[0])); i++)
+        {
+            float hz = k_log_ticks[i];
+
+            if ((hz <= min_hz) || (hz >= max_hz))
+            {
+                continue;
+            }
+            s_spectrum_draw_freq_tick(panel_x0,
+                                      plot_x0,
+                                      plot_x1,
+                                      plot_y0,
+                                      plot_y1,
+                                      s_spectrum_freq_to_y(hz, plot_y0, plot_h, min_hz, max_hz),
+                                      hz,
+                                      GRAYBLUE);
+        }
+    }
+    else
+    {
+        for (i = 0u; i < (sizeof(k_lin_ticks) / sizeof(k_lin_ticks[0])); i++)
+        {
+            float hz = k_lin_ticks[i];
+
+            if ((hz <= min_hz) || (hz >= max_hz))
+            {
+                continue;
+            }
+            s_spectrum_draw_freq_tick(panel_x0,
+                                      plot_x0,
+                                      plot_x1,
+                                      plot_y0,
+                                      plot_y1,
+                                      s_spectrum_freq_to_y(hz, plot_y0, plot_h, min_hz, max_hz),
+                                      hz,
+                                      GRAYBLUE);
+        }
+    }
+
+    (void)snprintf(db_floor_label, sizeof(db_floor_label), "%0.0fdB", (double)APP_SPECTRUM_DB_FLOOR);
+    lcd_show_string(plot_x0,
+                    (uint16_t)(plot_y1 + 2u),
+                    42u,
+                    16u,
+                    16u,
+                    db_floor_label,
+                    WHITE);
+    {
+        static char peak_label[] = "0dB";
+
+        lcd_show_string((uint16_t)(plot_x1 - 28u),
+                        (uint16_t)(plot_y1 + 2u),
+                        28u,
+                        16u,
+                        16u,
+                        peak_label,
+                        WHITE);
+    }
+}
+
 static void s_draw_overlay(const Sound_Pos_t *pos,
-                           uint32_t frame_seq,
-                           uint32_t peak_idx,
-                           float peak_theta,
-                           float peak_phi,
+                           const App_SpectrumFrame_t *spectrum_frame,
                            float field_peak,
                            uint8_t sai_dma_active)
 {
-    char line[80];
-    static char title0[] = "Acoustic";
-    static char title1[] = "Imaging";
+    App_FreqBand_t active_band = App_Spectrum_DefaultBand();
+    App_FreqBand_t preview_band = active_band;
     uint16_t panel_x0 = s_text_x;
     uint16_t panel_x1 = s_ui_x1;
-    uint16_t panel_w;
+    uint16_t plot_x0;
+    uint16_t plot_x1;
+    uint16_t plot_y0;
+    uint16_t plot_y1;
+    uint16_t plot_w;
+    uint16_t plot_h;
+    uint16_t bin_count = APP_SPECTRUM_BIN_COUNT;
+    uint16_t min_bin = 1u;
+    uint16_t peak_bin = 1u;
+    float current_peak_mag = APP_DISPLAY_SPECTRUM_MIN_MAG;
+    float display_ref_mag;
+    uint32_t prev_back_color;
+#if (APP_SPECTRUM_INFO_ENABLE != 0u)
+    float peak_hz = 0.0f;
+#endif
+    float min_hz;
+    float max_hz;
+
     if ((panel_x0 >= lcddev.width) || (panel_x1 < panel_x0))
     {
         return;
     }
-    panel_w = (uint16_t)(panel_x1 - panel_x0 + 1u);
+
+    prev_back_color = g_back_color;
+    g_back_color = BLACK;
+
     lcd_fill(panel_x0, 0u, panel_x1, (uint16_t)(lcddev.height - 1u), BLACK);
     if (panel_x0 > 0u)
     {
         lcd_fill((uint16_t)(panel_x0 - 1u), 0u, (uint16_t)(panel_x0 - 1u), (uint16_t)(lcddev.height - 1u), WHITE);
     }
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 8u, (uint16_t)(panel_w - 16u), 16u, 16u, title0, CYAN);
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 26u, (uint16_t)(panel_w - 16u), 16u, 16u, title1, CYAN);
-    (void)snprintf(line, sizeof(line), "X:%5.1f", (double)pos->x_angle);
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 58u, (uint16_t)(panel_w - 16u), 16u, 16u, line, YELLOW);
-    (void)snprintf(line, sizeof(line), "Y:%5.1f", (double)pos->y_angle);
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 76u, (uint16_t)(panel_w - 16u), 16u, 16u, line, YELLOW);
-    (void)snprintf(line, sizeof(line), "E:%0.3f", isfinite(pos->energy) ? (double)pos->energy : 0.0);
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 94u, (uint16_t)(panel_w - 16u), 16u, 16u, line, GREEN);
-    (void)snprintf(line, sizeof(line), "F:%lu P:%c", (unsigned long)frame_seq, (peak_idx < COARSE_TOTAL) ? 'C' : 'F');
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 112u, (uint16_t)(panel_w - 16u), 16u, 16u, line, CYAN);
-    (void)snprintf(line, sizeof(line), "Tx:%0.1f", (double)peak_theta);
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 130u, (uint16_t)(panel_w - 16u), 16u, 16u, line, WHITE);
-    (void)snprintf(line, sizeof(line), "Ty:%0.1f", (double)peak_phi);
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 148u, (uint16_t)(panel_w - 16u), 16u, 16u, line, WHITE);
-    (void)snprintf(line,
-                   sizeof(line),
-                   "M:%s/%s/%s",
-                   App_Display_ModeName(s_mode),
-                   App_Display_InterpName((App_Display_Interp_t)s_cfg.interp_mode),
-                   App_Display_NormName((App_Display_Norm_t)s_cfg.norm_mode));
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 178u, (uint16_t)(panel_w - 16u), 16u, 16u, line, CYAN);
-    (void)snprintf(line, sizeof(line), "N:%0.1e", (double)s_last_noise_floor);
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 196u, (uint16_t)(panel_w - 16u), 16u, 16u, line, YELLOW);
-    (void)snprintf(line, sizeof(line), "Pk:%0.1e", (double)field_peak);
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 214u, (uint16_t)(panel_w - 16u), 16u, 16u, line, LIGHTGREEN);
-#if (APP_DISPLAY_DIAG_OVERLAY != 0u)
-    (void)snprintf(line, sizeof(line), "D2D %lu/%lu", (unsigned long)g_ltdc_dma2d_timeout_count, (unsigned long)g_ltdc_dma2d_sw_fallback_count);
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 244u, (uint16_t)(panel_w - 16u), 16u, 16u, line, GREEN);
-    (void)snprintf(line, sizeof(line), "Sw %lu/%lu", (unsigned long)g_ltdc_swap_count, (unsigned long)g_ltdc_swap_error_count);
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 262u, (uint16_t)(panel_w - 16u), 16u, 16u, line, LIGHTBLUE);
-    (void)snprintf(line, sizeof(line), "SAI:%s", (sai_dma_active != 0u) ? "ON" : "OFF");
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 280u, (uint16_t)(panel_w - 16u), 16u, 16u, line, LIGHTBLUE);
-    (void)snprintf(line, sizeof(line), "UART %lu/%lu", (unsigned long)g_ui_cli_rx_ok_count, (unsigned long)g_ui_cli_rx_err_count);
-    lcd_show_string((uint16_t)(panel_x0 + 8u), 298u, (uint16_t)(panel_w - 16u), 16u, 16u, line, RED);
+
+    plot_x0 = (uint16_t)(panel_x0 + APP_DISPLAY_SPECTRUM_AXIS_LABEL_W);
+    plot_x0 = (uint16_t)(plot_x0 + APP_DISPLAY_SPECTRUM_MARGIN_L);
+    plot_x1 = (panel_x1 > APP_DISPLAY_SPECTRUM_MARGIN_R)
+            ? (uint16_t)(panel_x1 - APP_DISPLAY_SPECTRUM_MARGIN_R)
+            : panel_x1;
+    plot_y0 = APP_DISPLAY_SPECTRUM_MARGIN_T;
+    plot_y1 = (lcddev.height > APP_DISPLAY_SPECTRUM_MARGIN_B)
+            ? (uint16_t)(lcddev.height - APP_DISPLAY_SPECTRUM_MARGIN_B - 1u)
+            : (uint16_t)(lcddev.height - 1u);
+    if ((plot_x1 <= plot_x0) || (plot_y1 <= plot_y0))
+    {
+        g_back_color = prev_back_color;
+        return;
+    }
+
+    plot_w = (uint16_t)(plot_x1 - plot_x0 + 1u);
+    plot_h = (uint16_t)(plot_y1 - plot_y0 + 1u);
+
+    if ((spectrum_frame != NULL) && (spectrum_frame->bin_count > 0u))
+    {
+        uint16_t i;
+
+        bin_count = spectrum_frame->bin_count;
+        if (bin_count > APP_SPECTRUM_BIN_COUNT)
+        {
+            bin_count = APP_SPECTRUM_BIN_COUNT;
+        }
+
+        min_bin = s_spectrum_display_min_bin(bin_count);
+        active_band = s_spectrum_clamp_band(spectrum_frame->active_band, bin_count);
+        preview_band = s_spectrum_clamp_band(spectrum_frame->preview_band, bin_count);
+
+        for (i = 0u; i < bin_count; i++)
+        {
+            float mag = spectrum_frame->magnitude[i];
+            float alpha;
+
+            if ((!isfinite(mag)) || (mag < 0.0f))
+            {
+                mag = 0.0f;
+            }
+
+            if (s_spectrum_ema_valid == 0u)
+            {
+                s_spectrum_ema[i] = mag;
+            }
+            else
+            {
+                alpha = (mag >= s_spectrum_ema[i]) ? APP_SPECTRUM_BAR_ATTACK : APP_SPECTRUM_BAR_DECAY;
+                s_spectrum_ema[i] += alpha * (mag - s_spectrum_ema[i]);
+            }
+        }
+
+        s_spectrum_ema_valid = 1u;
+    }
+    else if (s_spectrum_ema_valid != 0u)
+    {
+        min_bin = s_spectrum_display_min_bin(bin_count);
+    }
+
+    min_hz = s_spectrum_axis_min_hz(bin_count);
+    max_hz = s_spectrum_axis_max_hz(bin_count);
+
+    if (s_spectrum_ema_valid != 0u)
+    {
+        uint16_t i;
+
+        for (i = min_bin; i < bin_count; i++)
+        {
+            if (s_spectrum_ema[i] > current_peak_mag)
+            {
+                current_peak_mag = s_spectrum_ema[i];
+                peak_bin = i;
+            }
+        }
+    }
+
+    if (current_peak_mag > s_spectrum_ref_mag)
+    {
+        s_spectrum_ref_mag += APP_SPECTRUM_REF_ATTACK * (current_peak_mag - s_spectrum_ref_mag);
+    }
+    else
+    {
+        s_spectrum_ref_mag += APP_SPECTRUM_REF_DECAY * (current_peak_mag - s_spectrum_ref_mag);
+    }
+    if (s_spectrum_ref_mag < APP_DISPLAY_SPECTRUM_MIN_MAG)
+    {
+        s_spectrum_ref_mag = APP_DISPLAY_SPECTRUM_MIN_MAG;
+    }
+    display_ref_mag = s_spectrum_ref_mag;
+
+    lcd_draw_rectangle(plot_x0, plot_y0, plot_x1, plot_y1, WHITE);
+    lcd_fill((uint16_t)(plot_x0 + 1u), (uint16_t)(plot_y0 + 1u), (uint16_t)(plot_x1 - 1u), (uint16_t)(plot_y1 - 1u), BLACK);
+
+    {
+        uint16_t band_start = (active_band.start_bin < min_bin) ? min_bin : active_band.start_bin;
+        uint16_t band_end = (active_band.end_bin < min_bin) ? min_bin : active_band.end_bin;
+
+        if ((band_start < bin_count) && (band_end < bin_count))
+        {
+            uint16_t y0 = s_spectrum_bin_to_y(band_start, plot_y0, plot_h, min_hz, max_hz);
+            uint16_t y1 = s_spectrum_bin_to_y(band_end, plot_y0, plot_h, min_hz, max_hz);
+            uint16_t band_y0 = (y0 < y1) ? y0 : y1;
+            uint16_t band_y1 = (y0 > y1) ? y0 : y1;
+
+            lcd_fill((uint16_t)(plot_x0 + 1u), band_y0, (uint16_t)(plot_x1 - 1u), band_y1, DARKBLUE);
+        }
+
+        if ((preview_band.start_bin != active_band.start_bin) || (preview_band.end_bin != active_band.end_bin))
+        {
+            uint16_t preview_start = (preview_band.start_bin < min_bin) ? min_bin : preview_band.start_bin;
+            uint16_t preview_end = (preview_band.end_bin < min_bin) ? min_bin : preview_band.end_bin;
+
+            if ((preview_start < bin_count) && (preview_end < bin_count))
+            {
+                uint16_t y0 = s_spectrum_bin_to_y(preview_start, plot_y0, plot_h, min_hz, max_hz);
+                uint16_t y1 = s_spectrum_bin_to_y(preview_end, plot_y0, plot_h, min_hz, max_hz);
+                uint16_t box_y0 = (y0 < y1) ? y0 : y1;
+                uint16_t box_y1 = (y0 > y1) ? y0 : y1;
+
+                lcd_draw_rectangle(plot_x0, box_y0, plot_x1, box_y1, LIGHTBLUE);
+            }
+        }
+    }
+
+    s_spectrum_draw_guides(panel_x0, plot_x0, plot_x1, plot_y0, plot_y1, min_hz, max_hz);
+
+    if ((s_spectrum_ema_valid != 0u) && (display_ref_mag > APP_DISPLAY_SPECTRUM_MIN_MAG))
+    {
+        uint16_t i;
+
+        for (i = min_bin; i < bin_count; i++)
+        {
+            float rel_db;
+            uint16_t y_center = s_spectrum_bin_to_y(i, plot_y0, plot_h, min_hz, max_hz);
+            uint16_t y_next = (i + 1u < bin_count)
+                            ? s_spectrum_bin_to_y((uint16_t)(i + 1u), plot_y0, plot_h, min_hz, max_hz)
+                            : plot_y0;
+            uint16_t y_prev = (i > min_bin)
+                            ? s_spectrum_bin_to_y((uint16_t)(i - 1u), plot_y0, plot_h, min_hz, max_hz)
+                            : plot_y1;
+            uint16_t bar_y0;
+            uint16_t bar_y1;
+            uint16_t bar_x1;
+            uint32_t color = ((i >= active_band.start_bin) && (i <= active_band.end_bin)) ? YELLOW : CYAN;
+
+            rel_db = 20.0f * log10f(fmaxf(s_spectrum_ema[i], APP_DISPLAY_SPECTRUM_MIN_MAG) / display_ref_mag);
+            if (rel_db < APP_SPECTRUM_DB_FLOOR)
+            {
+                rel_db = APP_SPECTRUM_DB_FLOOR;
+            }
+
+            bar_x1 = s_spectrum_db_to_bar_x(rel_db, (uint16_t)(plot_x0 + 1u), (uint16_t)(plot_w - 2u));
+
+            bar_y0 = (uint16_t)((y_center + y_next) / 2u);
+            bar_y1 = (uint16_t)((y_center + y_prev) / 2u);
+            if (bar_y1 < bar_y0)
+            {
+                uint16_t tmp = bar_y0;
+                bar_y0 = bar_y1;
+                bar_y1 = tmp;
+            }
+            if (bar_y1 < plot_y0)
+            {
+                bar_y1 = plot_y0;
+            }
+            if (bar_y0 > plot_y1)
+            {
+                bar_y0 = plot_y1;
+            }
+
+            lcd_fill((uint16_t)(plot_x0 + 1u), bar_y0, bar_x1, bar_y1, color);
+        }
+
+#if (APP_SPECTRUM_INFO_ENABLE != 0u)
+        peak_hz = App_Spectrum_BinToHz(peak_bin);
 #endif
+        {
+            uint16_t peak_y = s_spectrum_bin_to_y(peak_bin, plot_y0, plot_h, min_hz, max_hz);
+            uint16_t marker_x1 = (uint16_t)(plot_x0 + ((plot_w > 14u) ? 12u : (plot_w - 1u)));
+
+            lcd_draw_line(plot_x0, peak_y, marker_x1, peak_y, RED);
+        }
+    }
+    else
+    {
+        static char idle_msg[] = "FFT idle";
+
+        lcd_show_string((uint16_t)(plot_x0 + 12u),
+                        (uint16_t)(plot_y0 + (plot_h / 2u) - 8u),
+                        (uint16_t)(plot_w - 24u),
+                        16u,
+                        16u,
+                        idle_msg,
+                        GRAY);
+    }
+
+#if (APP_SPECTRUM_INFO_ENABLE != 0u)
+    {
+        char line[72];
+        uint16_t info_x = (uint16_t)(plot_x0 + 4u);
+        uint16_t info_y = (uint16_t)(plot_y0 + 4u);
+        float band_lo_hz = App_Spectrum_BinToHz(active_band.start_bin);
+        float band_hi_hz = App_Spectrum_BinToHz(active_band.end_bin);
+
+        (void)snprintf(line, sizeof(line), "Band %0.1f~%0.0fHz", (double)band_lo_hz, (double)band_hi_hz);
+        lcd_show_string(info_x, info_y, (uint16_t)(plot_w - 8u), 16u, 16u, line, LIGHTBLUE);
+
+        (void)snprintf(line, sizeof(line), "Peak %0.1fkHz", (double)(peak_hz / 1000.0f));
+        lcd_show_string(info_x, (uint16_t)(info_y + 16u), (uint16_t)(plot_w - 8u), 16u, 16u, line, YELLOW);
+
+        (void)snprintf(line, sizeof(line), "Pos %+4.1f %+4.1f E %0.2f", (double)pos->x_angle, (double)pos->y_angle, isfinite(pos->energy) ? (double)pos->energy : 0.0);
+        lcd_show_string(info_x, (uint16_t)(info_y + 32u), (uint16_t)(plot_w - 8u), 16u, 16u, line, CYAN);
+
+        (void)snprintf(line,
+                       sizeof(line),
+                       "%s S:%s F:%0.1e",
+                       App_Display_ModeName(s_mode),
+                       (sai_dma_active != 0u) ? "ON" : "OFF",
+                       (double)field_peak);
+        lcd_show_string(info_x, (uint16_t)(info_y + 48u), (uint16_t)(plot_w - 8u), 16u, 16u, line, WHITE);
+    }
+#else
+    (void)pos;
+    (void)field_peak;
+    (void)sai_dma_active;
+    (void)s_last_noise_floor;
+#endif
+
+    g_back_color = prev_back_color;
 }
 
 /* 濞撳弶鐓嬫稉鈧弫鏉戞姎婢规澘顒熼幋鎰剼閻㈠娼伴妴? * 鏉╂瑦妲稿Ο鈥虫健鐎电懓顦婚張鈧弽绋跨妇閻ㄥ嫰鈧劕鎶氶崗銉ュ經閵?*/
@@ -2057,16 +2583,18 @@ void App_Display_Render(const Sound_Pos_t *pos,
 {
     float field_peak;
     uint32_t t_perf;
+    App_SpectrumFrame_t spectrum_snapshot;
+    const App_SpectrumFrame_t *spectrum_frame = NULL;
+    uint8_t back_slot = s_backbuf_slot();
     uint32_t peak_idx = 0u;
     float peak_theta = 0.0f;
     float peak_phi = 0.0f;
-    uint8_t refresh_text;
-    uint8_t back_slot;
     uint8_t camera_valid;
     if ((s_ready == 0u) || (pos == NULL) || (vis_frame == NULL))
     {
         return;
     }
+    (void)back_slot;
     if (ltdc_wait_for_swap_complete(s_display_frame_budget_ms()) != 0u)
     {
         return;
@@ -2177,30 +2705,18 @@ void App_Display_Render(const Sound_Pos_t *pos,
         s_draw_rect_async(x0, y0, x1, y1, WHITE);
     }
     App_Perf_EndCycles(APP_PERF_SEC_DISP_RENDER, t_perf);
-    back_slot = s_backbuf_slot();
-    refresh_text = 0u;
-    if (frame_seq <= 1u)
+    if (App_Spectrum_GetLatestFrame(&spectrum_snapshot) != 0u)
     {
-        refresh_text = 1u;
+        s_last_spectrum_frame = spectrum_snapshot;
+        s_spectrum_frame_valid = 1u;
     }
-    else if (back_slot > 1u)
+    if (s_spectrum_frame_valid != 0u)
     {
-        refresh_text = 1u;
+        spectrum_frame = &s_last_spectrum_frame;
     }
-    else if ((uint32_t)(frame_seq - s_last_text_refresh_frame[back_slot]) >= (uint32_t)s_cfg.text_refresh_div)
-    {
-        refresh_text = 1u;
-    }
-    if (refresh_text != 0u)
-    {
-        if (back_slot <= 1u)
-        {
-            s_last_text_refresh_frame[back_slot] = frame_seq;
-        }
-        t_perf = App_Perf_BeginCycles();
-        s_draw_overlay(pos, frame_seq, peak_idx, peak_theta, peak_phi, field_peak, sai_dma_active);
-        App_Perf_EndCycles(APP_PERF_SEC_DISP_OVERLAY, t_perf);
-    }
+    t_perf = App_Perf_BeginCycles();
+    s_draw_overlay(pos, spectrum_frame, field_peak, sai_dma_active);
+    App_Perf_EndCycles(APP_PERF_SEC_DISP_OVERLAY, t_perf);
     t_perf = App_Perf_BeginCycles();
     s_commit_frame();
     App_Perf_EndCycles(APP_PERF_SEC_DISP_COMMIT, t_perf);
