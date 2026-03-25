@@ -965,6 +965,11 @@
               <FileType>1</FileType>
               <FilePath>..\User\App\app_touch_test.c</FilePath>
             </File>
+            <File>
+              <FileName>app_spectrum.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_spectrum.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
