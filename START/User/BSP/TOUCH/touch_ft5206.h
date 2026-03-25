@@ -1,0 +1,25 @@
+#ifndef TOUCH_FT5206_H
+#define TOUCH_FT5206_H
+
+#include "touch.h"
+
+#define TOUCH_FT5206_RST_GPIO_PORT GPIOB
+#define TOUCH_FT5206_RST_GPIO_PIN  GPIO_PIN_14
+
+#define TOUCH_FT5206_INT_GPIO_PORT GPIOH
+#define TOUCH_FT5206_INT_GPIO_PIN  GPIO_PIN_7
+
+#define TOUCH_FT5206_CMD_WR 0x70u
+#define TOUCH_FT5206_CMD_RD 0x71u
+
+#define TOUCH_FT5206_DEVIDE_MODE       0x00u
+#define TOUCH_FT5206_REG_NUM_FINGER    0x02u
+#define TOUCH_FT5206_ID_G_LIB_VERSION  0xA1u
+#define TOUCH_FT5206_ID_G_MODE         0xA4u
+#define TOUCH_FT5206_ID_G_THGROUP      0x80u
+#define TOUCH_FT5206_ID_G_PERIODACTIVE 0x88u
+
+uint8_t Touch_FT5206_Init(void);
+uint8_t Touch_FT5206_Scan(Touch_State_t *state);
+
+#endif /* TOUCH_FT5206_H */
