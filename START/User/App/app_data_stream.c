@@ -13,6 +13,7 @@
 
 #include "app_data_stream.h"
 #include "ai_beamforming.h"
+#include "app_spectrum.h"
 #include "mpu.h"
 
 #include <math.h>
@@ -112,5 +113,6 @@ void App_Stream_Init(void)
 
     /* 3. 初始化 SRP-PHAT 算法状态 */
     /* 清零诊断计数器，重置上次有效定位结果 */
+    App_Spectrum_Init();
     AI_SRP_PHAT_Init();
 }
