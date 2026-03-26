@@ -5,6 +5,8 @@
 #ifndef APP_TYPES_H
 #define APP_TYPES_H
 
+#include "app_user_config.h"
+
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -69,6 +71,22 @@ typedef struct {
     float y_angle;  /**< 垂直角 (度)，范围 [-60, 60] */
     float energy;   /**< 归一化能量 [0, 1] */
 } Sound_Pos_t;
+
+#define APP_SPECTRUM_BIN_COUNT    (FRAME_LEN / 2u)
+
+typedef struct {
+    uint16_t start_bin;
+    uint16_t end_bin;
+} App_FreqBand_t;
+
+typedef struct {
+    uint32_t seq;
+    uint16_t bin_count;
+    float delta_f_hz;
+    App_FreqBand_t active_band;
+    App_FreqBand_t preview_band;
+    float magnitude[APP_SPECTRUM_BIN_COUNT];
+} App_SpectrumFrame_t;
 #ifdef __cplusplus
 }
 #endif
