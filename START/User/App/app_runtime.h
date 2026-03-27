@@ -59,7 +59,8 @@ typedef struct
 
 typedef enum
 {
-    APP_UI_RENDER_BACKEND_LEGACY = 0u
+    APP_UI_RENDER_BACKEND_LEGACY = 0u,
+    APP_UI_RENDER_BACKEND_LVGL = 1u
 } App_UiRenderBackend_t;
 
 /* unified runtime configuration */

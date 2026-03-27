@@ -54,7 +54,7 @@
           <CreateLib>0</CreateLib>
           <CreateHexFile>1</CreateHexFile>
           <DebugInformation>1</DebugInformation>
-          <BrowseInformation>1</BrowseInformation>
+          <BrowseInformation>0</BrowseInformation>
           <ListingPath></ListingPath>
           <HexFormatSelection>1</HexFormatSelection>
           <Merge32K>0</Merge32K>
@@ -336,7 +336,7 @@
             <v6WtE>0</v6WtE>
             <v6Rtti>0</v6Rtti>
             <VariousControls>
-              <MiscControls>--diag_suppress=68,111,188,223,546,1295</MiscControls>
+              <MiscControls>--diag_suppress=1,68,111,188,223,546,1035,1295</MiscControls>
               <Define>USE_PWR_LDO_SUPPLY,USE_HAL_DRIVER,STM32H743xx,ARM_MATH_CM7</Define>
               <Undefine></Undefine>
               <IncludePath>../Core/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../User/Algorithm;../User/App;../User/Hardware;../User/BSP;..\User\BSP\TOUCH;..\Middlewares\LVGL;..\Middlewares\LVGL\GUI;..\Middlewares\LVGL\GUI\lvgl;..\Middlewares\LVGL\GUI\lvgl\src;..\Middlewares\LVGL\GUI\lvgl\examples;..\Middlewares\LVGL\GUI\lvgl\examples\porting;..\Middlewares\LVGL\GUI_APP;..\Middlewares\LVGL\GUI_APP\demos</IncludePath>
@@ -939,6 +939,11 @@
               <FileName>app_ui_task.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\App\app_ui_task.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_lvgl_ui.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_lvgl_ui.c</FilePath>
             </File>
             <File>
               <FileName>app_runtime.c</FileName>

@@ -14,6 +14,7 @@
  *
  * 闂冨懓顕板楦款唴閿? * - `App_Display_Init` 閸忚櫕鏁為崚婵嗩潗閸栨牓鈧礁绔风仦鈧拋锛勭暬閸滃瞼绱﹂崘鑼拨鐎规哎鈧? * - `s_prepare_field` 閸忚櫕鏁炵粻妤佺《缂佹挻鐏夋俊鍌欑秿閸欐ɑ鍨氶崣顖滅帛閸掕泛婧€閵? * - `s_update_norm_field` 閸忚櫕鏁為崝銊︹偓浣藉瘱閸ユ潙甯囩紓鈺€绗屾禍顔煎缁嬪啿鐣鹃張鍝勫煑閵? * - `s_render_field_rows` 閸忚櫕鏁炴俊鍌欑秿閹?8bit 閻戭厼濮忛崶楣冣偓浣风瑐鐏炲繐绠烽妴? * - `App_Display_Render` 閸忚櫕鏁炲В蹇撴姎鐎瑰本鏆ｉ弮璺虹碍娑撳骸鐤勯弮鑸碘偓褍褰囬懜宥冣偓? */
 #include "app_display.h"
+#include "app_lvgl_ui.h"
 #include "app_main_task.h"
 #include "app_perf.h"
 #include "app_spectrum.h"
@@ -191,13 +192,6 @@ static void s_clean_dcache_by_addr(const void *addr, uint32_t size);
 static uint16_t s_blend_rgb565(uint16_t bg, uint16_t fg, uint8_t alpha);
 static uint8_t s_overlay_alpha_from_norm(uint8_t norm);
 static void s_clear_scene_gutters(void);
-static void s_update_camera_cache_from_frame(const App_CameraFrame_t *camera_frame);
-static uint8_t s_blit_camera_cache_region(uint16_t dst_x0,
-                                          uint16_t dst_y0,
-                                          uint16_t width,
-                                          uint16_t height,
-                                          uint16_t src_x0,
-                                          uint16_t src_y0);
 static void s_render_camera_frame_rows(const App_CameraFrame_t *camera_frame);
 
 /* 闁氨鏁ら柦鍏呯秴瀹搞儱鍙块敍? * 閺勫墽銇氶柧鎹愮熅娑擃厼鐡ㄩ崷銊ャ亣闁插繆鈧粎鏁ら幋宄板讲鐠嬪啫寮弫鎵斥偓婵嗘嫲閳ユ粍璇為悙纭呮祮閺佸瓨鏆熼垾婵堟畱鏉╁洨鈻奸敍? * 闁藉厖缍呴崙鑺ユ殶閻劋绨穱婵婄槈閺佺増宓佹稉宥勭窗鐡掑﹨绻冮崥鍫熺《鏉堝湱鏅妴?*/
@@ -1418,128 +1412,6 @@ static void s_refresh_camera_scale_cache(uint16_t map_w, uint16_t map_h, uint16_
     s_camera_cache_src_h = src_h;
 }
 
-static void s_update_camera_cache_from_frame(const App_CameraFrame_t *camera_frame)
-{
-    uint16_t camera_w = (uint16_t)(s_camera_x1 - s_camera_x0 + 1u);
-    uint16_t camera_h = (uint16_t)(s_camera_y1 - s_camera_y0 + 1u);
-    uint16_t src_stride;
-    uint16_t y;
-    if ((camera_frame == NULL) ||
-        (camera_frame->pixels == NULL) ||
-        (camera_frame->valid == 0u) ||
-        (camera_frame->width == 0u) ||
-        (camera_frame->height == 0u) ||
-        (camera_w == 0u) ||
-        (camera_h == 0u) ||
-        (camera_w > APP_DISPLAY_CAMERA_VIEW_W) ||
-        (camera_h > APP_DISPLAY_CAMERA_VIEW_H) ||
-        (camera_w > APP_DISPLAY_MAX_LINE_PIXELS) ||
-        (camera_h > APP_DISPLAY_MAX_LINE_PIXELS))
-    {
-        return;
-    }
-    if ((s_camera_cache_valid != 0u) &&
-        (s_camera_cache_seq == camera_frame->seq) &&
-        (s_camera_cache_map_w == camera_w) &&
-        (s_camera_cache_map_h == camera_h) &&
-        (s_camera_cache_src_w == camera_frame->width) &&
-        (s_camera_cache_src_h == camera_frame->height))
-    {
-        return;
-    }
-    src_stride = (camera_frame->stride != 0u) ? camera_frame->stride : camera_frame->width;
-    s_refresh_camera_scale_cache(camera_w, camera_h, camera_frame->width, camera_frame->height);
-    for (y = 0u; y < camera_h; y++)
-    {
-        const uint16_t *src_cam = &camera_frame->pixels[(uint32_t)s_camera_row_near_cache[y] * (uint32_t)src_stride];
-        uint16_t *dst = &s_camera_cache_pixels[(uint32_t)y * (uint32_t)camera_w];
-        uint16_t x;
-        for (x = 0u; x < camera_w; x++)
-        {
-            dst[x] = src_cam[s_camera_col_near_cache[x]];
-        }
-    }
-    s_clean_dcache_by_addr(s_camera_cache_pixels,
-                           (uint32_t)camera_w * (uint32_t)camera_h * 2u);
-    s_camera_cache_seq = camera_frame->seq;
-    s_camera_cache_valid = 1u;
-}
-static uint8_t s_blit_camera_cache_region(uint16_t dst_x0,
-                                          uint16_t dst_y0,
-                                          uint16_t width,
-                                          uint16_t height,
-                                          uint16_t src_x0,
-                                          uint16_t src_y0)
-{
-    uint16_t camera_w = (uint16_t)(s_camera_x1 - s_camera_x0 + 1u);
-    uint16_t camera_h = (uint16_t)(s_camera_y1 - s_camera_y0 + 1u);
-    uint16_t dst_x1;
-    uint16_t dst_y1;
-    const uint16_t *src;
-    uint16_t row;
-    if ((s_camera_cache_valid == 0u) ||
-        (width == 0u) ||
-        (height == 0u) ||
-        (camera_w == 0u) ||
-        (camera_h == 0u))
-    {
-        return 0u;
-    }
-    if (((uint32_t)src_x0 + (uint32_t)width > (uint32_t)camera_w) ||
-        ((uint32_t)src_y0 + (uint32_t)height > (uint32_t)camera_h))
-    {
-        return 0u;
-    }
-    dst_x1 = (uint16_t)(dst_x0 + width - 1u);
-    dst_y1 = (uint16_t)(dst_y0 + height - 1u);
-    src = &s_camera_cache_pixels[(uint32_t)src_y0 * (uint32_t)camera_w + (uint32_t)src_x0];
-    if (ltdc_copy_async(dst_x0, dst_y0, dst_x1, dst_y1, src, camera_w) != 0u)
-    {
-        if (s_flush_temp_draw() != 0u)
-        {
-            return 1u;
-        }
-        DMA2D_Accel_Reset();
-    }
-    else
-    {
-        return 1u;
-    }
-
-    for (row = 0u; row < height; row++)
-    {
-        lcd_color_fill(dst_x0,
-                       (uint16_t)(dst_y0 + row),
-                       dst_x1,
-                       (uint16_t)(dst_y0 + row),
-                       (uint16_t *)&src[(uint32_t)row * (uint32_t)camera_w]);
-    }
-    return 1u;
-}
-static void s_render_camera_rows(const App_CameraFrame_t *camera_frame)
-{
-    uint16_t camera_w = (uint16_t)(s_camera_x1 - s_camera_x0 + 1u);
-    uint16_t camera_h = (uint16_t)(s_camera_y1 - s_camera_y0 + 1u);
-    if ((camera_frame == NULL) ||
-        (camera_frame->pixels == NULL) ||
-        (camera_frame->valid == 0u) ||
-        (camera_frame->width == 0u) ||
-        (camera_frame->height == 0u) ||
-        (camera_w == 0u) ||
-        (camera_h == 0u) ||
-        (camera_w > APP_DISPLAY_CAMERA_VIEW_W) ||
-        (camera_h > APP_DISPLAY_CAMERA_VIEW_H))
-    {
-        return;
-    }
-    s_update_camera_cache_from_frame(camera_frame);
-    if (s_camera_cache_valid == 0u)
-    {
-        return;
-    }
-    (void)s_blit_camera_cache_region(s_camera_x0, s_camera_y0, camera_w, camera_h, 0u, 0u);
-}
-
 static void s_render_camera_frame_rows(const App_CameraFrame_t *camera_frame)
 {
     uint16_t map_w = (uint16_t)(s_map_x1 - s_map_x0 + 1u);
@@ -1549,7 +1421,6 @@ static void s_render_camera_frame_rows(const App_CameraFrame_t *camera_frame)
     uint16_t fit_x0;
     uint16_t fit_y0;
     uint16_t fit_x1;
-    uint16_t fit_y1;
     uint16_t src_x0;
     uint16_t src_y0;
     uint16_t src_stride;
@@ -1582,7 +1453,6 @@ static void s_render_camera_frame_rows(const App_CameraFrame_t *camera_frame)
     fit_x0 = (uint16_t)(s_map_x0 + ((uint32_t)map_w - (uint32_t)fit_w) / 2u);
     fit_y0 = (uint16_t)(s_map_y0 + ((uint32_t)map_h - (uint32_t)fit_h) / 2u);
     fit_x1 = (uint16_t)(fit_x0 + fit_w - 1u);
-    fit_y1 = (uint16_t)(fit_y0 + fit_h - 1u);
 
     s_fill_rect_async(s_map_x0, s_map_y0, s_map_x1, s_map_y1, BLACK);
     s_camera_cache_seq = camera_frame->seq;
@@ -2719,6 +2589,8 @@ void App_Display_Render(const Sound_Pos_t *pos,
     s_draw_overlay(pos, spectrum_frame, field_peak, sai_dma_active);
     App_Perf_EndCycles(APP_PERF_SEC_DISP_OVERLAY, t_perf);
     App_TouchTest_Render();
+    /* Blend the optional LVGL overlay last so it stays above the legacy scene. */
+    App_LvglUi_BlitToDisplay();
     t_perf = App_Perf_BeginCycles();
     s_commit_frame();
     App_Perf_EndCycles(APP_PERF_SEC_DISP_COMMIT, t_perf);

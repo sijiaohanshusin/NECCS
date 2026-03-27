@@ -3,7 +3,8 @@
 ; - DTCM: stack/heap + latency-critical CPU-only data (.dtcm_data)
 ; - AXI SRAM: default RW/ZI pool + explicit large buffers (.axi_sram_data)
 ; - D2 SRAM: explicit DMA / dedicated sections only (.dma_buffer, .d2_sram_data)
-; - SDRAM: optional explicit large buffers (.sdram_data)
+; - SDRAM: framebuffers are reserved by fixed addresses in the display driver,
+;          not by linker sections in this scatter file.
 
 LR_IROM1 0x08000000 0x00200000  {
   ER_IROM1 0x08000000 0x00200000  {
@@ -26,9 +27,5 @@ LR_IROM1 0x08000000 0x00200000  {
   RW_SRAM_D2 0x30000000 0x00040000  {
    *.o (.dma_buffer)
    *.o (.d2_sram_data)
-  }
-
-  RW_SDRAM 0xC0000000 UNINIT 0x02000000  {
-   *.o (.sdram_data)
   }
 }

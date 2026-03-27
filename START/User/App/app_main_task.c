@@ -9,6 +9,7 @@
 #include "app_perf.h"
 #include "app_runtime.h"
 #include "app_task_cfg.h"
+#include "app_user_config.h"
 
 /* ============================================================================
  * FreeRTOS 句柄 (FreeRTOS Handles)
@@ -72,7 +73,11 @@ void App_Task_Init(void)
     BaseType_t task_ok;  /* xTaskCreate return value: pdPASS on success. */
 
     /* Step 1: select the current UI renderer backend. */
+#if (APP_LVGL_ENABLE != 0u) && (APP_LVGL_BOOT_AS_DEFAULT != 0u)
+    App_UiRenderer_SetBackend(APP_UI_RENDER_BACKEND_LVGL);
+#else
     App_UiRenderer_SetBackend(APP_UI_RENDER_BACKEND_LEGACY);
+#endif
 
     /* Step 2: initialize the performance profiler. */
     App_Perf_Init();
