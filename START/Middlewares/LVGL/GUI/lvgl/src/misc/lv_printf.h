@@ -78,8 +78,13 @@ typedef struct {
  *         null character. A value equal or larger than count indicates truncation. Only when the returned value
  *         is non-negative and less than count, the string has been completely written.
  */
+#if defined(__CC_ARM) || defined(__ARMCC_VERSION) || defined(__ARMCOMPILER_VERSION)
+int  lv_snprintf(char * buffer, size_t count, const char * format, ...);
+int lv_vsnprintf(char * buffer, size_t count, const char * format, va_list va);
+#else
 int  lv_snprintf(char * buffer, size_t count, const char * format, ...) LV_FORMAT_ATTRIBUTE(3, 4);
 int lv_vsnprintf(char * buffer, size_t count, const char * format, va_list va) LV_FORMAT_ATTRIBUTE(3, 0);
+#endif
 
 #else
 #include LV_SPRINTF_INCLUDE

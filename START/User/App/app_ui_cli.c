@@ -23,6 +23,18 @@ extern volatile uint32_t g_ltdc_fifo_underrun_count;
 extern volatile uint32_t g_ltdc_transfer_error_count;
 extern volatile uint32_t g_ltdc_last_error_code;
 
+static const char *s_ui_backend_name(App_UiRenderBackend_t backend)
+{
+    switch (backend)
+    {
+        case APP_UI_RENDER_BACKEND_LVGL:
+            return "lvgl";
+        case APP_UI_RENDER_BACKEND_LEGACY:
+        default:
+            return "legacy";
+    }
+}
+
 static App_Display_Mode_t s_runtime_mode_to_display(App_Runtime_DisplayMode_t mode)
 {
     switch (mode)
@@ -333,6 +345,7 @@ static void ui_cli_print_help(void)
     printf("\r\n");                                    /* 空行分隔，视觉清晰 */
     printf("cfg help\r\n");                            /* 显示本帮助 */
     printf("cfg status\r\n");                          /* 打印所有当前参数值 */
+    printf("cfg backend legacy|lvgl\r\n");             /* 切换 UI 渲染后端 */
     printf("cfg mode fast|balanced|clean\r\n");        /* 切换渲染模式 */
     printf("cfg interp nearest|bilinear\r\n");         /* 切换插值方式 */
     printf("cfg contrast <db_floor>\r\n");             /* 设置动态范围底限（负 dB 值） */
@@ -402,7 +415,8 @@ static void ui_cli_print_status(void)
            (unsigned int)cfg.blit_rows);         /* DMA2D blit 行数 */
 
     /* 第 4 行：任务调度参数 */
-    printf("cfg uifps=%lu algodecim=%lu perf=%s\r\n",
+    printf("cfg backend=%s uifps=%lu algodecim=%lu perf=%s\r\n",
+           s_ui_backend_name(App_UiRenderer_GetBackend()),
            (unsigned long)App_RuntimeConfig_GetUiTargetFps(),    /* UI 目标帧率 */
            (unsigned long)App_RuntimeConfig_GetAudioAlgoDecim(), /* 算法抽帧比 */
            (App_RuntimeConfig_GetPerfEnabled() != 0u) ? "on" : "off"); /* 性能统计开关 */
@@ -598,6 +612,32 @@ static void ui_cli_apply_line(char *line)
     }
     if (ui_cli_stricmp(cursor, "status") == 0)  /* "cfg status" */
     {
+        ui_cli_print_status();
+        return;
+    }
+
+    /* -- cfg backend legacy|lvgl：切换 UI 后端 -- */
+    if (ui_cli_stricmp(cursor, "backend") == 0)
+    {
+        if (arg == NULL)
+        {
+            printf("CLI: cfg backend legacy|lvgl\r\n");
+            return;
+        }
+        if ((ui_cli_stricmp(arg, "legacy") == 0) ||
+            (ui_cli_stricmp(arg, "old") == 0))
+        {
+            App_UiRenderer_SetBackend(APP_UI_RENDER_BACKEND_LEGACY);
+        }
+        else if (ui_cli_stricmp(arg, "lvgl") == 0)
+        {
+            App_UiRenderer_SetBackend(APP_UI_RENDER_BACKEND_LVGL);
+        }
+        else
+        {
+            printf("CLI: cfg backend legacy|lvgl\r\n");
+            return;
+        }
         ui_cli_print_status();
         return;
     }

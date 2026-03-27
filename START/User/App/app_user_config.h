@@ -22,6 +22,16 @@
 #define APP_TOUCH_RETRY_MS                1000u
 #define APP_TOUCH_TEST_ENABLE             1u
 
+/* LVGL bring-up switch set.
+ * During LVGL bring-up we boot into the LVGL backend by default so the test UI
+ * shows up immediately after reset. Set APP_LVGL_BOOT_AS_DEFAULT to 0u if you
+ * want to return to the legacy display path at power-on.
+ */
+#define APP_LVGL_ENABLE                   1u
+#define APP_LVGL_BOOT_AS_DEFAULT          1u
+#define APP_LVGL_HANDLER_PERIOD_MS        20u
+#define APP_LVGL_TEST_UI_ENABLE           1u
+
 /* ============================================================================
  * 调试与串口输出配置
  * ============================================================================ */

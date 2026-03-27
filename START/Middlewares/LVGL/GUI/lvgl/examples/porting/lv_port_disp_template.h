@@ -16,11 +16,19 @@ extern "C" {
 /*********************
  *      INCLUDES
  *********************/
+#include <stdint.h>
 #include "lvgl/lvgl.h"
 
 /*********************
  *      DEFINES
  *********************/
+#define LV_PORT_OVERLAY_W                  220u
+#define LV_PORT_OVERLAY_H                  220u
+#define LV_PORT_OVERLAY_DRAW_BUF_ROWS      16u
+#define LV_PORT_OVERLAY_MARGIN_X           12u
+#define LV_PORT_OVERLAY_MARGIN_Y           12u
+#define LV_PORT_OVERLAY_CHROMA_KEY_HEX     0xFF00FFu
+#define LV_PORT_OVERLAY_CHROMA_KEY_RGB565  0xF81Fu
 
 /**********************
  *      TYPEDEFS
@@ -30,6 +38,10 @@ extern "C" {
  * GLOBAL PROTOTYPES
  **********************/
 void lv_port_disp_init(void);
+void lv_port_disp_reconfigure(void);
+void lv_port_disp_blit_to_display(void);
+uint16_t lv_port_disp_get_origin_x(void);
+uint16_t lv_port_disp_get_origin_y(void);
 
 /**********************
  *      MACROS
