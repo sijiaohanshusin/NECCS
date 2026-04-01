@@ -339,7 +339,7 @@
               <MiscControls>--diag_suppress=1,68,111,188,223,546,1035,1295</MiscControls>
               <Define>USE_PWR_LDO_SUPPLY,USE_HAL_DRIVER,STM32H743xx,ARM_MATH_CM7</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../User/Algorithm;../User/App;../User/Hardware;../User/BSP;..\User\BSP\TOUCH;..\Middlewares\LVGL;..\Middlewares\LVGL\GUI;..\Middlewares\LVGL\GUI\lvgl;..\Middlewares\LVGL\GUI\lvgl\src;..\Middlewares\LVGL\GUI\lvgl\examples;..\Middlewares\LVGL\GUI\lvgl\examples\porting;..\Middlewares\LVGL\GUI_APP;..\Middlewares\LVGL\GUI_APP\demos</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../User/Algorithm;../User/App;../User/Hardware;../User/BSP;..\User\BSP\TOUCH;..\Middlewares\LVGL;..\Middlewares\LVGL\GUI;..\Middlewares\LVGL\GUI\lvgl;..\Middlewares\LVGL\GUI\lvgl\src;..\Middlewares\LVGL\GUI\lvgl\examples;..\Middlewares\LVGL\GUI\lvgl\examples\porting;..\Middlewares\LVGL\GUI_APP;..\Middlewares\LVGL\GUI_APP\demos;..\Middlewares\LVGL\GUI_APP\custom;..\Middlewares\LVGL\GUI_APP\generated;..\Middlewares\LVGL\GUI_APP\generated\guider_customer_fonts;..\Middlewares\LVGL\GUI_APP\generated\guider_fonts;..\Middlewares\LVGL\GUI_APP\generated\images</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -1944,6 +1944,111 @@
               <FileName>lv_textarea.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Middlewares\LVGL\GUI\lvgl\src\widgets\lv_textarea.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>guider</GroupName>
+          <Files>
+            <File>
+              <FileName>custom.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\custom\custom.c</FilePath>
+            </File>
+            <File>
+              <FileName>events_init.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\events_init.c</FilePath>
+            </File>
+            <File>
+              <FileName>gui_guider.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\gui_guider.c</FilePath>
+            </File>
+            <File>
+              <FileName>setup_scr_home.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\setup_scr_home.c</FilePath>
+            </File>
+            <File>
+              <FileName>setup_scr_using.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\setup_scr_using.c</FilePath>
+            </File>
+            <File>
+              <FileName>widgets_init.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\widgets_init.c</FilePath>
+            </File>
+            <File>
+              <FileName>lv_font_montserratMedium_12.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\guider_fonts\lv_font_montserratMedium_12.c</FilePath>
+            </File>
+            <File>
+              <FileName>lv_font_montserratMedium_16.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\guider_fonts\lv_font_montserratMedium_16.c</FilePath>
+            </File>
+            <File>
+              <FileName>lv_font_montserratMedium_25.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\guider_fonts\lv_font_montserratMedium_25.c</FilePath>
+            </File>
+            <File>
+              <FileName>lv_font_simsun_16.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\guider_fonts\lv_font_simsun_16.c</FilePath>
+            </File>
+            <File>
+              <FileName>lv_font_simsun_18.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\guider_fonts\lv_font_simsun_18.c</FilePath>
+            </File>
+            <File>
+              <FileName>lv_font_simsun_30.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\guider_fonts\lv_font_simsun_30.c</FilePath>
+            </File>
+            <File>
+              <FileName>lv_font_simsun_60.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\guider_fonts\lv_font_simsun_60.c</FilePath>
+            </File>
+            <File>
+              <FileName>_start2_alpha_100x100.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\generated\images\_start2_alpha_100x100.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>myFonts</GroupName>
+          <Files>
+            <File>
+              <FileName>Font12.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\Font12.c</FilePath>
+            </File>
+            <File>
+              <FileName>Font16.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\Font16.c</FilePath>
+            </File>
+            <File>
+              <FileName>Font18.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\Font18.c</FilePath>
+            </File>
+            <File>
+              <FileName>Font30.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\Font30.c</FilePath>
+            </File>
+            <File>
+              <FileName>Font60.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\LVGL\GUI_APP\Font60.c</FilePath>
             </File>
           </Files>
         </Group>

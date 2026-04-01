@@ -29,7 +29,15 @@ static void s_clean_dcache_by_addr(const void *addr, uint32_t size);
 /**********************
  *  STATIC VARIABLES
  **********************/
-__SECTION_D2_SRAM static uint16_t s_panel_fb[LV_PORT_OVERLAY_W * LV_PORT_OVERLAY_H];
+#define LV_PORT_PANEL_FB_ADDR   0xC0700000u
+#define LV_PORT_PANEL_FB_BYTES  (LV_PORT_OVERLAY_W * LV_PORT_OVERLAY_H * 2u)
+#define LV_PORT_PANEL_FB_LIMIT  0xC0800000u
+
+#if ((LV_PORT_PANEL_FB_ADDR + LV_PORT_PANEL_FB_BYTES) > LV_PORT_PANEL_FB_LIMIT)
+#error "LVGL panel framebuffer must stay inside the reserved SDRAM window"
+#endif
+
+static uint16_t * const s_panel_fb = (uint16_t *)LV_PORT_PANEL_FB_ADDR;
 __SECTION_D2_SRAM static lv_color_t s_draw_buf_mem[LV_PORT_OVERLAY_W * LV_PORT_OVERLAY_DRAW_BUF_ROWS];
 
 static lv_disp_draw_buf_t s_draw_buf;
