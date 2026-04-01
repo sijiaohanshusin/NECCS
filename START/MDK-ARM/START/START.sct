@@ -1,5 +1,9 @@
 ; STM32H743 AC5 Scatter File (mirror)
 ; Keep this file in sync with START/MDK/START.sct.
+; SDRAM fixed reservations used outside the linker:
+; - 0xC0000000..0xC06FFFFF fixed LTDC/camera/display windows
+; - 0xC0700000..0xC07BFFFF fixed LVGL full-screen panel framebuffer
+; - 0xC07C0000..0xC07CBFFF fixed LVGL heap pool
 
 LR_IROM1 0x08000000 0x00200000  {
   ER_IROM1 0x08000000 0x00200000  {
@@ -24,7 +28,4 @@ LR_IROM1 0x08000000 0x00200000  {
    *.o (.d2_sram_data)
   }
 
-  RW_SDRAM 0xC0000000 UNINIT 0x02000000  {
-   *.o (.sdram_data)
-  }
 }
