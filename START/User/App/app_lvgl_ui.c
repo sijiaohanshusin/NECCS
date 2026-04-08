@@ -11,6 +11,7 @@
 #include "app_user_config.h"
 
 #if (APP_LVGL_ENABLE != 0u)
+#include "app_ui_screens.h"
 #include "custom.h"
 #include "gui_guider.h"
 #include "lv_port_disp_template.h"
@@ -26,7 +27,7 @@ static uint8_t s_overlay_enabled = 0u;
 
 /**
  * @brief  初始化 LVGL 用户界面
- * @details 仅在 APP_LVGL_TEST_UI_ENABLE 启用时创建 UI；重复调用无副作用。
+ * @details 通过 App_UiScreens_Init() 初始化多屏幕导航框架。
  */
 void App_LvglUi_Init(void)
 {
@@ -36,16 +37,14 @@ void App_LvglUi_Init(void)
         return;
     }
 
-    (void)memset(&guider_ui, 0, sizeof(guider_ui));
-    setup_ui(&guider_ui);
-    custom_init(&guider_ui);
+    App_UiScreens_Init();
     s_lvgl_ui_created = 1u;
 #endif
 }
 
 /**
  * @brief  LVGL UI 周期处理
- * @details 在主循环中定期调用，用于处理 UI 事件（当前为预留接口）。
+ * @details 调用当前屏幕的 update 回调刷新实时数据。
  */
 void App_LvglUi_Process(void)
 {
@@ -54,6 +53,7 @@ void App_LvglUi_Process(void)
     {
         return;
     }
+    App_UiScreens_Update();
 #endif
 }
 

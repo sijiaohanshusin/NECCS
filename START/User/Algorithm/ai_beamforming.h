@@ -96,6 +96,22 @@ void AI_SRP_PHAT_Init(void);
  */
 void AI_SRP_PHAT_Process(Sound_Pos_t *result);
 
+/**
+ * @brief  设置 SRP 活动频率 bin 范围（动态频段过滤）
+ * @param  bin_start  起始 bin（必须 >= SRP_FREQ_BIN_START）
+ * @param  bin_end    结束 bin（必须 <= SRP_FREQ_BIN_END）
+ * @details 在 SRP_Accumulate_Point 中仅对 [bin_start, bin_end] 范围积分。
+ *          传入超范围值将被钳位到 [SRP_FREQ_BIN_START, SRP_FREQ_BIN_END]。
+ */
+void AI_SRP_SetActiveFreqRange(uint16_t bin_start, uint16_t bin_end);
+
+/**
+ * @brief  获取当前 SRP 活动频率 bin 范围
+ * @param  bin_start  输出起始 bin 指针
+ * @param  bin_end    输出结束 bin 指针
+ */
+void AI_SRP_GetActiveFreqRange(uint16_t *bin_start, uint16_t *bin_end);
+
 typedef struct
 {
     float32_t power[SRP_GRID_TOTAL];
@@ -107,6 +123,13 @@ typedef struct
 
 void AI_SRP_CopyVisualizationFrame(SRP_VisFrame_t *frame);
 uint8_t AI_SRP_GetLatestVisualizationFrame(SRP_VisFrame_t *frame);
+
+/**
+ * @brief   提取 Top-K 多声源定位结果
+ * @param   out  输出多声源结构体指针（Sound_MultiPos_t）
+ * @note    必须在 AI_SRP_PHAT_Process() 后、同一任务中立即调用
+ */
+void AI_SRP_GetMultiSource(Sound_MultiPos_t *out);
 
 /* ============================================================================
  * 诊断统计变量 (Diagnostic Statistics)

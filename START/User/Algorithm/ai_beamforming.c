@@ -90,6 +90,12 @@ static volatile uint8_t s_vis_publish_index = 0u;
 /** @brief 可视化发布序列号 (奇数=写入中, 偶数=稳定) */
 static volatile uint32_t s_vis_publish_seq = 0u;
 
+/* ---- 动态频段过滤 ---- */
+/** @brief 活动频率 bin 起始（FFT 空间，默认 = 编译期值） */
+static uint16_t s_active_bin_start = (uint16_t)SRP_FREQ_BIN_START;
+/** @brief 活动频率 bin 结束（FFT 空间，默认 = 编译期值） */
+static uint16_t s_active_bin_end   = (uint16_t)SRP_FREQ_BIN_END;
+
 /**
  * @brief   填充可视化帧数据
  * @details 将当前 SRP 功率网格和角度信息复制到可视化帧结构体
@@ -623,6 +629,11 @@ static float32_t SRP_Accumulate_Point(const float32_t *tau)
 {
     float32_t power = 0.0f;  /* 累加功率 */
 
+    /* 活动频段在 GCC-PHAT 缓冲区中的偏移与长度 */
+    uint32_t local_start = (uint32_t)s_active_bin_start - (uint32_t)SRP_FREQ_BIN_START;
+    uint32_t local_end   = (uint32_t)s_active_bin_end   - (uint32_t)SRP_FREQ_BIN_START;
+    uint32_t active_bins = local_end - local_start + 1u;
+
     /* 对每对麦克风累加响应 */
     for (uint32_t p = 0u; p < SRP_PAIR_COUNT; p++)
     {
@@ -637,23 +648,20 @@ static float32_t SRP_Accumulate_Point(const float32_t *tau)
         float32_t sin_d, cos_d;
         arm_sin_cos_f32(d_phi_deg, &sin_d, &cos_d);
 
-        /* 计算初始相位 (bin f_start 的相位) */
-        /* phi_0 = d_phi * f_start */
+        /* 计算初始相位 (活动频段起始 bin 的相位) */
         float32_t sin_phi, cos_phi;
-        arm_sin_cos_f32(d_phi_deg * (float32_t)SRP_FREQ_BIN_START, &sin_phi, &cos_phi);
+        arm_sin_cos_f32(d_phi_deg * (float32_t)s_active_bin_start, &sin_phi, &cos_phi);
 
-        /* 累加所有频率 bin 的响应 */
+        /* 累加活动频率 bin 的响应 */
         float32_t pair_sum = 0.0f;
-        for (uint32_t k = 0u; k < SRP_FREQ_BINS; k++)
+        for (uint32_t k = 0u; k < active_bins; k++)
         {
+            uint32_t idx = local_start + k;
+
             /* 计算内积：GCC[k] * exp(j * phi_k) */
-            /* 实部：Re(GCC) * cos(phi) + Im(GCC) * sin(phi) */
-            pair_sum += gcc[2u * k] * cos_phi + gcc[2u * k + 1u] * sin_phi;
+            pair_sum += gcc[2u * idx] * cos_phi + gcc[2u * idx + 1u] * sin_phi;
 
             /* 递推计算下一个 bin 的相位 */
-            /* exp(j * phi_{k+1}) = exp(j * phi_k) * exp(j * d_phi) */
-            /* cos(phi_{k+1}) = cos(phi_k) * cos(d_phi) - sin(phi_k) * sin(d_phi) */
-            /* sin(phi_{k+1}) = sin(phi_k) * cos(d_phi) + cos(phi_k) * sin(d_phi) */
             float32_t c_new = cos_phi * cos_d - sin_phi * sin_d;
             float32_t s_new = sin_phi * cos_d + cos_phi * sin_d;
             cos_phi = c_new;
@@ -700,6 +708,37 @@ void AI_SRP_PHAT_Init(void)
     s_last_valid.y_angle = 0.0f;
     s_last_valid.energy = 0.0f;
     s_low_conf_streak = 0u;
+}
+
+void AI_SRP_SetActiveFreqRange(uint16_t bin_start, uint16_t bin_end)
+{
+    /* 钳位到编译期允许范围 */
+    if (bin_start < (uint16_t)SRP_FREQ_BIN_START)
+    {
+        bin_start = (uint16_t)SRP_FREQ_BIN_START;
+    }
+    if (bin_end > (uint16_t)SRP_FREQ_BIN_END)
+    {
+        bin_end = (uint16_t)SRP_FREQ_BIN_END;
+    }
+    if (bin_start > bin_end)
+    {
+        bin_start = bin_end;
+    }
+    s_active_bin_start = bin_start;
+    s_active_bin_end   = bin_end;
+}
+
+void AI_SRP_GetActiveFreqRange(uint16_t *bin_start, uint16_t *bin_end)
+{
+    if (bin_start != NULL)
+    {
+        *bin_start = s_active_bin_start;
+    }
+    if (bin_end != NULL)
+    {
+        *bin_end = s_active_bin_end;
+    }
 }
 
 /**
@@ -1020,4 +1059,102 @@ uint8_t AI_SRP_GetLatestVisualizationFrame(SRP_VisFrame_t *frame)
     }
 
     return 0u;
+}
+
+/**
+ * @brief   提取 Top-K 多声源定位结果
+ * @details 在 AI_SRP_PHAT_Process() 完成后调用，从全局 SRP_Power
+ *          数组中提取 Top-K 峰值（带 NMS 去重），填充到 Sound_MultiPos_t。
+ *          必须在同一任务（Audio_Pipeline_Task）中、
+ *          AI_SRP_PHAT_Process() 返回后立即调用。
+ *
+ * @param   out  输出多声源结构体指针
+ */
+void AI_SRP_GetMultiSource(Sound_MultiPos_t *out)
+{
+    uint8_t  used[SRP_GRID_TOTAL];
+    uint32_t k;
+    uint8_t  count;
+
+    if (out == NULL)
+    {
+        return;
+    }
+
+    out->count = 0u;
+    memset(used, 0, sizeof(used));
+
+    count = 0u;
+
+    for (k = 0u; k < MULTI_SOURCE_MAX; k++)
+    {
+        float32_t best_val = -1.0e30f;
+        uint32_t  best_idx = 0u;
+        uint8_t   found = 0u;
+        uint32_t  n;
+
+        /* 在未使用点中找最大值（跳过与已选点角度过近的点） */
+        for (n = 0u; n < SRP_GRID_TOTAL; n++)
+        {
+            float32_t theta_n, phi_n;
+            uint8_t   too_close;
+            uint8_t   c;
+
+            if (used[n] != 0u)
+            {
+                continue;
+            }
+            if (SRP_Power[n] <= best_val)
+            {
+                continue;
+            }
+
+            /* 检查是否与已选源距离太近（<15度） */
+            too_close = 0u;
+            get_grid_angle(n, &theta_n, &phi_n);
+            for (c = 0u; c < count; c++)
+            {
+                float32_t dt = theta_n - out->sources[c].x_angle;
+                float32_t dp = phi_n   - out->sources[c].y_angle;
+                if ((dt * dt + dp * dp) < (15.0f * 15.0f))
+                {
+                    too_close = 1u;
+                    break;
+                }
+            }
+            if (too_close != 0u)
+            {
+                continue;
+            }
+
+            best_val = SRP_Power[n];
+            best_idx = n;
+            found = 1u;
+        }
+
+        if (found == 0u)
+        {
+            break;
+        }
+
+        /* 记录此声源 */
+        {
+            float32_t theta, phi, norm;
+            get_grid_angle(best_idx, &theta, &phi);
+            remap_output_angles(&theta, &phi);
+
+            norm = best_val / (float32_t)(SRP_PAIR_COUNT * SRP_FREQ_BINS);
+            if (norm > 1.0f) { norm = 1.0f; }
+            if (norm < 0.0f) { norm = 0.0f; }
+
+            out->sources[count].x_angle = theta;
+            out->sources[count].y_angle = phi;
+            out->sources[count].energy  = norm;
+        }
+
+        used[best_idx] = 1u;
+        count++;
+    }
+
+    out->count = count;
 }

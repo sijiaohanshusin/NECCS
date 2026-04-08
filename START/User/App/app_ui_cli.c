@@ -8,8 +8,13 @@
 
 #include "app_camera.h"
 #include "app_display.h"
+#include "app_laser.h"
 #include "app_main_task.h"
+#include "app_noise_floor.h"
+#include "app_spectrum.h"
 #include "app_task_cfg.h"
+#include "app_trigger.h"
+#include "ai_beamforming.h"
 #include "LCD/dma2d_accel.h"
 #include "LCD/ltdc.h"
 #include "usart.h"
@@ -979,6 +984,224 @@ static void ui_cli_apply_line(char *line)
             return;
         }
         cfg.blit_rows = (uint8_t)uv;  /* 增大可提高吞吐率，减小可降低单次 DMA 延迟 */
+    }
+    /* -- cfg laser on|off|toggle：激光瞄准器控制 -- */
+    else if (ui_cli_stricmp(cursor, "laser") == 0)
+    {
+        if (arg == NULL)
+        {
+            printf("CLI: laser=%s\r\n",
+                   App_Laser_GetState() == APP_LASER_ON ? "ON" : "OFF");
+            return;
+        }
+        if (ui_cli_stricmp(arg, "on") == 0)
+        {
+            App_Laser_SetState(APP_LASER_ON);
+        }
+        else if (ui_cli_stricmp(arg, "off") == 0)
+        {
+            App_Laser_SetState(APP_LASER_OFF);
+        }
+        else if (ui_cli_stricmp(arg, "toggle") == 0)
+        {
+            App_Laser_Toggle();
+        }
+        printf("CLI: laser=%s\r\n",
+               App_Laser_GetState() == APP_LASER_ON ? "ON" : "OFF");
+        return;
+    }
+    /* -- cfg night on|off|toggle：夜间模式 -- */
+    else if (ui_cli_stricmp(cursor, "night") == 0)
+    {
+        if (arg == NULL)
+        {
+            printf("CLI: night=%s\r\n",
+                   App_NightMode_GetState() == APP_NIGHTMODE_ON ? "ON" : "OFF");
+            return;
+        }
+        if (ui_cli_stricmp(arg, "on") == 0)
+        {
+            App_NightMode_Enable();
+        }
+        else if (ui_cli_stricmp(arg, "off") == 0)
+        {
+            App_NightMode_Disable();
+        }
+        else if (ui_cli_stricmp(arg, "toggle") == 0)
+        {
+            App_NightMode_Toggle();
+        }
+        printf("CLI: night=%s\r\n",
+               App_NightMode_GetState() == APP_NIGHTMODE_ON ? "ON" : "OFF");
+        return;
+    }
+    /* -- cfg trigger arm|disarm|rearm|threshold <val>：触发模式 -- */
+    else if (ui_cli_stricmp(cursor, "trigger") == 0)
+    {
+        if (arg == NULL)
+        {
+            const char *state_str = "IDLE";
+            App_TriggerState_t ts = App_Trigger_GetState();
+            if (ts == APP_TRIGGER_ARMED) { state_str = "ARMED"; }
+            else if (ts == APP_TRIGGER_TRIGGERED) { state_str = "TRIGGERED"; }
+            printf("CLI: trigger=%s threshold=%.3f\r\n",
+                   state_str, (double)App_Trigger_GetThreshold());
+            return;
+        }
+        if (ui_cli_stricmp(arg, "arm") == 0)
+        {
+            App_Trigger_Arm();
+            printf("CLI: trigger ARMED\r\n");
+        }
+        else if (ui_cli_stricmp(arg, "disarm") == 0)
+        {
+            App_Trigger_Disarm();
+            printf("CLI: trigger IDLE\r\n");
+        }
+        else if (ui_cli_stricmp(arg, "rearm") == 0)
+        {
+            App_Trigger_Rearm();
+            printf("CLI: trigger ARMED\r\n");
+        }
+        else
+        {
+            float tv;
+            if (ui_cli_parse_float(arg, &tv) != 0u)
+            {
+                App_Trigger_SetThreshold(tv);
+                printf("CLI: trigger threshold=%.3f\r\n", (double)tv);
+            }
+            else
+            {
+                printf("CLI: cfg trigger arm|disarm|rearm|<threshold>\r\n");
+            }
+        }
+        return;
+    }
+    /* -- cfg band <start> <end>：设置 SRP 活动频率 bin 范围 -- */
+    else if (ui_cli_stricmp(cursor, "band") == 0)
+    {
+        if (arg == NULL)
+        {
+            uint16_t bs, be;
+            AI_SRP_GetActiveFreqRange(&bs, &be);
+            printf("CLI: band=%u..%u (%.0f..%.0f Hz)\r\n",
+                   (unsigned)bs, (unsigned)be,
+                   (double)App_Spectrum_BinToHz(bs),
+                   (double)App_Spectrum_BinToHz(be));
+            return;
+        }
+        {
+            uint32_t bstart, bend;
+            char *sep = arg;
+            while ((*sep != '\0') && (isspace((unsigned char)*sep) == 0))
+            {
+                sep++;
+            }
+            if (*sep != '\0')
+            {
+                *sep++ = '\0';
+                while (isspace((unsigned char)*sep) != 0) { sep++; }
+            }
+            if ((ui_cli_parse_u32(arg, &bstart) == 0u) ||
+                (*sep == '\0') || (ui_cli_parse_u32(sep, &bend) == 0u))
+            {
+                printf("CLI: cfg band <start_bin> <end_bin>\r\n");
+                return;
+            }
+            {
+                App_FreqBand_t b;
+                b.start_bin = (uint16_t)bstart;
+                b.end_bin   = (uint16_t)bend;
+                App_Spectrum_SetActiveBand(b);
+                printf("CLI: band set %u..%u (%.0f..%.0f Hz)\r\n",
+                       (unsigned)b.start_bin, (unsigned)b.end_bin,
+                       (double)App_Spectrum_BinToHz(b.start_bin),
+                       (double)App_Spectrum_BinToHz(b.end_bin));
+            }
+        }
+        return;
+    }
+    /* -- cfg band_preset <voice|ultra|low|full>：频段预设 -- */
+    else if (ui_cli_stricmp(cursor, "band_preset") == 0)
+    {
+        App_FreqBand_t b;
+        if (arg == NULL)
+        {
+            printf("CLI: cfg band_preset voice|ultra|low|full\r\n");
+            return;
+        }
+        if (ui_cli_stricmp(arg, "voice") == 0)
+        {
+            b.start_bin = App_Spectrum_HzToBin(300.0f);
+            b.end_bin   = App_Spectrum_HzToBin(4000.0f);
+        }
+        else if (ui_cli_stricmp(arg, "ultra") == 0)
+        {
+            b.start_bin = App_Spectrum_HzToBin(8000.0f);
+            b.end_bin   = App_Spectrum_HzToBin(20000.0f);
+        }
+        else if (ui_cli_stricmp(arg, "low") == 0)
+        {
+            b.start_bin = App_Spectrum_HzToBin(100.0f);
+            b.end_bin   = App_Spectrum_HzToBin(1000.0f);
+        }
+        else if (ui_cli_stricmp(arg, "full") == 0)
+        {
+            b = App_Spectrum_DefaultBand();
+        }
+        else
+        {
+            printf("CLI: unknown preset\r\n");
+            return;
+        }
+        App_Spectrum_SetActiveBand(b);
+        printf("CLI: band preset '%s' => %u..%u (%.0f..%.0f Hz)\r\n",
+               arg,
+               (unsigned)b.start_bin, (unsigned)b.end_bin,
+               (double)App_Spectrum_BinToHz(b.start_bin),
+               (double)App_Spectrum_BinToHz(b.end_bin));
+        return;
+    }
+    /* -- cfg noise on|off|cal|alpha <val>：噪声底控制 -- */
+    else if (ui_cli_stricmp(cursor, "noise") == 0)
+    {
+        if (arg == NULL)
+        {
+            printf("CLI: noise %s, alpha=%.4f\r\n",
+                   App_NoiseFloor_GetEnabled() ? "ON" : "OFF",
+                   (double)App_NoiseFloor_GetAlpha());
+            return;
+        }
+        if (ui_cli_stricmp(arg, "on") == 0)
+        {
+            App_NoiseFloor_SetEnabled(1u);
+            printf("CLI: noise floor enabled\r\n");
+        }
+        else if (ui_cli_stricmp(arg, "off") == 0)
+        {
+            App_NoiseFloor_SetEnabled(0u);
+            printf("CLI: noise floor disabled\r\n");
+        }
+        else if (ui_cli_stricmp(arg, "cal") == 0)
+        {
+            printf("CLI: noise floor calibrate (next frame)\r\n");
+        }
+        else
+        {
+            /* try parse as alpha value */
+            float v = (float)atof(arg);
+            if (v > 0.0f && v < 1.0f)
+            {
+                App_NoiseFloor_SetAlpha(v);
+                printf("CLI: noise alpha = %.4f\r\n", (double)v);
+            }
+            else
+            {
+                printf("CLI: cfg noise on|off|cal|<alpha 0~1>\r\n");
+            }
+        }
+        return;
     }
     else  /* 未知的 cfg key */
     {

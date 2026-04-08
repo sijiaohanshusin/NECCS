@@ -34,6 +34,9 @@
 /** @brief 调试计数: 每处理一帧音频递增一次, 可通过调试器观察算法实际执行次数 */
 extern int16_t found_val;
 
+/** @brief 多声源定位结果（音频任务写入，UI/显示任务读取） */
+Sound_MultiPos_t g_multi_source;
+
 /**
  * @brief   将无符号整数限制在 [lo, hi] 范围内
  * @param   v   待限制的值
@@ -223,6 +226,9 @@ void Audio_Pipeline_Task(void *pvParameters)
                 t_sec = App_Perf_BeginCycles();
                 AI_SRP_PHAT_Process(&current_pos);  /* 核心算法, 最耗时的部分 */
                 App_Perf_EndCycles(APP_PERF_SEC_AUDIO_SRP, t_sec);
+
+                /* 提取多声源 Top-K 结果（供显示层使用） */
+                AI_SRP_GetMultiSource(&g_multi_source);
 
 #ifdef DEBUG_ENABLE
 #if (DEBUG_MODE == 3)

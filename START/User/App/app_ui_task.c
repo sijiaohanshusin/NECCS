@@ -15,6 +15,7 @@
 #include "app_main_task.h"
 #include "app_perf.h"
 #include "app_touch.h"
+#include "app_trigger.h"
 #include "app_ui_cli.h"
 #include "app_user_config.h"
 #include "LCD/ltdc.h"
@@ -24,6 +25,7 @@
 
 #if (APP_LVGL_ENABLE != 0u)
 #include "app_lvgl_ui.h"
+#include "app_ui_screens.h"
 #include "lvgl/lvgl.h"
 
 void lv_port_disp_init(void);
@@ -85,6 +87,11 @@ static uint8_t s_ui_lvgl_ready = 0u;
 static uint8_t s_ui_lvgl_core_inited = 0u;
 static uint8_t s_ui_lvgl_ports_inited = 0u;
 static TickType_t s_ui_lvgl_last_tick = 0u;
+
+/** @brief LVGL FPS 计算状态 */
+static uint32_t s_ui_lvgl_fps_frames = 0u;
+static TickType_t s_ui_lvgl_fps_tick = 0u;
+static uint32_t s_ui_lvgl_fps_value = 0u;
 #endif
 
 /** @brief 当前活跃的渲染后端虚表指针，默认 Legacy */
@@ -273,6 +280,28 @@ static void s_ui_lvgl_render(const Sound_Pos_t *pos,
     }
 
     App_LvglUi_Process();
+
+    /* 计算 LVGL FPS 并馈送实时数据到屏幕框架 */
+    {
+        s_ui_lvgl_fps_frames++;
+        if ((now - s_ui_lvgl_fps_tick) >= pdMS_TO_TICKS(1000u))
+        {
+            s_ui_lvgl_fps_value = s_ui_lvgl_fps_frames;
+            s_ui_lvgl_fps_frames = 0u;
+            s_ui_lvgl_fps_tick = now;
+        }
+    }
+    {
+        App_UiLiveData_t ld;
+        ld.x_angle   = pos->x_angle;
+        ld.y_angle   = pos->y_angle;
+        ld.energy    = pos->energy;
+        ld.ui_fps    = s_ui_lvgl_fps_value;
+        ld.audio_fps = 0u;
+        ld.sai_active = sai_dma_active;
+        App_UiScreens_SetLiveData(&ld);
+    }
+
     (void)lv_timer_handler();
 
     (void)App_Camera_AcquireLatestFrame(&camera_frame);
@@ -439,6 +468,16 @@ void UI_Display_Task(void *pvParameters)
         }
 
         ui_frame_seq++;  /* UI 帧序号递增 */
+
+        /* ---- 步骤 4b: 触发模式检测 ---- */
+        (void)App_Trigger_Feed(last_pos.energy);
+        if (App_Trigger_GetState() == APP_TRIGGER_TRIGGERED)
+        {
+            /* 冻结显示：跳过后续渲染更新，保持当前帧 */
+            App_Perf_EndCycles(APP_PERF_SEC_UI_LOOP, t_loop);
+            vTaskDelayUntil(&next_render_wake, (TickType_t)s_ui_period_ticks());
+            continue;
+        }
 
         /* ---- 步骤 5: 检测 SAI DMA 活跃状态 ---- */
         {

@@ -6,9 +6,12 @@
 #include "app_main_task.h"
 
 #include "app_camera.h"
+#include "app_laser.h"
+#include "app_noise_floor.h"
 #include "app_perf.h"
 #include "app_runtime.h"
 #include "app_task_cfg.h"
+#include "app_trigger.h"
 #include "app_user_config.h"
 
 /* ============================================================================
@@ -84,6 +87,11 @@ void App_Task_Init(void)
 
     /* Step 3 / 4: sync runtime config with perf state and display defaults. */
     App_RuntimeConfig_Init();
+
+    /* Step 3b: initialize trigger and laser modules. */
+    App_Trigger_Init();
+    App_Laser_Init();
+    App_NoiseFloor_Init();
 
     /* Step 5: create depth-1 overwrite queues to keep only the latest frame. */
     xAudioFrameQueue = xQueueCreate(1, sizeof(Audio_FrameEvent_t)); /* ISR -> audio task */

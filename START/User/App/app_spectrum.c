@@ -8,6 +8,7 @@
 #include "app_spectrum.h"
 
 #include "ai_config.h"
+#include "ai_beamforming.h"
 #include "app_data_stream.h"
 #include "app_user_config.h"
 
@@ -225,6 +226,9 @@ void App_Spectrum_SetActiveBand(App_FreqBand_t band)
 
     __DMB();
     s_active_band_packed = s_pack_band(clamped);
+
+    /* 同步更新 SRP 算法的活动频段 */
+    AI_SRP_SetActiveFreqRange(clamped.start_bin, clamped.end_bin);
 }
 
 /**

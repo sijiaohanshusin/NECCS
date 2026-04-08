@@ -339,7 +339,7 @@
               <MiscControls>--diag_suppress=1,68,111,188,223,546,1035,1295</MiscControls>
               <Define>USE_PWR_LDO_SUPPLY,USE_HAL_DRIVER,STM32H743xx,ARM_MATH_CM7</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../User/Algorithm;../User/App;../User/Hardware;../User/BSP;..\User\BSP\TOUCH;..\Middlewares\LVGL;..\Middlewares\LVGL\GUI;..\Middlewares\LVGL\GUI\lvgl;..\Middlewares\LVGL\GUI\lvgl\src;..\Middlewares\LVGL\GUI\lvgl\examples;..\Middlewares\LVGL\GUI\lvgl\examples\porting;..\Middlewares\LVGL\GUI_APP;..\Middlewares\LVGL\GUI_APP\demos;..\Middlewares\LVGL\GUI_APP\custom;..\Middlewares\LVGL\GUI_APP\generated;..\Middlewares\LVGL\GUI_APP\generated\guider_customer_fonts;..\Middlewares\LVGL\GUI_APP\generated\guider_fonts;..\Middlewares\LVGL\GUI_APP\generated\images</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../User/Algorithm;../User/App;../User/Hardware;../User/BSP;../User/common;..\User\BSP\TOUCH;..\Middlewares\LVGL;..\Middlewares\LVGL\GUI;..\Middlewares\LVGL\GUI\lvgl;..\Middlewares\LVGL\GUI\lvgl\src;..\Middlewares\LVGL\GUI\lvgl\examples;..\Middlewares\LVGL\GUI\lvgl\examples\porting;..\Middlewares\LVGL\GUI_APP;..\Middlewares\LVGL\GUI_APP\demos;..\Middlewares\LVGL\GUI_APP\custom;..\Middlewares\LVGL\GUI_APP\generated;..\Middlewares\LVGL\GUI_APP\generated\guider_customer_fonts;..\Middlewares\LVGL\GUI_APP\generated\guider_fonts;..\Middlewares\LVGL\GUI_APP\generated\images</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -946,6 +946,31 @@
               <FilePath>..\User\App\app_lvgl_ui.c</FilePath>
             </File>
             <File>
+              <FileName>app_ui_screens.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_ui_screens.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_ui_styles.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_ui_styles.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_trigger.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_trigger.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_laser.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_laser.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_noise_floor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_noise_floor.c</FilePath>
+            </File>
+            <File>
               <FileName>app_runtime.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\App\app_runtime.c</FilePath>
@@ -974,6 +999,16 @@
               <FileName>app_spectrum.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\App\app_spectrum.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>User/common</GroupName>
+          <Files>
+            <File>
+              <FileName>dwt_timer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\common\dwt_timer.c</FilePath>
             </File>
           </Files>
         </Group>

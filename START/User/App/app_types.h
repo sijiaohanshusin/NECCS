@@ -72,6 +72,21 @@ typedef struct {
     float energy;   /**< 归一化能量 [0, 1] */
 } Sound_Pos_t;
 
+/** @brief 多声源最大追踪数 */
+#define MULTI_SOURCE_MAX    3u
+
+/**
+ * @brief   多声源定位结果
+ * @details 同时追踪 Top-K 个声源位置
+ */
+typedef struct {
+    Sound_Pos_t sources[MULTI_SOURCE_MAX]; /**< 各声源位置（按能量降序） */
+    uint8_t     count;                     /**< 有效声源数 [0, MULTI_SOURCE_MAX] */
+} Sound_MultiPos_t;
+
+/** @brief 全局多声源结果（音频任务写入，UI/显示任务读取） */
+extern Sound_MultiPos_t g_multi_source;
+
 #define APP_SPECTRUM_BIN_COUNT    (FRAME_LEN / 2u)
 
 typedef struct {

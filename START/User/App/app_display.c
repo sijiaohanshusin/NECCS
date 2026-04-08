@@ -2587,6 +2587,29 @@ void App_Display_Render(const Sound_Pos_t *pos,
         uint16_t y1 = ((uint32_t)py + r < s_map_y1) ? (uint16_t)(py + r) : s_map_y1;
         s_draw_rect_async(x0, y0, x1, y1, WHITE);
     }
+    /* ---- 多声源标注：为第 2、3 声源绘制彩色十字准星 ---- */
+    {
+        static const uint32_t multi_colors[MULTI_SOURCE_MAX] = { WHITE, CYAN, YELLOW };
+        uint8_t mi;
+        for (mi = 1u; mi < g_multi_source.count; mi++)
+        {
+            float mxa = s_clamp_f32(g_multi_source.sources[mi].x_angle,
+                                     (float)COARSE_ANGLE_MIN_DEG,
+                                     (float)COARSE_ANGLE_MAX_DEG);
+            float mya = s_clamp_f32(g_multi_source.sources[mi].y_angle,
+                                     (float)COARSE_ANGLE_MIN_DEG,
+                                     (float)COARSE_ANGLE_MAX_DEG);
+            uint16_t mcx = s_angle_to_x(mxa);
+            uint16_t mcy = s_angle_to_y(mya);
+            uint16_t mh  = APP_DISPLAY_CROSSHAIR_HALF_PX;
+            uint16_t mxl = (mcx > (uint16_t)(s_map_x0 + mh)) ? (uint16_t)(mcx - mh) : s_map_x0;
+            uint16_t mxr = ((uint32_t)mcx + mh < s_map_x1)    ? (uint16_t)(mcx + mh) : s_map_x1;
+            uint16_t myt = (mcy > (uint16_t)(s_map_y0 + mh)) ? (uint16_t)(mcy - mh) : s_map_y0;
+            uint16_t myb = ((uint32_t)mcy + mh < s_map_y1)    ? (uint16_t)(mcy + mh) : s_map_y1;
+            s_draw_hline_async(mxl, mcy, mxr, multi_colors[mi]);
+            s_draw_vline_async(mcx, myt, myb, multi_colors[mi]);
+        }
+    }
     App_Perf_EndCycles(APP_PERF_SEC_DISP_RENDER, t_perf);
     if (App_Spectrum_GetLatestFrame(&spectrum_snapshot) != 0u)
     {
