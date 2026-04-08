@@ -1,10 +1,10 @@
 /**
  * @file    ltdc.h
  * @brief   LTDC + DMA2D 显示驱动接口
- * @details 提供 LCD 初始化、图层控制、像素读写、区域填充与双缓冲换页接口�? */
+ * @details 提供 LCD 初始化、图层控制、像素读写、区域填充与双缓冲换页接口。 */
 
-#ifndef _LTDC_H
-#define _LTDC_H
+#ifndef LTDC_H
+#define LTDC_H
 
 #include "main.h"
 

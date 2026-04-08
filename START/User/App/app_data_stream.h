@@ -9,8 +9,8 @@
  * - AXI SRAM (0x24000000): Cacheable, 大容量缓冲区
  */
 
-#ifndef __APP_DATA_STREAM_H
-#define __APP_DATA_STREAM_H
+#ifndef APP_DATA_STREAM_H
+#define APP_DATA_STREAM_H
 
 #include "ai_config.h"
 #include "arm_math.h"
@@ -124,4 +124,4 @@ extern float32_t SRP_Power[SRP_GRID_TOTAL];
  */
 void App_Stream_Init(void);
 
-#endif /* __APP_DATA_STREAM_H */
+#endif /* APP_DATA_STREAM_H */

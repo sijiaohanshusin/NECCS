@@ -21,8 +21,8 @@
  * 3. 或使用 fmc_sdram_write_buffer/read_buffer 函数
  */
 
-#ifndef __SDRAM_H
-#define __SDRAM_H
+#ifndef SDRAM_H
+#define SDRAM_H
 
 #include "main.h"
 
@@ -179,4 +179,4 @@ void fmc_sdram_write_buffer(uint8_t *pbuf, uint32_t writeaddr, uint32_t n);
  */
 void fmc_sdram_read_buffer(uint8_t *pbuf, uint32_t readaddr, uint32_t n);
 
-#endif /* __SDRAM_H */
+#endif /* SDRAM_H */

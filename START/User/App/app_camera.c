@@ -1,3 +1,11 @@
+/**
+ * @file   app_camera.c
+ * @brief  OV2640 摄像头 DCMI 驱动与帧发布模块
+ * @details 管理 OV2640 传感器初始化、DCMI 双缓冲 DMA 采集、行级数据拷贝、
+ *          发布缓冲管理（引用计数）以及 FreeRTOS 服务任务调度。
+ *          通过 APP_CAMERA_ENABLE 宏控制是否编译摄像头功能。
+ */
+
 #include "app_camera.h"
 
 #include "FreeRTOS.h"
@@ -51,11 +59,16 @@
 #endif
 
 #if (APP_CAMERA_ENABLE != 0u)
+/** @brief DCMI 外设句柄 */
 static DCMI_HandleTypeDef s_hdcmi;
+/** @brief DCMI 关联的 DMA 句柄 */
 static DMA_HandleTypeDef s_hdma_dcmi;
+/** @brief 摄像头服务任务句柄 */
 static TaskHandle_t s_camera_service_task_handle = NULL;
 
+/** @brief 传感器是否已初始化 */
 static volatile uint8_t s_camera_initialized = 0u;
+/** @brief 是否正在流式采集 */
 static volatile uint8_t s_camera_streaming = 0u;
 static volatile uint8_t s_camera_raw_valid = 0u;
 static volatile uint8_t s_camera_frame_valid = 0u;
@@ -94,6 +107,7 @@ static volatile uint32_t s_camera_arm_fail_count = 0u;
 static volatile uint8_t s_camera_init_stage = APP_CAMERA_INIT_STAGE_IDLE;
 static volatile uint8_t s_camera_freeze_publish = 0u;
 
+/** @brief 发布缓冲指针数组（四缓冲） */
 static uint16_t *const s_camera_buffers[APP_CAMERA_PUB_COUNT] = {
     (uint16_t *)APP_CAMERA_PUB0_ADDR,
     (uint16_t *)APP_CAMERA_PUB1_ADDR,
@@ -101,6 +115,7 @@ static uint16_t *const s_camera_buffers[APP_CAMERA_PUB_COUNT] = {
     (uint16_t *)APP_CAMERA_PUB3_ADDR
 };
 
+/** @brief 发布缓冲指针数组（与 s_camera_buffers 相同，用于读者端访问） */
 static uint16_t *const s_camera_pub_buffers[APP_CAMERA_PUB_COUNT] = {
     (uint16_t *)APP_CAMERA_PUB0_ADDR,
     (uint16_t *)APP_CAMERA_PUB1_ADDR,
@@ -108,8 +123,10 @@ static uint16_t *const s_camera_pub_buffers[APP_CAMERA_PUB_COUNT] = {
     (uint16_t *)APP_CAMERA_PUB3_ADDR
 };
 
+/** @brief DMA 行双缓冲（放置在 DMA 可访问段） */
 __SECTION_DMA_BUFFER static uint32_t s_camera_line_buffers[2][APP_CAMERA_DMA_LINE_WORDS];
 
+/** @brief 对帧像素采样计算 FNV-1a 哈希，用于判断帧是否有效 */
 static uint32_t s_camera_sample_hash(const uint16_t *pixels)
 {
     static const uint32_t k_sample_offsets[] = {
@@ -158,6 +175,7 @@ static void s_camera_dma_m0_complete_callback(DMA_HandleTypeDef *hdma);
 static void s_camera_dma_m1_complete_callback(DMA_HandleTypeDef *hdma);
 static void s_camera_dma_error_callback(DMA_HandleTypeDef *hdma);
 
+/** @brief 配置 DCMI 句柄参数 */
 static void s_camera_setup_handle(void)
 {
     memset(&s_hdcmi, 0, sizeof(s_hdcmi));
@@ -175,11 +193,13 @@ static void s_camera_setup_handle(void)
     s_hdcmi.Init.LineSelectStart = DCMI_OELS_ODD;
 }
 
+/** @brief 禁用非帧中断（LINE / VSYNC / ERR / OVR） */
 static void s_camera_disable_nonframe_interrupts(void)
 {
     __HAL_DCMI_DISABLE_IT(&s_hdcmi, DCMI_IT_LINE | DCMI_IT_VSYNC | DCMI_IT_ERR | DCMI_IT_OVR);
 }
 
+/** @brief 清除 DMA 和 DCMI 所有挂起标志 */
 static void s_camera_clear_pending_flags(void)
 {
     uint32_t dma_flags;
@@ -202,6 +222,7 @@ static void s_camera_clear_pending_flags(void)
                           DCMI_FLAG_LINERI);
 }
 
+/** @brief 复位采集状态机变量 */
 static void s_camera_reset_capture_state(uint8_t reset_seq)
 {
     s_camera_raw_valid = 0u;
@@ -228,6 +249,7 @@ static void s_camera_reset_capture_state(uint8_t reset_seq)
     }
 }
 
+/** @brief 复位发布状态及引用计数 */
 static void s_camera_reset_published_state(uint8_t clear_counters)
 {
     uint8_t i;
@@ -252,6 +274,7 @@ static void s_camera_reset_published_state(uint8_t clear_counters)
     }
 }
 
+/** @brief 强制停止 DCMI/DMA 并清除所有标志 */
 static void s_camera_force_idle(void)
 {
     uint32_t wait_count = 1024u;
@@ -285,6 +308,7 @@ static void s_camera_force_idle(void)
     __HAL_UNLOCK(&s_hdma_dcmi);
 }
 
+/** @brief 启动 DCMI 连续采集流 */
 static HAL_StatusTypeDef s_camera_start_stream(uint8_t reset_seq, uint8_t announce_start)
 {
     s_camera_force_idle();
@@ -338,6 +362,7 @@ static HAL_StatusTypeDef s_camera_start_stream(uint8_t reset_seq, uint8_t announ
     return HAL_OK;
 }
 
+/** @brief 从 ISR 中通知服务任务 */
 static void s_camera_notify_service_from_isr(void)
 {
     BaseType_t task_woken = pdFALSE;
@@ -351,6 +376,7 @@ static void s_camera_notify_service_from_isr(void)
     portYIELD_FROM_ISR(task_woken);
 }
 
+/** @brief 尝试将已完成的帧加入发布队列 */
 static void s_camera_try_queue_frame_from_isr(uint8_t completed_index)
 {
     uint8_t next_index = completed_index;
@@ -385,6 +411,7 @@ static void s_camera_try_queue_frame_from_isr(uint8_t completed_index)
     s_camera_notify_service_from_isr();
 }
 
+/** @brief 为下一帧选择空闲的采集缓冲索引 */
 static uint8_t s_camera_select_capture_index_from_isr(uint8_t completed_index, uint8_t *next_index)
 {
     uint8_t i;
@@ -435,6 +462,7 @@ static uint8_t s_camera_select_capture_index_from_isr(uint8_t completed_index, u
     return 0u;
 }
 
+/** @brief 完成当前帧采集并提交到发布队列 */
 static void s_camera_complete_frame_from_isr(void)
 {
     uint8_t completed_index = s_camera_capture_index;
@@ -446,6 +474,7 @@ static void s_camera_complete_frame_from_isr(void)
     s_camera_try_queue_frame_from_isr(completed_index);
 }
 
+/** @brief 丢弃未完整的帧 */
 static void s_camera_drop_partial_frame_from_isr(void)
 {
     s_camera_publish_drop_count++;
@@ -454,6 +483,7 @@ static void s_camera_drop_partial_frame_from_isr(void)
     s_camera_line_index = 0u;
 }
 
+/** @brief DMA 行缓冲完成回调，将一行像素拷贝到帧缓冲 */
 static void s_camera_on_dma_bank_complete(uint8_t completed_index)
 {
     uint16_t *dst;
@@ -487,6 +517,7 @@ static void s_camera_on_dma_bank_complete(uint8_t completed_index)
     }
 }
 
+/** @brief DCMI 帧边界中断处理（VSYNC 下降沿） */
 static void s_camera_on_frame_boundary_isr(void)
 {
     s_camera_frame_event_count++;
@@ -522,6 +553,7 @@ static void s_camera_on_frame_boundary_isr(void)
     s_camera_drop_partial_frame_from_isr();
 }
 
+/** @brief 摄像头服务任务主体，等待通知并更新发布帧 */
 static void s_camera_service_task(void *argument)
 {
     (void)argument;
@@ -533,6 +565,7 @@ static void s_camera_service_task(void *argument)
     }
 }
 
+/** @brief DMA Memory-0 完成回调 */
 static void s_camera_dma_m0_complete_callback(DMA_HandleTypeDef *hdma)
 {
     if ((hdma == NULL) || (hdma != &s_hdma_dcmi))
@@ -543,6 +576,7 @@ static void s_camera_dma_m0_complete_callback(DMA_HandleTypeDef *hdma)
     s_camera_on_dma_bank_complete(0u);
 }
 
+/** @brief DMA Memory-1 完成回调 */
 static void s_camera_dma_m1_complete_callback(DMA_HandleTypeDef *hdma)
 {
     if ((hdma == NULL) || (hdma != &s_hdma_dcmi))
@@ -553,6 +587,7 @@ static void s_camera_dma_m1_complete_callback(DMA_HandleTypeDef *hdma)
     s_camera_on_dma_bank_complete(1u);
 }
 
+/** @brief DMA 错误回调，设置重启标志 */
 static void s_camera_dma_error_callback(DMA_HandleTypeDef *hdma)
 {
     if ((hdma == NULL) || (hdma != &s_hdma_dcmi))
@@ -569,6 +604,11 @@ static void s_camera_dma_error_callback(DMA_HandleTypeDef *hdma)
 
 #endif
 
+/**
+ * @brief  获取初始化阶段的可读名称
+ * @param  stage 初始化阶段编号
+ * @return 阶段名称字符串
+ */
 const char *App_Camera_InitStageName(uint8_t stage)
 {
     switch ((App_CameraInitStage_t)stage)
@@ -583,6 +623,11 @@ const char *App_Camera_InitStageName(uint8_t stage)
     }
 }
 
+/**
+ * @brief  初始化摄像头模块
+ * @details 依次执行 OV2640 传感器初始化、RGB565 预览配置、DCMI 外设初始化。
+ *          重复调用无副作用。
+ */
 void App_Camera_Init(void)
 {
 #if (APP_CAMERA_ENABLE == 0u)
@@ -662,6 +707,10 @@ void App_Camera_Init(void)
 #endif
 }
 
+/**
+ * @brief  启动摄像头连续采集
+ * @details 若尚未初始化则先自动初始化。
+ */
 void App_Camera_Start(void)
 {
 #if (APP_CAMERA_ENABLE == 0u)
@@ -683,6 +732,10 @@ void App_Camera_Start(void)
 #endif
 }
 
+/**
+ * @brief  手动重试摄像头初始化与采集
+ * @return 0 = 成功，非零 = 失败
+ */
 uint8_t App_Camera_Retry(void)
 {
 #if (APP_CAMERA_ENABLE == 0u)
@@ -724,6 +777,9 @@ uint8_t App_Camera_Retry(void)
 #endif
 }
 
+/**
+ * @brief  停止摄像头采集
+ */
 void App_Camera_Stop(void)
 {
 #if (APP_CAMERA_ENABLE == 0u)
@@ -746,6 +802,9 @@ void App_Camera_Stop(void)
 #endif
 }
 
+/**
+ * @brief  创建摄像头服务 FreeRTOS 任务
+ */
 void App_Camera_TaskInit(void)
 {
 #if (APP_CAMERA_ENABLE == 0u)
@@ -768,6 +827,10 @@ void App_Camera_TaskInit(void)
 #endif
 }
 
+/**
+ * @brief  将最新原始帧发布到可读缓冲
+ * @return 1 = 成功发布新帧，0 = 无新帧
+ */
 uint8_t App_Camera_UpdatePublishedFrame(void)
 {
 #if (APP_CAMERA_ENABLE == 0u)
@@ -866,6 +929,10 @@ uint8_t App_Camera_UpdatePublishedFrame(void)
 #endif
 }
 
+/**
+ * @brief  设置发布冻结状态
+ * @param  enable 非零 = 冻结（不更新发布帧），0 = 恢复
+ */
 void App_Camera_SetFreeze(uint8_t enable)
 {
 #if (APP_CAMERA_ENABLE != 0u)
@@ -882,6 +949,10 @@ void App_Camera_SetFreeze(uint8_t enable)
 #endif
 }
 
+/**
+ * @brief  获取发布冻结状态
+ * @return 1 = 已冻结，0 = 正常
+ */
 uint8_t App_Camera_GetFreeze(void)
 {
 #if (APP_CAMERA_ENABLE == 0u)
@@ -891,6 +962,12 @@ uint8_t App_Camera_GetFreeze(void)
 #endif
 }
 
+/**
+ * @brief  获取最新发布帧并增加引用计数
+ * @param  frame 接收帧信息的结构体指针
+ * @return 1 = 成功，0 = 无有效帧
+ * @details 使用后必须调用 App_Camera_ReleaseFrame() 释放引用。
+ */
 uint8_t App_Camera_AcquireLatestFrame(App_CameraFrame_t *frame)
 {
 #if (APP_CAMERA_ENABLE == 0u)
@@ -949,6 +1026,10 @@ uint8_t App_Camera_AcquireLatestFrame(App_CameraFrame_t *frame)
 #endif
 }
 
+/**
+ * @brief  释放通过 AcquireLatestFrame 获取的帧引用
+ * @param  frame 要释放的帧结构体指针
+ */
 void App_Camera_ReleaseFrame(const App_CameraFrame_t *frame)
 {
 #if (APP_CAMERA_ENABLE != 0u)
@@ -976,6 +1057,10 @@ void App_Camera_ReleaseFrame(const App_CameraFrame_t *frame)
 #endif
 }
 
+/**
+ * @brief  获取最新发布帧（无引用计数，仅拷贝元数据）
+ * @param  frame 接收帧信息的结构体指针
+ */
 void App_Camera_GetLatestFrame(App_CameraFrame_t *frame)
 {
     uint32_t primask;
@@ -1009,6 +1094,10 @@ void App_Camera_GetLatestFrame(App_CameraFrame_t *frame)
 #endif
 }
 
+/**
+ * @brief  获取摄像头详细运行状态
+ * @param  status 接收状态信息的结构体指针
+ */
 void App_Camera_GetStatus(App_CameraStatus_t *status)
 {
     uint32_t primask;
@@ -1078,6 +1167,9 @@ void App_Camera_GetStatus(App_CameraStatus_t *status)
 #endif
 }
 
+/**
+ * @brief  DCMI 中断服务入口（从 stm32h7xx_it.c 调用）
+ */
 void App_Camera_DCMI_IRQHandler(void)
 {
 #if (APP_CAMERA_ENABLE != 0u)
@@ -1088,6 +1180,9 @@ void App_Camera_DCMI_IRQHandler(void)
 #endif
 }
 
+/**
+ * @brief  DCMI 关联 DMA 中断服务入口
+ */
 void App_Camera_DMA_IRQHandler(void)
 {
 #if (APP_CAMERA_ENABLE != 0u)
@@ -1099,6 +1194,11 @@ void App_Camera_DMA_IRQHandler(void)
 }
 
 #if (APP_CAMERA_ENABLE != 0u)
+/**
+ * @brief  DCMI MSP 初始化回调（HAL 内部调用）
+ * @param  hdcmi DCMI 句柄指针
+ * @details 配置 GPIO、DMA、中断优先级。
+ */
 void HAL_DCMI_MspInit(DCMI_HandleTypeDef *hdcmi)
 {
     GPIO_InitTypeDef gpio_init = {0};
@@ -1167,6 +1267,10 @@ void HAL_DCMI_MspInit(DCMI_HandleTypeDef *hdcmi)
     HAL_NVIC_EnableIRQ(DCMI_IRQn);
 }
 
+/**
+ * @brief  DCMI MSP 反初始化回调
+ * @param  hdcmi DCMI 句柄指针
+ */
 void HAL_DCMI_MspDeInit(DCMI_HandleTypeDef *hdcmi)
 {
     if ((hdcmi == NULL) || (hdcmi->Instance != DCMI))
@@ -1180,6 +1284,10 @@ void HAL_DCMI_MspDeInit(DCMI_HandleTypeDef *hdcmi)
     __HAL_RCC_DCMI_CLK_DISABLE();
 }
 
+/**
+ * @brief  DCMI 帧事件回调（HAL 内部调用）
+ * @param  hdcmi DCMI 句柄指针
+ */
 void HAL_DCMI_FrameEventCallback(DCMI_HandleTypeDef *hdcmi)
 {
     if ((hdcmi == NULL) || (hdcmi != &s_hdcmi))
@@ -1191,6 +1299,10 @@ void HAL_DCMI_FrameEventCallback(DCMI_HandleTypeDef *hdcmi)
     __HAL_DCMI_ENABLE_IT(hdcmi, DCMI_IT_FRAME);
 }
 
+/**
+ * @brief  DCMI VSYNC 事件回调，用于首帧同步
+ * @param  hdcmi DCMI 句柄指针
+ */
 void HAL_DCMI_VsyncEventCallback(DCMI_HandleTypeDef *hdcmi)
 {
     if ((hdcmi == NULL) || (hdcmi != &s_hdcmi))
@@ -1208,6 +1320,10 @@ void HAL_DCMI_VsyncEventCallback(DCMI_HandleTypeDef *hdcmi)
     }
 }
 
+/**
+ * @brief  DCMI 错误回调，处理捕获失败并触发重启
+ * @param  hdcmi DCMI 句柄指针
+ */
 void HAL_DCMI_ErrorCallback(DCMI_HandleTypeDef *hdcmi)
 {
     uint32_t error_code;

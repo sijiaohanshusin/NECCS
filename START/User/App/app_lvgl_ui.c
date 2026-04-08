@@ -1,10 +1,10 @@
-/*
- * @Author: gxb 2562444672@qq.com
- * @Date: 2026-03-27 21:21:03
- * @LastEditors: gxb 2562444672@qq.com
- * @LastEditTime: 2026-04-01 17:25:35
- * @FilePath: \EmbeddedCompetition2c:\Users\GXB\Documents\New project\EmbeddedCompetition2_START\User\App\app_lvgl_ui.c
- * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+/**
+ * @file   app_lvgl_ui.c
+ * @brief  LVGL 图形界面管理模块
+ * @details 封装 LVGL UI 的创建、周期处理及叠加层输出。
+ *          通过 APP_LVGL_ENABLE 和 APP_LVGL_TEST_UI_ENABLE 宏控制功能编译。
+ * @author gxb 2562444672@qq.com
+ * @date   2026-03-27
  */
 #include "app_lvgl_ui.h"
 
@@ -19,9 +19,15 @@
 #include <stdint.h>
 #include <string.h>
 
+/** @brief UI 是否已创建 */
 static uint8_t s_lvgl_ui_created = 0u;
+/** @brief 叠加层是否启用 */
 static uint8_t s_overlay_enabled = 0u;
 
+/**
+ * @brief  初始化 LVGL 用户界面
+ * @details 仅在 APP_LVGL_TEST_UI_ENABLE 启用时创建 UI；重复调用无副作用。
+ */
 void App_LvglUi_Init(void)
 {
 #if (APP_LVGL_TEST_UI_ENABLE != 0u)
@@ -37,6 +43,10 @@ void App_LvglUi_Init(void)
 #endif
 }
 
+/**
+ * @brief  LVGL UI 周期处理
+ * @details 在主循环中定期调用，用于处理 UI 事件（当前为预留接口）。
+ */
 void App_LvglUi_Process(void)
 {
 #if (APP_LVGL_TEST_UI_ENABLE != 0u)
@@ -47,11 +57,19 @@ void App_LvglUi_Process(void)
 #endif
 }
 
+/**
+ * @brief  设置 LVGL 叠加层使能状态
+ * @param  enabled 非零 = 启用叠加层，0 = 禁用
+ */
 void App_LvglUi_SetOverlayEnabled(uint8_t enabled)
 {
     s_overlay_enabled = (enabled != 0u) ? 1u : 0u;
 }
 
+/**
+ * @brief  将 LVGL 叠加层内容刷写到显示屏
+ * @details 仅当叠加层已启用且 UI 已创建时执行刷写。
+ */
 void App_LvglUi_BlitToDisplay(void)
 {
     if ((s_overlay_enabled == 0u) || (s_lvgl_ui_created == 0u))

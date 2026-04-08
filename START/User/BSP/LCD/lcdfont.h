@@ -4,8 +4,8 @@
  ************************************************	
  */
 
-#ifndef __LCDFONT_H
-#define __LCDFONT_H
+#ifndef LCDFONT_H
+#define LCDFONT_H
 
 /* 常用ASCII表
  * 偏移量32 

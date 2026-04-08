@@ -1,3 +1,11 @@
+/**
+ * @file    touch_ft5206.c
+ * @brief   FT5206 电容触摸控制器驱动实现
+ * @details 通过软件模拟 I2C 与 FT5206 触摸 IC 通信，
+ *          实现初始化、寄存器读写和多点触摸扫描。
+ *          适用于 STM32H743 平台。
+ */
+
 #include "touch_ft5206.h"
 
 #include "touch_i2c.h"
@@ -5,6 +13,10 @@
 
 #include <stdio.h>
 
+/**
+ * @brief   设置 FT5206 复位引脚电平
+ * @param   level 电平值 (0=低电平, 非0=高电平)
+ */
 static void s_ft_rst_write(uint8_t level)
 {
     HAL_GPIO_WritePin(TOUCH_FT5206_RST_GPIO_PORT,
@@ -12,6 +24,13 @@ static void s_ft_rst_write(uint8_t level)
                       (level != 0u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
+/**
+ * @brief   通过 I2C 写入 FT5206 寄存器
+ * @param   reg 寄存器地址
+ * @param   buf 待写入数据缓冲区指针
+ * @param   len 待写入数据字节数
+ * @return  0: 成功, 1: 失败
+ */
 static uint8_t s_ft_write_reg(uint8_t reg, const uint8_t *buf, uint8_t len)
 {
     uint8_t i;
@@ -44,6 +63,13 @@ static uint8_t s_ft_write_reg(uint8_t reg, const uint8_t *buf, uint8_t len)
     return 0u;
 }
 
+/**
+ * @brief   通过 I2C 读取 FT5206 寄存器
+ * @param   reg 寄存器地址
+ * @param   buf 读取数据输出缓冲区指针
+ * @param   len 待读取字节数
+ * @return  0: 成功, 1: 失败
+ */
 static uint8_t s_ft_read_reg(uint8_t reg, uint8_t *buf, uint8_t len)
 {
     uint8_t i;
@@ -79,6 +105,11 @@ static uint8_t s_ft_read_reg(uint8_t reg, uint8_t *buf, uint8_t len)
     return 0u;
 }
 
+/**
+ * @brief   初始化 FT5206 触摸控制器
+ * @details 配置 GPIO，复位芯片，写入默认参数并校验固件版本
+ * @return  0: 成功, 1: 失败
+ */
 uint8_t Touch_FT5206_Init(void)
 {
     GPIO_InitTypeDef gpio_init = {0};
@@ -142,6 +173,12 @@ uint8_t Touch_FT5206_Init(void)
     return 0u;
 }
 
+/**
+ * @brief   扫描 FT5206 触摸数据
+ * @details 读取触摸点数和各点坐标，根据屏幕方向映射坐标
+ * @param   state 指向触摸状态结构体的指针，用于输出触摸结果
+ * @return  1: 有触摸按下, 0: 无触摸
+ */
 uint8_t Touch_FT5206_Scan(Touch_State_t *state)
 {
     static const uint8_t reg_table[5] = {0x03u, 0x09u, 0x0Fu, 0x15u, 0x1Bu};

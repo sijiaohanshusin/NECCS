@@ -1,3 +1,10 @@
+/**
+ * @file   app_touch_test.c
+ * @brief  触摸屏测试可视化模块
+ * @details 在 LCD 上绘制多点触摸十字标记与连线，用于触摸功能验证。
+ *          通过 APP_TOUCH_TEST_ENABLE 宏控制是否编译。
+ */
+
 #include "app_touch_test.h"
 
 #include "app_touch.h"
@@ -9,17 +16,29 @@
 
 #if (APP_TOUCH_TEST_ENABLE != 0u)
 
+/** @brief 各触摸点对应的绘制颜色 */
 static const uint32_t s_touch_test_colors[TOUCH_MAX_POINTS] = {
     RED, GREEN, BLUE, YELLOW, MAGENTA,
     CYAN, LIGHTBLUE, BRRED, BROWN, GRAY
 };
+/** @brief 触摸初始化失败时显示的提示文本 */
 static char s_touch_fail_msg[] = "TP init fail";
+/** @brief 触摸就绪时显示的提示文本 */
 static char s_touch_idle_msg[] = "TP ready";
 
+/** @brief 各触摸点上一次的 X 坐标 */
 static uint16_t s_touch_last_x[TOUCH_MAX_POINTS];
+/** @brief 各触摸点上一次的 Y 坐标 */
 static uint16_t s_touch_last_y[TOUCH_MAX_POINTS];
+/** @brief 各触摸点上一次坐标是否有效 */
 static uint8_t s_touch_last_valid[TOUCH_MAX_POINTS];
 
+/**
+ * @brief 在指定位置绘制十字标记（含圆圈）
+ * @param x     中心 X 坐标
+ * @param y     中心 Y 坐标
+ * @param color 绘制颜色
+ */
 static void s_touch_test_draw_cross(uint16_t x, uint16_t y, uint32_t color)
 {
     uint16_t x0 = (x > 8u) ? (uint16_t)(x - 8u) : 0u;
@@ -32,6 +51,10 @@ static void s_touch_test_draw_cross(uint16_t x, uint16_t y, uint32_t color)
     lcd_draw_circle(x, y, 5u, color);
 }
 
+/**
+ * @brief  渲染触摸测试界面
+ * @details 显示触摸控制器状态信息，并为每个触摸点绘制十字标记和连线轨迹。
+ */
 void App_TouchTest_Render(void)
 {
     const Touch_State_t *state;

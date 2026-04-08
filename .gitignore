@@ -9,13 +9,11 @@
 *.htm
 *.build_log.htm
 *.dep
-*.sct
 *.lst
 
 # IDE and editor
 .vscode/
 *.uvoptx
-*.uvprojx
 *.uvguix.*
 .idea/
 *.swp
@@ -36,10 +34,21 @@ Thumbs.db
 实验*/
 Output/
 
+# Backup / temporary files
+*.bak
+*.codex-bak
+*.encoding-bak
+
+# Reference materials (large binaries, not part of source)
+OV2640摄像头模块产品资料/
+stm32n6资料/
+docs_current_backup_*/
+docs_extracted_backup_*/
+
 # User-specific files
 .claude/settings.local.json
 
-# Keep core project memory/linker configs under version control.
+# Keep core project configs under version control
 !START/MDK/START.sct
 !START/MDK-ARM/START/START.sct
 !START/MDK-ARM/START.uvprojx

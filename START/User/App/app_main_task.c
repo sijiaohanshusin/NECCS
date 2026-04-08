@@ -64,9 +64,9 @@ volatile uint8_t  g_ui_cli_rx_alive = 0u;
  *          5. 创建长度为 1 的音频帧队列和位置队列
  *          6. 创建音频处理任务和 UI 显示任务
  *
- * @note    所有 configASSERT 在 NDEBUG 模式下被优化掉，
- *          Release 版本中队列/任务创建失败将导致未定义行为，
- *          建议在 RAM 紧张时检查堆配置（configTOTAL_HEAP_SIZE）。
+ * @note    configASSERT 在 NDEBUG 模式下被优化掉，但每处创建操作
+ *          均附加了独立的运行时检查：失败时进入死循环，避免未定义行为。
+ *          若卡死在此处，请检查堆配置（configTOTAL_HEAP_SIZE）。
  */
 void App_Task_Init(void)
 {
@@ -87,9 +87,20 @@ void App_Task_Init(void)
 
     /* Step 5: create depth-1 overwrite queues to keep only the latest frame. */
     xAudioFrameQueue = xQueueCreate(1, sizeof(Audio_FrameEvent_t)); /* ISR -> audio task */
-    xPositionQueue   = xQueueCreate(1, sizeof(Sound_Pos_t));        /* audio task -> UI task */
     configASSERT(xAudioFrameQueue != NULL);  /* Allocation failure usually means heap is too small. */
+    if (xAudioFrameQueue == NULL)
+    {
+        /* 致命错误：堆内存不足，无法创建音频帧队列 */
+        for (;;) { __NOP(); }
+    }
+
+    xPositionQueue   = xQueueCreate(1, sizeof(Sound_Pos_t));        /* audio task -> UI task */
     configASSERT(xPositionQueue   != NULL);
+    if (xPositionQueue == NULL)
+    {
+        /* 致命错误：堆内存不足，无法创建位置队列 */
+        for (;;) { __NOP(); }
+    }
 
     /* Step 6a: create the audio pipeline task. */
     task_ok = xTaskCreate(Audio_Pipeline_Task,   /* Task entry */
@@ -99,6 +110,11 @@ void App_Task_Init(void)
                           APP_AUDIO_TASK_PRIO,  /* Priority */
                           &xAudioPipelineTaskHandle); /* Output handle */
     configASSERT(task_ok == pdPASS);
+    if (task_ok != pdPASS)
+    {
+        /* 致命错误：无法创建音频处理任务 */
+        for (;;) { __NOP(); }
+    }
 
     /* Step 6b: create the UI display task. */
     task_ok = xTaskCreate(UI_Display_Task,   /* Task entry */
@@ -108,6 +124,11 @@ void App_Task_Init(void)
                           APP_UI_TASK_PRIO, /* Priority */
                           &xUITaskHandle);  /* Output handle */
     configASSERT(task_ok == pdPASS);
+    if (task_ok != pdPASS)
+    {
+        /* 致命错误：无法创建UI显示任务 */
+        for (;;) { __NOP(); }
+    }
 
     App_Camera_TaskInit();
     /* Initialization is complete; tasks start after vTaskStartScheduler(). */
