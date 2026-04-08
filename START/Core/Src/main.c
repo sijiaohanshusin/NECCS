@@ -247,8 +247,10 @@ int main(void)
   /* 启动调度器，成功后不再返回 */
   osKernelStart();
 
-  /* 正常情况下不会到达这里 */
-
+  /* 正常情况下不会到达这里。
+   * LVGL 控件请在 UI 任务中创建，例如 User/App/app_lvgl_ui.c。
+   */
+	
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)

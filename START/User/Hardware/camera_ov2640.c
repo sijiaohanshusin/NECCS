@@ -1,72 +1,73 @@
+/**
+ * @file    camera_ov2640.c
+ * @brief   OV2640图像传感器驱动实现
+ * @details 实现OV2640摄像头的SCCB(串行摄像头控制总线)通信、硬件复位、
+ *          寄存器配置、RGB565输出模式设置及诊断信息采集。
+ *          使用GPIO软件模拟SCCB时序，通过DWT周期计数器实现微秒级精确延时。
+ */
+
 #include "camera_ov2640.h"
 
 #include "main.h"
+#include "dwt_timer.h"
 
 #include <stdio.h>
 
-#define CAMERA_OV2640_ADDR            0x60u
-#define CAMERA_OV2640_MID             0x7FA2u
-#define CAMERA_OV2640_PID             0x2642u
-#define CAMERA_OV2640_REG_BANK_SEL    0xFFu
-#define CAMERA_OV2640_REG_COM7        0x12u
-#define CAMERA_OV2640_REG_MIDH        0x1Cu
-#define CAMERA_OV2640_REG_MIDL        0x1Du
-#define CAMERA_OV2640_REG_PIDH        0x0Au
-#define CAMERA_OV2640_REG_PIDL        0x0Bu
+/** @defgroup OV2640_Private_Defines OV2640私有宏定义
+ * @{
+ */
+#define CAMERA_OV2640_ADDR            0x60u   /**< OV2640 SCCB从机地址(写地址) */
+#define CAMERA_OV2640_MID             0x7FA2u /**< OV2640期望的厂商ID */
+#define CAMERA_OV2640_PID             0x2642u /**< OV2640期望的产品ID */
+#define CAMERA_OV2640_REG_BANK_SEL    0xFFu   /**< 寄存器页选择寄存器 */
+#define CAMERA_OV2640_REG_COM7        0x12u   /**< 通用控制寄存器7(软复位) */
+#define CAMERA_OV2640_REG_MIDH        0x1Cu   /**< 厂商ID高字节寄存器 */
+#define CAMERA_OV2640_REG_MIDL        0x1Du   /**< 厂商ID低字节寄存器 */
+#define CAMERA_OV2640_REG_PIDH        0x0Au   /**< 产品ID高字节寄存器 */
+#define CAMERA_OV2640_REG_PIDL        0x0Bu   /**< 产品ID低字节寄存器 */
 
-#define CAMERA_OV2640_RST_PORT        GPIOC
-#define CAMERA_OV2640_RST_PIN         GPIO_PIN_5
-#define CAMERA_OV2640_PWDN_PORT       GPIOI
-#define CAMERA_OV2640_PWDN_PIN        GPIO_PIN_3
+#define CAMERA_OV2640_RST_PORT        GPIOC       /**< 硬件复位引脚端口 */
+#define CAMERA_OV2640_RST_PIN         GPIO_PIN_5  /**< 硬件复位引脚号 */
+#define CAMERA_OV2640_PWDN_PORT       GPIOI       /**< 掉电控制引脚端口 */
+#define CAMERA_OV2640_PWDN_PIN        GPIO_PIN_3  /**< 掉电控制引脚号 */
 
-#define CAMERA_OV2640_SCL_PORT        GPIOG
-#define CAMERA_OV2640_SCL_PIN         GPIO_PIN_3
-#define CAMERA_OV2640_SDA_PORT        GPIOB
-#define CAMERA_OV2640_SDA_PIN         GPIO_PIN_10
+#define CAMERA_OV2640_SCL_PORT        GPIOG       /**< SCCB时钟线端口 */
+#define CAMERA_OV2640_SCL_PIN         GPIO_PIN_3  /**< SCCB时钟线引脚号 */
+#define CAMERA_OV2640_SDA_PORT        GPIOB       /**< SCCB数据线端口 */
+#define CAMERA_OV2640_SDA_PIN         GPIO_PIN_10 /**< SCCB数据线引脚号 */
 
-#define CAMERA_OV2640_FLIP_VER        0u
-#define CAMERA_OV2640_DIAG_NONE       0u
-#define CAMERA_OV2640_DIAG_RESET_IO   1u
-#define CAMERA_OV2640_DIAG_SOFT_RESET 2u
-#define CAMERA_OV2640_DIAG_READ_MIDH  3u
-#define CAMERA_OV2640_DIAG_READ_MIDL  4u
-#define CAMERA_OV2640_DIAG_READ_PIDH  5u
-#define CAMERA_OV2640_DIAG_READ_PIDL  6u
-#define CAMERA_OV2640_DIAG_ID_MATCH   7u
-#define CAMERA_OV2640_DIAG_READY      8u
+#define CAMERA_OV2640_FLIP_VER        0u  /**< 垂直翻转使能 (0=关闭, 非0=开启) */
+#define CAMERA_OV2640_DIAG_NONE       0u  /**< 诊断阶段: 未开始 */
+#define CAMERA_OV2640_DIAG_RESET_IO   1u  /**< 诊断阶段: GPIO复位初始化 */
+#define CAMERA_OV2640_DIAG_SOFT_RESET 2u  /**< 诊断阶段: 软件复位 */
+#define CAMERA_OV2640_DIAG_READ_MIDH  3u  /**< 诊断阶段: 读取厂商ID高字节 */
+#define CAMERA_OV2640_DIAG_READ_MIDL  4u  /**< 诊断阶段: 读取厂商ID低字节 */
+#define CAMERA_OV2640_DIAG_READ_PIDH  5u  /**< 诊断阶段: 读取产品ID高字节 */
+#define CAMERA_OV2640_DIAG_READ_PIDL  6u  /**< 诊断阶段: 读取产品ID低字节 */
+#define CAMERA_OV2640_DIAG_ID_MATCH   7u  /**< 诊断阶段: ID校验 */
+#define CAMERA_OV2640_DIAG_READY      8u  /**< 诊断阶段: 就绪 */
+/** @} */
 
-static uint8_t s_ov2640_dwt_ready = 0u;
-static volatile uint16_t s_ov2640_last_mid = 0u;
-static volatile uint16_t s_ov2640_last_pid = 0u;
-static volatile uint8_t s_ov2640_diag_stage = CAMERA_OV2640_DIAG_NONE;
-static volatile uint8_t s_ov2640_last_write_status = 0u;
-static volatile uint8_t s_ov2640_last_read_status = 0u;
+/** @defgroup OV2640_Private_Variables OV2640私有变量
+ * @{
+ */
+static volatile uint16_t s_ov2640_last_mid = 0u;                             /**< 最近读取到的厂商ID */
+static volatile uint16_t s_ov2640_last_pid = 0u;                             /**< 最近读取到的产品ID */
+static volatile uint8_t s_ov2640_diag_stage = CAMERA_OV2640_DIAG_NONE;       /**< 当前诊断阶段 */
+static volatile uint8_t s_ov2640_last_write_status = 0u;                     /**< 最近SCCB写状态 */
+static volatile uint8_t s_ov2640_last_read_status = 0u;                      /**< 最近SCCB读状态 */
+/** @} */
 
+/**
+ * @brief   微秒级延时（基于DWT周期计数器）
+ * @param   us  [in] 延时时间，单位微秒
+ */
 static void s_delay_us(uint32_t us)
 {
-    uint32_t ticks;
-    uint32_t start;
-
-    if (us == 0u)
-    {
-        return;
-    }
-
-    if (s_ov2640_dwt_ready == 0u)
-    {
-        CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-        DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-        DWT->CYCCNT = 0u;
-        s_ov2640_dwt_ready = 1u;
-    }
-
-    ticks = (SystemCoreClock / 1000000u) * us;
-    start = DWT->CYCCNT;
-    while ((uint32_t)(DWT->CYCCNT - start) < ticks)
-    {
-    }
+    DWT_Timer_DelayUs(us);
 }
 
+/** @brief OV2640 SVGA模式初始化寄存器配置表 (地址-值对) */
 static const uint8_t s_ov2640_svga_init_reg_tbl[][2] =
 {
     {0xff, 0x00},
@@ -252,6 +253,7 @@ static const uint8_t s_ov2640_svga_init_reg_tbl[][2] =
     {0x05, 0x00},
 };
 
+/** @brief OV2640 RGB565输出模式寄存器配置表 (地址-值对) */
 static const uint8_t s_ov2640_rgb565_reg_tbl[][2] =
 {
     {0xff, 0x00},
@@ -271,11 +273,20 @@ static const uint8_t s_ov2640_rgb565_reg_tbl[][2] =
     {0xe0, 0x00},
 };
 
+/**
+ * @brief   GPIO引脚电平写入
+ * @param   port   [in] GPIO端口指针
+ * @param   pin    [in] GPIO引脚号
+ * @param   level  [in] 输出电平 (0=低电平, 非0=高电平)
+ */
 static void s_gpio_write(GPIO_TypeDef *port, uint16_t pin, uint8_t level)
 {
     HAL_GPIO_WritePin(port, pin, (level != 0u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
+/**
+ * @brief SCCB总线时序延时（约5微秒）
+ */
 static void s_sccb_delay(void)
 {
     s_delay_us(5u);
@@ -283,6 +294,10 @@ static void s_sccb_delay(void)
 
 static void s_sccb_stop(void);
 
+/**
+ * @brief   初始化SCCB总线GPIO引脚
+ * @details 配置SCL为推挽输出，SDA为开漏输出，并发送一次停止条件。
+ */
 static void s_sccb_init(void)
 {
     GPIO_InitTypeDef gpio_init = {0};
@@ -303,6 +318,9 @@ static void s_sccb_init(void)
     s_sccb_stop();
 }
 
+/**
+ * @brief SCCB总线起始条件：SCL高电平期间SDA由高变低
+ */
 static void s_sccb_start(void)
 {
     s_gpio_write(CAMERA_OV2640_SDA_PORT, CAMERA_OV2640_SDA_PIN, 1u);
@@ -314,6 +332,9 @@ static void s_sccb_start(void)
     s_sccb_delay();
 }
 
+/**
+ * @brief SCCB总线停止条件：SCL高电平期间SDA由低变高
+ */
 static void s_sccb_stop(void)
 {
     s_gpio_write(CAMERA_OV2640_SDA_PORT, CAMERA_OV2640_SDA_PIN, 0u);
@@ -324,6 +345,9 @@ static void s_sccb_stop(void)
     s_sccb_delay();
 }
 
+/**
+ * @brief SCCB总线发送NACK（非应答）信号
+ */
 static void s_sccb_nack(void)
 {
     s_gpio_write(CAMERA_OV2640_SDA_PORT, CAMERA_OV2640_SDA_PIN, 1u);
@@ -334,6 +358,11 @@ static void s_sccb_nack(void)
     s_sccb_delay();
 }
 
+/**
+ * @brief   通过SCCB总线发送一个字节
+ * @param   data  [in] 待发送的字节数据
+ * @return  0: 收到ACK应答; 1: 未收到ACK(NACK)
+ */
 static uint8_t s_sccb_send_byte(uint8_t data)
 {
     uint8_t i;
@@ -365,6 +394,10 @@ static uint8_t s_sccb_send_byte(uint8_t data)
     return 0u;
 }
 
+/**
+ * @brief   从SCCB总线读取一个字节
+ * @return  读取到的字节数据
+ */
 static uint8_t s_sccb_read_byte(void)
 {
     uint8_t i;
@@ -387,6 +420,12 @@ static uint8_t s_sccb_read_byte(void)
     return value;
 }
 
+/**
+ * @brief   向OV2640写入一个寄存器
+ * @param   reg    [in] 寄存器地址
+ * @param   value  [in] 寄存器值
+ * @return  0: 写入成功; 1: 写入失败(SCCB无应答)
+ */
 static uint8_t s_ov2640_write_reg(uint8_t reg, uint8_t value)
 {
     uint8_t status = 0u;
@@ -413,6 +452,12 @@ static uint8_t s_ov2640_write_reg(uint8_t reg, uint8_t value)
     return status;
 }
 
+/**
+ * @brief   从OV2640读取一个寄存器
+ * @param   reg    [in]  寄存器地址
+ * @param   value  [out] 指向用于存储读取值的变量
+ * @return  0: 读取成功; 1: 读取失败或参数为NULL
+ */
 static uint8_t s_ov2640_read_reg(uint8_t reg, uint8_t *value)
 {
     uint8_t data = 0u;
@@ -454,6 +499,11 @@ static uint8_t s_ov2640_read_reg(uint8_t reg, uint8_t *value)
     return 0u;
 }
 
+/**
+ * @brief   批量写入寄存器配置表
+ * @param   table       [in] 寄存器配置表(地址-值对数组)
+ * @param   pair_count  [in] 配置对数量
+ */
 static void s_apply_table(const uint8_t table[][2], uint32_t pair_count)
 {
     uint32_t i;
@@ -464,6 +514,9 @@ static void s_apply_table(const uint8_t table[][2], uint32_t pair_count)
     }
 }
 
+/**
+ * @brief   初始化OV2640复位(RST)和掉电(PWDN)控制引脚
+ */
 static void s_reset_io_init(void)
 {
     GPIO_InitTypeDef gpio_init = {0};
@@ -481,6 +534,12 @@ static void s_reset_io_init(void)
     HAL_GPIO_Init(CAMERA_OV2640_PWDN_PORT, &gpio_init);
 }
 
+/**
+ * @brief   设置OV2640输出图像尺寸
+ * @param   width   [in] 输出宽度（像素，需为4的倍数）
+ * @param   height  [in] 输出高度（像素，需为4的倍数）
+ * @return  0: 设置成功; 1: 尺寸非4的倍数
+ */
 static uint8_t s_ov2640_outsize_set(uint16_t width, uint16_t height)
 {
     uint16_t out_h;
@@ -508,6 +567,14 @@ static uint8_t s_ov2640_outsize_set(uint16_t width, uint16_t height)
     return 0u;
 }
 
+/**
+ * @brief   设置OV2640图像窗口偏移和尺寸
+ * @param   off_x   [in] 水平偏移（像素）
+ * @param   off_y   [in] 垂直偏移（像素）
+ * @param   width   [in] 窗口宽度（像素，需为4的倍数）
+ * @param   height  [in] 窗口高度（像素，需为4的倍数）
+ * @return  0: 设置成功; 1: 尺寸非4的倍数
+ */
 static uint8_t s_ov2640_image_win_set(uint16_t off_x, uint16_t off_y, uint16_t width, uint16_t height)
 {
     uint16_t hsize;
@@ -540,6 +607,12 @@ static uint8_t s_ov2640_image_win_set(uint16_t off_x, uint16_t off_y, uint16_t w
     return 0u;
 }
 
+/**
+ * @brief   设置OV2640传感器输出图像分辨率
+ * @param   width   [in] 图像宽度（像素）
+ * @param   height  [in] 图像高度（像素）
+ * @return  0: 设置成功
+ */
 static uint8_t s_ov2640_imagesize_set(uint16_t width, uint16_t height)
 {
     uint8_t temp;
@@ -558,6 +631,12 @@ static uint8_t s_ov2640_imagesize_set(uint16_t width, uint16_t height)
     return 0u;
 }
 
+/**
+ * @brief   读取OV2640的厂商ID和产品ID
+ * @param   mid  [out] 指向用于存储厂商ID的变量
+ * @param   pid  [out] 指向用于存储产品ID的变量
+ * @return  0: 读取成功; 1: 读取失败或参数为NULL
+ */
 uint8_t Camera_OV2640_ReadId(uint16_t *mid, uint16_t *pid)
 {
     uint8_t high;
@@ -601,6 +680,12 @@ uint8_t Camera_OV2640_ReadId(uint16_t *mid, uint16_t *pid)
     return 0u;
 }
 
+/**
+ * @brief   初始化OV2640摄像头模块
+ * @details 执行流程：GPIO复位引脚初始化 -> 硬件复位序列(PWDN/RST) -> SCCB总线初始化
+ *          -> 软件复位 -> 读取并校验ID -> 写入SVGA初始化寄存器表。
+ * @return  0: 初始化成功; 1: 初始化失败
+ */
 uint8_t Camera_OV2640_Init(void)
 {
     uint16_t mid = 0u;
@@ -658,6 +743,13 @@ uint8_t Camera_OV2640_Init(void)
     return 0u;
 }
 
+/**
+ * @brief   配置OV2640输出RGB565格式预览图像
+ * @details 写入RGB565寄存器表，设置SVGA(800x600)源尺寸并缩放至目标分辨率。
+ * @param   width   [in] 输出图像宽度（像素，需为4的倍数）
+ * @param   height  [in] 输出图像高度（像素，需为4的倍数）
+ * @return  0: 配置成功; 1: 配置失败
+ */
 uint8_t Camera_OV2640_ConfigRgb565Preview(uint16_t width, uint16_t height)
 {
     s_apply_table(s_ov2640_rgb565_reg_tbl,
@@ -679,6 +771,10 @@ uint8_t Camera_OV2640_ConfigRgb565Preview(uint16_t width, uint16_t height)
     return 0u;
 }
 
+/**
+ * @brief   获取OV2640诊断信息
+ * @param   diag  [out] 指向诊断信息结构体的指针，不可为NULL
+ */
 void Camera_OV2640_GetDiag(Camera_OV2640_Diag_t *diag)
 {
     if (diag == NULL)

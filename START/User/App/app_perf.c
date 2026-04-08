@@ -1,6 +1,9 @@
 /**
  * @file    app_perf.c
- * @brief   ?????????
+ * @brief   DWT 周期计数器性能分析器 (Performance Profiler)
+ * @details 基于 ARM Cortex-M7 DWT CYCCNT 寄存器实现微秒级精度的代码段耗时统计。
+ *          支持多区间独立计时、环形缓冲 p95 百分位计算、实时吞吐率打印。
+ *          可通过 CLI 命令动态开关: 'cfg perf on/off/dump/reset'。
  */
 #include "app_perf.h"
 

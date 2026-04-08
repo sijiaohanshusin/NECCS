@@ -3,7 +3,10 @@
 ; - DTCM: stack/heap + latency-critical CPU-only data (.dtcm_data)
 ; - AXI SRAM: default RW/ZI pool + explicit large buffers (.axi_sram_data)
 ; - D2 SRAM: explicit DMA / dedicated sections only (.dma_buffer, .d2_sram_data)
-; - SDRAM: optional explicit large buffers (.sdram_data)
+; - SDRAM fixed windows used outside the linker:
+;   * 0xC0000000..0xC06FFFFF reserved by LTDC/camera/display fixed buffers
+;   * 0xC0700000..0xC07BFFFF reserved by the LVGL full-screen panel framebuffer
+;   * 0xC07C0000..0xC07CBFFF reserved by the LVGL heap pool
 
 LR_IROM1 0x08000000 0x00200000  {
   ER_IROM1 0x08000000 0x00200000  {
@@ -28,7 +31,4 @@ LR_IROM1 0x08000000 0x00200000  {
    *.o (.d2_sram_data)
   }
 
-  RW_SDRAM 0xC0000000 UNINIT 0x02000000  {
-   *.o (.sdram_data)
-  }
 }

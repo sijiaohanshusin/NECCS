@@ -24,8 +24,8 @@
  * - 不支持时钟拉伸 (Clock Stretching)
  */
 
-#ifndef __SOFT_I2C_H
-#define __SOFT_I2C_H
+#ifndef SOFT_I2C_H
+#define SOFT_I2C_H
 
 #include "main.h"
 
@@ -156,4 +156,4 @@ uint8_t PCMD_ReadReg(uint8_t devAddr, uint8_t regAddr, uint8_t *pData);
  */
 void I2C_Scan(void);
 
-#endif /* __SOFT_I2C_H */
+#endif /* SOFT_I2C_H */

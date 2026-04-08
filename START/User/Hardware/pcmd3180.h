@@ -20,8 +20,8 @@
  * 3. 启动 SAI 接收
  */
 
-#ifndef _PCMD3180_H_
-#define _PCMD3180_H_
+#ifndef PCMD3180_H
+#define PCMD3180_H
 
 #include <stdint.h>
 #include "FreeRTOS.h"

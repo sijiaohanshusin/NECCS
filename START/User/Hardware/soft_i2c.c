@@ -23,6 +23,7 @@
  */
 
 #include "soft_i2c.h"
+#include "dwt_timer.h"
 #include <stdio.h>
 #include "cmsis_os.h"
 
@@ -44,10 +45,10 @@ static const osMutexAttr_t i2cMutex_attributes = {
  */
 static void I2C_Delay_us(volatile uint32_t microseconds)
 {
-    uint32_t clk_cycle_start = DWT->CYCCNT;
+    uint32_t clk_cycle_start = DWT_Timer_GetCycles();
     /* 根据当前工程实测进行系数折算（含函数与 GPIO 操作开销）。 */
     microseconds *= (SystemCoreClock / 100000); 
-    while ((DWT->CYCCNT - clk_cycle_start) < microseconds);
+    while ((DWT_Timer_GetCycles() - clk_cycle_start) < microseconds);
 }
 
 // ================= GPIO 底层操作 (Open-Drain 模式) =================
@@ -189,11 +190,7 @@ static uint8_t I2C_ReadByte(uint8_t ack)
 void Soft_I2C_Init(void)
 {
     // 1. 开启 DWT 计数器用于精确延时
-    if (!(CoreDebug->DEMCR & CoreDebug_DEMCR_TRCENA_Msk)) {
-        CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-        DWT->CYCCNT = 0;
-        DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-    }
+    DWT_Timer_Init();
 
     // 2. 初始化互斥量
     i2cMutexHandle = osMutexNew(&i2cMutex_attributes);

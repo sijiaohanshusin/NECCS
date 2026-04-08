@@ -5,8 +5,8 @@
  * 用户可调参数已经统一迁移到 `app_user_config.h`。
  * 本文件只保留算法模块仍然需要的派生常量与编译期检查。
  */
-#ifndef __AI_CONFIG_H
-#define __AI_CONFIG_H
+#ifndef AI_CONFIG_H
+#define AI_CONFIG_H
 
 #include <stdint.h>
 
@@ -33,4 +33,4 @@
 /** 粗搜索与细搜索合计总点数。 */
 #define SRP_GRID_TOTAL      (COARSE_TOTAL + FINE_TOTAL)
 
-#endif /* __AI_CONFIG_H */
+#endif /* AI_CONFIG_H */

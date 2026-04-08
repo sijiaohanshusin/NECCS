@@ -5,8 +5,8 @@
  *          该接口仅在面板初始化阶段使用，非高频数据通道。
  */
 
-#ifndef __TFT_SPI_H
-#define __TFT_SPI_H
+#ifndef TFT_SPI_H
+#define TFT_SPI_H
 
 #include "main.h"
 
