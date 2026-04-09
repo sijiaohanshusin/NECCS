@@ -1,6 +1,6 @@
 # NECCS 声学相机 — 开发者指南
 
-> **文档版本**: 1.0 | **最后更新**: 2026-04-08 | **适用固件**: START 工程
+> **文档版本**: 2.0 | **最后更新**: 2026-04-09 | **适用固件**: START 工程
 
 ---
 
@@ -121,7 +121,14 @@ D2 SRAM 双缓冲 (PING/PONG)
 | 模块 | 地址 / 接口 | 大小 |
 |------|-------------|------|
 | SDRAM | FMC, 0xC0000000 | 32 MB |
+| SD 卡 | SDMMC1 (4-bit, PC8-PC12, PD2) | 取决于卡容量 |
 | NOR Flash | QSPI | — |
+
+**SD 卡接口**：
+- SDMMC1 @ 33.75 MHz，4-bit 模式
+- GPIO：PC8 (D0), PC9 (D1), PC10 (D2), PC11 (D3), PC12 (CLK), PD2 (CMD)
+- 文件系统：FatFS R0.14b，FAT32，CPU 轮询模式
+- 缓存管理：`SCB_CleanDCache_by_Addr` / `SCB_InvalidateDCache_by_Addr`
 
 ---
 
@@ -132,7 +139,7 @@ D2 SRAM 双缓冲 (PING/PONG)
 ```
 START/
 ├── Core/                          # CubeMX 生成的底层初始化
-│   ├── Inc/                       #   main.h, FreeRTOSConfig.h, sai.h, dma.h ...
+│   ├── Inc/                       #   main.h, FreeRTOSConfig.h, sai.h, dma.h, mpu.h ...
 │   └── Src/                       #   main.c, sai.c, dma.c, freertos.c, mpu.c ...
 ├── Drivers/
 │   ├── CMSIS/                     # ARM CMSIS-CORE + CMSIS-DSP
@@ -142,29 +149,51 @@ START/
 ├── MDK-ARM/
 │   └── START.uvprojx             # Keil 工程文件
 ├── Middlewares/
+│   ├── FATFS/                     # FatFS R0.14b 文件系统中间件
+│   │   └── source/                #   ff.c/h, ffconf.h, ffsystem.c, ffunicode.c
 │   ├── LVGL/                      # LVGL 图形库
 │   └── Third_Party/FreeRTOS/     # FreeRTOS 内核
 └── User/                          # ★ 应用层代码
-    ├── Algorithm/                 # 声源定位算法
+    ├── Algorithm/                 # 声源定位 & DSP 算法
     │   ├── ai_beamforming.c/h     #   FFT + SRP-PHAT 核心算法
     │   ├── ai_preprocess.c/h      #   解交织 + 类型转换
     │   ├── ai_srp_lut.c/h         #   SRP 延迟查找表（离线生成）
-    │   └── ai_config.h            #   算法派生常量
+    │   ├── ai_config.h            #   算法派生常量
+    │   ├── ai_bandpass.c/h        #   动态频段过滤 (Butterworth IIR)
+    │   └── ai_beamsteer.c/h       #   DAS 波束成形 (定向录音)
     ├── App/                       # 应用框架
     │   ├── app_user_config.h      #   ★ 统一可配置项入口
     │   ├── app_main_task.c/h      #   FreeRTOS 任务创建与入口
     │   ├── app_audio_task.c       #   音频流水线任务实现
     │   ├── app_ui_task.c          #   UI 显示任务实现
+    │   ├── app_ui_screens.c/h     #   LVGL 多屏幕导航框架
+    │   ├── app_ui_styles.c/h      #   工业深色主题样式表
+    │   ├── app_ui_spectrum_panel.c/h #   频谱面板绘制
     │   ├── app_ui_cli.c/h         #   UART CLI 命令解释器
-    │   ├── app_display.c/h        #   热力图渲染引擎
+    │   ├── app_display.c/h        #   热力图渲染引擎 + 交换抑制
     │   ├── app_camera.c/h         #   OV2640 摄像头管理
     │   ├── app_runtime.c/h        #   运行时配置管理（线程安全）
     │   ├── app_perf.c/h           #   CPU 周期性能剖析
+    │   ├── app_trigger.c/h        #   瞬态捕捉模式 (Trigger)
+    │   ├── app_laser.c/h          #   激光瞄准 + 黑夜模式
+    │   ├── app_anomaly.c/h        #   异常声检测
+    │   ├── app_tracker.c/h        #   多声源追踪器
+    │   ├── app_sound_level.c/h    #   声级计 (SLM, A/C/Z 加权)
+    │   ├── app_noise_floor.c/h    #   自适应噪声底估计
+    │   ├── app_profile.c/h        #   用户预设管理
+    │   ├── app_sd.c/h             #   SD 卡应用层 (FatFS 封装)
+    │   ├── app_storage_task.c/h   #   异步存储任务 (BMP/WAV I/O)
+    │   ├── app_capture.c/h        #   屏幕截图模块
+    │   ├── app_recorder.c/h       #   WAV 录音模块 (环形缓冲)
     │   ├── app_lvgl_ui.c/h        #   LVGL UI 后端
+    │   ├── app_spectrum.c/h       #   频谱数据管理
     │   └── app_types.h            #   共享数据类型定义
     ├── BSP/                       # 板级支持包
     │   ├── LCD/                   #   LTDC + DMA2D 驱动
     │   ├── TOUCH/                 #   电容触摸驱动
+    │   ├── SD/                    #   SD 卡 BSP (SDMMC1 + diskio)
+    │   │   ├── bsp_sd.c/h         #     SDMMC 底层驱动
+    │   │   └── diskio_sd.c        #     FatFS diskio 后端
     │   └── sdram.c/h              #   SDRAM (FMC) 初始化
     └── Hardware/                  # 外部芯片驱动
         ├── pcmd3180.c/h           #   PCMD3180 PDM→TDM 配置
@@ -178,33 +207,39 @@ START/
                     ┌───────────────┐
                     │  app_main_task│ (任务创建/调度)
                     └──────┬────────┘
-               ┌───────────┼───────────┐
-               ▼                       ▼
-    ┌──────────────────┐    ┌──────────────────┐
-    │ Audio_Pipeline    │    │ UI_Display        │
-    │  (app_audio_task) │    │  (app_ui_task)    │
-    └────────┬─────────┘    └────────┬─────────┘
-             │                       │
-    ┌────────▼─────────┐    ┌────────▼─────────┐
-    │ Algorithm/        │    │ app_display       │
-    │  ai_preprocess    │    │ app_lvgl_ui       │
-    │  ai_beamforming   │    │ app_camera        │
-    │  ai_srp_lut       │    │ app_ui_cli        │
-    └────────┬─────────┘    └────────┬─────────┘
-             │                       │
-    ┌────────▼─────────┐    ┌────────▼─────────┐
-    │ CMSIS-DSP         │    │ BSP/LCD           │
-    │ (arm_math.h)      │    │ BSP/TOUCH         │
-    └──────────────────┘    │ BSP/sdram          │
-                            └──────────────────┘
+           ┌───────────────┼───────────────┐
+           ▼               ▼               ▼
+┌──────────────────┐ ┌──────────────┐ ┌──────────────────┐
+│ Audio_Pipeline   │ │ UI_Display   │ │ Storage_Task     │
+│ (app_audio_task) │ │ (app_ui_task)│ │ (app_storage_task│
+└────────┬─────────┘ └──────┬───────┘ └────────┬─────────┘
+         │                  │                   │
+┌────────▼─────────┐ ┌──────▼───────┐ ┌────────▼─────────┐
+│ Algorithm/       │ │ app_display  │ │ app_sd           │
+│  ai_preprocess   │ │ app_ui_*     │ │ app_recorder     │
+│  ai_beamforming  │ │ app_camera   │ │ app_capture      │
+│  ai_srp_lut      │ │ app_ui_cli   │ └────────┬─────────┘
+│  ai_bandpass     │ └──────┬───────┘          │
+│  ai_beamsteer    │        │          ┌────────▼─────────┐
+└────────┬─────────┘ ┌──────▼───────┐ │ BSP/SD           │
+         │           │ BSP/LCD      │ │ Middlewares/FATFS │
+┌────────▼─────────┐ │ BSP/TOUCH    │ └──────────────────┘
+│ CMSIS-DSP        │ │ BSP/sdram    │
+│ (arm_math.h)     │ └──────────────┘
+└──────────────────┘
+
+数据流: Audio → [xPositionQueue] → UI
+命令流: UI → [xStorageCmdQueue] → Storage_Task
 ```
 
 ### 4.3 FreeRTOS 任务架构
 
 | 任务名称 | 入口函数 | 优先级 | 栈大小 (words) | 栈大小 (bytes) | 职责 |
 |----------|----------|--------|---------------|----------------|------|
-| Audio Pipeline | `Audio_Pipeline_Task()` | 4 | 2304 | 9216 | SAI DMA 事件等待 → 解交织 → FFT → SRP-PHAT → 发送定位结果 |
-| UI Display | `UI_Display_Task()` | 4 | 2048 | 8192 | 接收定位结果 → 热力图渲染 → LCD 刷新 → CLI 轮询 |
+| Audio Pipeline | `Audio_Pipeline_Task()` | 4 | 2304 | 9216 | SAI DMA 事件等待 → 解交织 → DAS → FFT → SRP-PHAT → 发送定位结果 |
+| UI Display | `UI_Display_Task()` | 4 | 2048 | 8192 | 接收定位结果 → 热力图渲染 → LVGL 刷新 → CLI 轮询 |
+| Storage Task | `Storage_Task()` | 2 | 2048 | 8192 | SD 卡异步 I/O (BMP 截图 + WAV 录音 + 容量刷新) |
+| PCMD3180 Init | `PCMD3180_Init_Task()` | 6 | 512 | 2048 | ADC 初始化（一次性，完成后自删除） |
 | Timer Service | — | 2 | 256 | 1024 | FreeRTOS 软件定时器服务（系统内置） |
 | Idle | — | 0 | 128 | 512 | 空闲任务（系统内置） |
 
@@ -225,8 +260,10 @@ START/
 |------|------|----------|--------|--------|
 | `xAudioFrameQueue` | 1 | `xQueueOverwrite`（ISR） | SAI DMA 半完成/完成中断 | Audio Pipeline Task |
 | `xPositionQueue` | 1 | `xQueueOverwrite` | Audio Pipeline Task | UI Display Task |
+| `xStorageCmdQueue` | 8 | `xQueueSend` | UI Task / Audio Task | Storage Task |
 
-> 队列长度均为 1，采用覆盖写策略——只保留最新数据，丢弃旧帧，保证实时性。
+> `xAudioFrameQueue` 和 `xPositionQueue` 长度均为 1，采用覆盖写策略——只保留最新数据，丢弃旧帧，保证实时性。
+> `xStorageCmdQueue` 深度 8，可缓存多条 I/O 命令（截图/录音启停）。
 
 ---
 
@@ -305,17 +342,26 @@ Audio_Pipeline_Task
   │     使用 arm_mat_trans_q15 + arm_q15_to_float
   │     耗时 ≈ 0.3 ms @ 480 MHz
   │
-  ├─ 2. FFT (AI_FFT_Process)
+  ├─ 2. DAS 波束成形 (AI_BeamSteer_Process) [可选]
+  │     16ch 延迟求和 → 单通道定向输出
+  │     ★ 必须在 FFT 之前, FFT 原地修改 Mic_Process_Buffer
+  │     耗时 ≈ 0.15 ms @ 480 MHz
+  │
+  ├─ 3. 录音数据喂送 (App_Recorder_Feed) [仅录音时]
+  │     mono = DAS 输出, raw = DMA 原始缓冲
+  │     写入 64KB 环形缓冲, Storage_Task 异步写入 SD
+  │
+  ├─ 4. FFT (AI_FFT_Process)
   │     去直流 → 汉宁窗 → arm_rfft_fast_f32
   │     16 通道 × 256 点
   │     耗时 ≈ 0.8 ms @ 480 MHz
   │
-  ├─ 3. SRP-PHAT (AI_SRP_PHAT_Process)
+  ├─ 5. SRP-PHAT (AI_SRP_PHAT_Process)
   │     GCC-PHAT 白化互相关 (40 麦克风对)
   │     粗搜索 9×9 + 细搜索 3×(4×4)
   │     Top-K NMS + 置信度判定
   │
-  └─ 4. 发送结果
+  └─ 6. 发送结果
         xQueueOverwrite → xPositionQueue
                             │
                             ▼
@@ -514,6 +560,151 @@ cfg camview overlay    # 热力图叠加到摄像头画面
 | `APP_PERF_SEC_UI_LOOP` | UI 主循环总耗时 |
 | `APP_PERF_SEC_UI_SNAPSHOT` | UI 数据快照 |
 | `APP_PERF_SEC_UI_RENDER` | UI 渲染 |
+
+**使用方法**：
+```
+cfg perf on       # 开启（使能 DWT CYCCNT）
+cfg perf dump     # 打印统计
+cfg perf reset    # 清零
+```
+
+---
+
+## 11. SD 卡与文件系统
+
+### 11.1 FatFS 配置
+
+| 配置项 | 值 | 说明 |
+|--------|-----|------|
+| `FF_USE_LFN` | 2 | 静态缓冲长文件名（避免 malloc） |
+| `FF_CODE_PAGE` | 437 | US English（最小 Flash 占用） |
+| `FF_FS_NRTC` | 1 | 无 RTC，使用固定时间戳 |
+| `FF_USE_MKFS` | 0 | 不支持格式化 |
+| `FF_USE_FASTSEEK` | 1 | WAV 头回填 O(1) seek |
+| `FF_VOLUMES` | 1 | 仅 SD 卡 |
+
+### 11.2 存储任务命令
+
+| 命令 | 枚举值 | 触发来源 | 动作 |
+|------|--------|----------|------|
+| BMP 截图 | `STORAGE_CMD_CAPTURE_BMP` | Capture 屏幕截图按钮 | 读取 LTDC 前缓冲 → 写 BMP 文件 |
+| 录音开始 | `STORAGE_CMD_REC_START` | Capture 屏幕录音按钮 | 打开 WAV 文件 → 写 44 字节头 → 启动录音 |
+| 录音停止 | `STORAGE_CMD_REC_STOP` | Capture 屏幕停止按钮 | 回填 WAV 头 → 关闭文件 |
+
+### 11.3 录音模式
+
+| 模式 | 通道数 | 数据率 | 说明 |
+|------|--------|--------|------|
+| MONO | 1ch | 96 KB/s | DAS 波束成形定向输出 |
+| RAW16 | 16ch | 1536 KB/s | 原始 16 通道数据 |
+
+### 11.4 文件目录结构
+
+```
+0:/NECCS/
+├── CAPTURE/     BMP 截图文件 (IMG_000001.bmp ...)
+└── RECORD/      WAV 录音文件 (REC_000001.wav ...)
+```
+
+---
+
+## 12. DAS 波束成形（定向录音）
+
+### 12.1 算法原理
+
+延迟求和（Delay-and-Sum）：对 16 通道施加整数样本延迟使目标方向信号同相叠加。
+
+$$y[n] = \frac{1}{N} \sum_{i=0}^{N-1} x_i[n - \Delta_i(\theta, \phi)]$$
+
+### 12.2 实现参数
+
+| 参数 | 值 |
+|------|-----|
+| 最大延迟 | ±10 samples |
+| 重叠缓冲 | 16ch × 10 samples × 4 bytes = 640 bytes (DTCM) |
+| 输出缓冲 | 256 × 4 = 1024 bytes (DTCM) |
+| 追踪模式 | AUTO / MANUAL / TRIGGER |
+| CPU 开销 | ~0.15 ms/帧 (2.8%) |
+
+### 12.3 管线位置
+
+DAS **必须**在 FFT 之前执行：`arm_cfft_f32` 原地修改 `Mic_Process_Buffer`，DAS 需要读取未被破坏的时域平面数据。
+
+---
+
+## 13. 功能模块一览
+
+### 13.1 动态频段过滤 (ai_bandpass)
+
+2 阶 Butterworth IIR 带通滤波。支持实时调节上下截止频率。16 通道独立滤波器状态。
+
+### 13.2 瞬态捕捉 (app_trigger)
+
+EMA 基线追踪 + 能量突变检测。`IDLE → ARMED → TRIGGERED` 三态机。触发时冻结显示帧。
+
+### 13.3 激光/黑夜模式 (app_laser)
+
+PB0 GPIO 控制外部激光模块。黑夜模式下白色十字叠加到摄像头画面辅助指示。
+
+### 13.4 异常声检测 (app_anomaly)
+
+频率域逐 bin 异常检测 + 循环日志缓冲。事件回调接口供外部模块响应。
+
+### 13.5 声级计 (app_sound_level)
+
+A/C/Z 加权 dB 计算 + Leq 等效连续声级积分。每帧更新一次。
+
+### 13.6 多声源追踪器 (app_tracker)
+
+帧间关联 + EMA 平滑 + 3 帧消失判定。保持声源 ID 连续性。
+
+### 13.7 自适应噪底 (app_noise_floor)
+
+逐 bin EMA 噪底估计。首帧初始化。用于 SRP-PHAT 功率图谱减。
+
+### 13.8 用户预设 (app_profile)
+
+内置 4 个场景预设（通用、气体泄漏、轴承、局放），一键切换全部参数。
+
+---
+
+## 14. LVGL 多屏幕框架
+
+### 14.1 屏幕列表
+
+| 屏幕 ID | 名称 | 用途 |
+|---------|------|------|
+| `APP_SCR_HOME` | 启动屏 | 系统信息 + 开始按钮 |
+| `APP_SCR_MAIN` | 主视图 | 热力图 + 频谱 + 状态栏 + 工具栏 |
+| `APP_SCR_SETTINGS` | 设置 | 参数滑块/开关/预设 |
+| `APP_SCR_CAPTURE` | 数据捕获 | 截图 + 录音 + 波束控制 + SD 状态 |
+| `APP_SCR_DIAG` | 诊断 | 性能条形图 + 系统信息 |
+| `APP_SCR_GUIDE` | 使用指南 | 操作说明文字 |
+
+### 14.2 设计原则
+
+- **懒加载**：屏幕首次切换时才创建 LVGL 对象
+- **500ms 节流**：Capture/Settings 屏幕更新以 `lv_tick_get()` 计时节流
+- **工业深色主题**：统一样式表 `g_ui_styles`（`app_ui_styles.c`）
+- **所有 LVGL 调用在 UI_Task 中**：线程安全保证
+- **动画生命周期**：录音按钮 `lv_anim` 在离开屏幕时显式 `lv_anim_del`
+
+---
+
+## 15. 变更日志
+
+### v2.0 (2026-04-09)
+- 新增 FatFS R0.14b 中间件及 SD 卡 BSP
+- 新增 Storage_Task 异步存储管线
+- 新增 Capture 屏幕完整 UI：截图/录音/波束控制/SD 状态
+- 新增 DAS 波束成形整合到音频管线 (FFT 前)
+- 新增 App_Recorder_Feed 录音数据喂送
+- 更新任务拓扑表（5 个应用任务）
+- 更新目录结构（新增 18 个源文件）
+- 更新模块依赖图（三路并行）
+
+### v1.0 (2026-04-08)
+- 初始版本：SRP-PHAT 声源定位 + LVGL UI + 热力图叠加
 | `APP_PERF_SEC_DISP_PREPARE` | 显示数据准备 |
 | `APP_PERF_SEC_DISP_NORM` | 归一化 |
 | `APP_PERF_SEC_DISP_RENDER` | 热力图渲染 |
