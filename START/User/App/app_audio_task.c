@@ -17,15 +17,21 @@
  *
  * @note    本任务的优先级高于 UI 任务, 确保音频数据不被丢弃。
  */
-#include "ai_beamforming.h"
-#include "ai_preprocess.h"
+#include "mpu.h"
+
 #include "app_data_output.h"
 #include "app_data_stream.h"
 #include "app_main_task.h"
 #include "app_perf.h"
+#include "app_recorder.h"
 #include "app_runtime.h"
 #include "app_spectrum.h"
 #include "app_task_cfg.h"
+#include "app_tracker.h"
+
+#include "ai_beamforming.h"
+#include "ai_beamsteer.h"
+#include "ai_preprocess.h"
 
 /* ============================================================================
  * 外部变量 (External Variables)
@@ -36,6 +42,10 @@ extern int16_t found_val;
 
 /** @brief 多声源定位结果（音频任务写入，UI/显示任务读取） */
 Sound_MultiPos_t g_multi_source;
+
+/** @brief DAS 波束成形单通道输出缓冲 (DTCM, 零等待, 1024 bytes) */
+__SECTION_DTCM
+static float s_das_output[FRAME_LEN];
 
 /**
  * @brief   将无符号整数限制在 [lo, hi] 范围内
@@ -192,6 +202,24 @@ void Audio_Pipeline_Task(void *pvParameters)
 
                 s_frame_cnt++;  /* 递增解交织帧计数 (用于 DEBUG 节流) */
 
+                /* ---- 子阶段 A2: DAS 波束成形 + 录音数据喂送 ---- */
+                /* MUST precede FFT: AI_FFT_Process() 会原地修改 Mic_Process_Buffer,
+                 * DAS 需要读取未被 FFT 破坏的时域数据。
+                 * raw_frame 使用 DMA 交织缓冲 (此时距 DMA 事件 <1ms, 安全窗口 5.3ms)。 */
+                if (AI_BeamSteer_GetEnabled() != 0u)
+                {
+                    AI_BeamSteer_Process(Mic_Process_Buffer,
+                                         s_das_output, FRAME_LEN);
+                }
+                /* Feed 仅在录音状态调用, 避免每帧无用函数调用;
+                 * mono_frame 传 NULL 当 beamsteer 禁用, Feed 内部按模式处理 */
+                if (App_Recorder_GetState() == RECORDER_RECORDING)
+                {
+                    App_Recorder_Feed(
+                        (AI_BeamSteer_GetEnabled() != 0u) ? s_das_output : NULL,
+                        p_current_dma_src, FRAME_LEN);
+                }
+
 #ifdef DEBUG_ENABLE
 #if (DEBUG_MODE == 0)
                 /* DEBUG 模式 0: 每 DEBUG_THROTTLE_FRAMES 帧输出一次 RMS 数据到 VOFA+ */
@@ -230,6 +258,17 @@ void Audio_Pipeline_Task(void *pvParameters)
                 /* 提取多声源 Top-K 结果（供显示层使用） */
                 AI_SRP_GetMultiSource(&g_multi_source);
 
+                /* 更新多源帧间跟踪器 */
+                App_Tracker_Update(&g_multi_source);
+
+                /* DAS 波束控向：自动追踪模式下更新指向方向 */
+                if ((AI_BeamSteer_GetEnabled() != 0u) &&
+                    (AI_BeamSteer_GetMode() == BEAMSTEER_MODE_AUTO))
+                {
+                    AI_BeamSteer_SetDirection(current_pos.x_angle,
+                                              current_pos.y_angle);
+                }
+
 #ifdef DEBUG_ENABLE
 #if (DEBUG_MODE == 3)
                 /* DEBUG 模式 3: 输出 SRP 定位结果 (角度 + 能量) 到 VOFA+ */
@@ -251,6 +290,24 @@ void Audio_Pipeline_Task(void *pvParameters)
                 /* 抽帧阶段: 跳过算法, 直接复用上次结果 */
                 /* 这样 UI 任务仍能收到数据 (不会饿死), 只是位置更新频率降低 */
                 current_pos = last_algo_pos;
+
+                /* 录音时即使抽帧也需要解交织 + DAS + Feed,
+                 * 否则录音数据会有间隔 (每 decim 帧才录一帧) */
+                if (App_Recorder_GetState() == RECORDER_RECORDING)
+                {
+                    Deinterleave_Using_Matrix(p_current_dma_src,
+                                              p_temp_planar,
+                                              Mic_Process_Buffer,
+                                              FRAME_LEN, MIC_CHANNELS);
+                    if (AI_BeamSteer_GetEnabled() != 0u)
+                    {
+                        AI_BeamSteer_Process(Mic_Process_Buffer,
+                                             s_das_output, FRAME_LEN);
+                    }
+                    App_Recorder_Feed(
+                        (AI_BeamSteer_GetEnabled() != 0u) ? s_das_output : NULL,
+                        p_current_dma_src, FRAME_LEN);
+                }
             }
         }
 

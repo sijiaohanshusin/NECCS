@@ -82,6 +82,22 @@ void App_Perf_MaybePrintRates(void);
  * @brief 输出所有剖析段的详细统计信息
  */
 void App_Perf_Dump(void);
+
+/** @brief 单个剖析段的可读统计摘要 */
+typedef struct {
+    uint32_t sample_count;  /**< 已采集样本总数 */
+    float    avg_us;        /**< 平均耗时 (微秒) */
+    float    max_us;        /**< 最大耗时 (微秒) */
+} App_Perf_SectionSummary_t;
+
+/**
+ * @brief 获取指定剖析段的统计摘要（供 UI 读取）
+ * @param section  目标剖析段
+ * @param out      输出摘要指针
+ * @return 1=有效数据，0=无样本
+ */
+uint8_t App_Perf_GetSectionSummary(App_Perf_Section_t section,
+                                   App_Perf_SectionSummary_t *out);
 #ifdef __cplusplus
 }
 #endif

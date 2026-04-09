@@ -49,6 +49,8 @@ typedef struct
     uint8_t norm_mode;          /**< 归一化模式 @see App_Runtime_DisplayNorm_t */
     uint8_t text_refresh_div;   /**< 文本刷新分频系数 */
     uint8_t blit_rows;          /**< 每次位块传输的行数 */
+    uint16_t freq_bin_start;    /**< 活动频段起始 bin（FFT 索引） */
+    uint16_t freq_bin_end;      /**< 活动频段结束 bin（FFT 索引） */
 } App_Runtime_DisplayCfg_t;
 
 /** @brief 运行时总配置结构体 */
@@ -139,6 +141,20 @@ void App_RuntimeConfig_SetDisplayCfg(const App_Runtime_DisplayCfg_t *cfg);
  * @param cfg 输出参数，指向接收配置的结构体
  */
 void App_RuntimeConfig_GetDisplayCfg(App_Runtime_DisplayCfg_t *cfg);
+
+/**
+ * @brief 设置活动频段范围（同时更新 SRP 算法和频谱模块）
+ * @param bin_start 起始 bin
+ * @param bin_end   结束 bin
+ */
+void App_RuntimeConfig_SetFreqBand(uint16_t bin_start, uint16_t bin_end);
+
+/**
+ * @brief 获取活动频段范围
+ * @param bin_start 输出起始 bin
+ * @param bin_end   输出结束 bin
+ */
+void App_RuntimeConfig_GetFreqBand(uint16_t *bin_start, uint16_t *bin_end);
 
 /**
  * @brief 设置 UI 渲染后端

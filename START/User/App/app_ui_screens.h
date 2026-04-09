@@ -36,7 +36,8 @@ typedef enum {
     APP_SCR_SETTINGS   = 2u,   /**< 设置页面 */
     APP_SCR_CAPTURE    = 3u,   /**< 数据捕获页 */
     APP_SCR_DIAG       = 4u,   /**< 系统诊断页 */
-    APP_SCR_COUNT      = 5u    /**< 屏幕总数（哨兵值） */
+    APP_SCR_GUIDE      = 5u,   /**< 使用指南页 */
+    APP_SCR_COUNT      = 6u    /**< 屏幕总数（哨兵值） */
 } App_ScreenId_t;
 
 /* ============================================================================
@@ -106,6 +107,9 @@ typedef struct {
     uint32_t ui_fps;        /**< UI 实际帧率 */
     uint32_t audio_fps;     /**< 音频处理帧率 */
     uint8_t sai_active;     /**< SAI DMA 活跃标志 */
+    uint8_t trigger_state;  /**< 触发状态 (App_TriggerState_t) */
+    uint8_t laser_on;       /**< 激光开启标志 */
+    uint8_t night_mode;     /**< 夜间模式标志 */
 } App_UiLiveData_t;
 
 /**

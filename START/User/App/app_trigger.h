@@ -23,6 +23,18 @@ typedef enum {
     APP_TRIGGER_TRIGGERED = 2u,   /**< 已触发，画面冻结中 */
 } App_TriggerState_t;
 
+/** @brief 触发统计信息 */
+typedef struct {
+    uint32_t trigger_count;       /**< 总触发次数 */
+    uint32_t last_trigger_tick;   /**< 最近一次触发时的 tick (ms) */
+    float    last_trigger_energy; /**< 触发瞬间能量 */
+    float    last_trigger_x;      /**< 触发瞬间 x 角度 */
+    float    last_trigger_y;      /**< 触发瞬间 y 角度 */
+} App_TriggerStats_t;
+
+/** @brief 触发回调函数类型 */
+typedef void (*App_TriggerCallback_t)(float energy);
+
 /** @brief 初始化触发模块 */
 void App_Trigger_Init(void);
 
@@ -59,6 +71,25 @@ void App_Trigger_SetThreshold(float threshold);
  * @return 当前阈值
  */
 float App_Trigger_GetThreshold(void);
+
+/**
+ * @brief 记录触发瞬间的声源位置（由 UI 任务在触发时调用）
+ * @param x_angle  水平角
+ * @param y_angle  垂直角
+ */
+void App_Trigger_SetTriggeredPos(float x_angle, float y_angle);
+
+/**
+ * @brief 获取触发统计信息
+ * @param[out] stats 统计信息输出
+ */
+void App_Trigger_GetStats(App_TriggerStats_t *stats);
+
+/**
+ * @brief 注册触发回调（触发发生时调用，可用于 SD 卡截图等）
+ * @param cb 回调函数指针，NULL 取消注册
+ */
+void App_Trigger_RegisterCallback(App_TriggerCallback_t cb);
 
 #ifdef __cplusplus
 }

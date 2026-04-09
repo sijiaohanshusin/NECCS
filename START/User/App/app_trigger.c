@@ -5,6 +5,8 @@
 #include "app_trigger.h"
 
 #include <math.h>
+#include "FreeRTOS.h"
+#include "task.h"
 
 /** @brief 默认触发阈值（能量变化 15%） */
 #define TRIGGER_DEFAULT_THRESHOLD  0.15f
@@ -30,6 +32,12 @@ static uint32_t s_warmup_count = 0u;
 /** @brief 稳定帧数要求 */
 #define TRIGGER_WARMUP_FRAMES 20u
 
+/** @brief 触发统计 */
+static App_TriggerStats_t s_stats;
+
+/** @brief 触发回调 */
+static App_TriggerCallback_t s_callback = NULL;
+
 void App_Trigger_Init(void)
 {
     s_state = APP_TRIGGER_IDLE;
@@ -37,6 +45,12 @@ void App_Trigger_Init(void)
     s_baseline = 0.0f;
     s_baseline_valid = 0u;
     s_warmup_count = 0u;
+    s_stats.trigger_count = 0u;
+    s_stats.last_trigger_tick = 0u;
+    s_stats.last_trigger_energy = 0.0f;
+    s_stats.last_trigger_x = 0.0f;
+    s_stats.last_trigger_y = 0.0f;
+    s_callback = NULL;
 }
 
 void App_Trigger_Arm(void)
@@ -100,6 +114,13 @@ uint8_t App_Trigger_Feed(float energy)
     if (delta > s_threshold)
     {
         s_state = APP_TRIGGER_TRIGGERED;
+        s_stats.trigger_count++;
+        s_stats.last_trigger_tick = (uint32_t)xTaskGetTickCount();
+        s_stats.last_trigger_energy = energy;
+        if (s_callback != NULL)
+        {
+            s_callback(energy);
+        }
         return 1u;
     }
 
@@ -122,4 +143,23 @@ void App_Trigger_SetThreshold(float threshold)
 float App_Trigger_GetThreshold(void)
 {
     return s_threshold;
+}
+
+void App_Trigger_SetTriggeredPos(float x_angle, float y_angle)
+{
+    s_stats.last_trigger_x = x_angle;
+    s_stats.last_trigger_y = y_angle;
+}
+
+void App_Trigger_GetStats(App_TriggerStats_t *stats)
+{
+    if (stats != NULL)
+    {
+        *stats = s_stats;
+    }
+}
+
+void App_Trigger_RegisterCallback(App_TriggerCallback_t cb)
+{
+    s_callback = cb;
 }

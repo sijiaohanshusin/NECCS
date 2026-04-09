@@ -190,6 +190,13 @@ const char *App_Display_CameraViewName(App_Display_CameraView_t view_mode);
 extern volatile uint32_t g_display_init_stage;
 extern volatile uint32_t g_display_init_error;
 
+/**
+ * @brief BMP 截图期间帧缓冲 swap 抑制标志
+ * @details Storage_Task 在读取前缓冲时置 1, 读取完成后清 0。
+ *          s_commit_frame() 检查此标志, 为 1 时跳过 swap 防止撕裂。
+ */
+extern volatile uint8_t g_display_swap_inhibit;
+
 #ifdef __cplusplus
 }
 #endif

@@ -16,6 +16,7 @@
 #include "app_perf.h"
 #include "app_touch.h"
 #include "app_trigger.h"
+#include "app_laser.h"
 #include "app_ui_cli.h"
 #include "app_user_config.h"
 #include "LCD/ltdc.h"
@@ -299,6 +300,9 @@ static void s_ui_lvgl_render(const Sound_Pos_t *pos,
         ld.ui_fps    = s_ui_lvgl_fps_value;
         ld.audio_fps = 0u;
         ld.sai_active = sai_dma_active;
+        ld.trigger_state = (uint8_t)App_Trigger_GetState();
+        ld.laser_on      = (App_Laser_GetState() == APP_LASER_ON) ? 1u : 0u;
+        ld.night_mode    = (App_NightMode_GetState() == APP_NIGHTMODE_ON) ? 1u : 0u;
         App_UiScreens_SetLiveData(&ld);
     }
 

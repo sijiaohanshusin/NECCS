@@ -5,13 +5,22 @@
  */
 #include "app_main_task.h"
 
+#include "ai_beamsteer.h"
+#include "app_anomaly.h"
 #include "app_camera.h"
 #include "app_laser.h"
 #include "app_noise_floor.h"
 #include "app_perf.h"
+#include "app_profile.h"
 #include "app_runtime.h"
+#include "app_sound_level.h"
 #include "app_task_cfg.h"
+#include "app_tracker.h"
 #include "app_trigger.h"
+#include "app_sd.h"
+#include "app_capture.h"
+#include "app_recorder.h"
+#include "app_storage_task.h"
 #include "app_user_config.h"
 
 /* ============================================================================
@@ -92,6 +101,15 @@ void App_Task_Init(void)
     App_Trigger_Init();
     App_Laser_Init();
     App_NoiseFloor_Init();
+    App_Anomaly_Init();
+    App_Tracker_Init();
+    App_SLM_Init();
+    App_Profile_Init();
+    AI_BeamSteer_Init();
+    App_SD_Init();        /* SD 卡初始化 (允许失败, 不阻塞启动) */
+    App_Storage_Init();   /* 存储任务 (队列 + FreeRTOS 任务) */
+    App_Capture_Init();
+    App_Recorder_Init();
 
     /* Step 5: create depth-1 overwrite queues to keep only the latest frame. */
     xAudioFrameQueue = xQueueCreate(1, sizeof(Audio_FrameEvent_t)); /* ISR -> audio task */

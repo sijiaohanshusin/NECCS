@@ -75,19 +75,30 @@ void App_UiStyles_Init(void)
     lv_style_set_bg_opa(&g_ui_styles.btn_pressed, LV_OPA_80);
     lv_style_set_text_color(&g_ui_styles.btn_pressed, UI_COLOR_BG_MAIN);
 
-    /* ----- 标题文字 ----- */
+    /* ----- 标题文字 (14px) ----- */
     lv_style_init(&g_ui_styles.label_title);
     lv_style_set_text_color(&g_ui_styles.label_title, UI_COLOR_TEXT_PRIMARY);
     lv_style_set_text_font(&g_ui_styles.label_title, &lv_font_montserrat_14);
 
-    /* ----- 数值读数 ----- */
+    /* ----- 数值读数 (20px cyan) ----- */
     lv_style_init(&g_ui_styles.label_value);
     lv_style_set_text_color(&g_ui_styles.label_value, UI_COLOR_ACCENT);
-    lv_style_set_text_font(&g_ui_styles.label_value, &lv_font_montserrat_14);
+    lv_style_set_text_font(&g_ui_styles.label_value, &lv_font_montserrat_20);
 
-    /* ----- 单位/辅助 ----- */
+    /* ----- 大号数值 (28px cyan) —— 核心读数如 dB ----- */
+    lv_style_init(&g_ui_styles.label_value_lg);
+    lv_style_set_text_color(&g_ui_styles.label_value_lg, UI_COLOR_ACCENT);
+    lv_style_set_text_font(&g_ui_styles.label_value_lg, &lv_font_montserrat_28);
+
+    /* ----- 单位/辅助 (12px) ----- */
     lv_style_init(&g_ui_styles.label_unit);
     lv_style_set_text_color(&g_ui_styles.label_unit, UI_COLOR_TEXT_SECONDARY);
+    lv_style_set_text_font(&g_ui_styles.label_unit, &lv_font_montserrat_12);
+
+    /* ----- 小号注释 (12px dim) ----- */
+    lv_style_init(&g_ui_styles.label_small);
+    lv_style_set_text_color(&g_ui_styles.label_small, UI_COLOR_INACTIVE);
+    lv_style_set_text_font(&g_ui_styles.label_small, &lv_font_montserrat_12);
 
     /* ----- 滑块 ----- */
     lv_style_init(&g_ui_styles.slider);
@@ -105,6 +116,18 @@ void App_UiStyles_Init(void)
     lv_style_set_radius(&g_ui_styles.chart, UI_RADIUS_DEFAULT);
     lv_style_set_line_color(&g_ui_styles.chart, UI_COLOR_ACCENT);
     lv_style_set_line_width(&g_ui_styles.chart, 1u);
+
+    /* ----- 状态指示器 亮 (绿色圆点) ----- */
+    lv_style_init(&g_ui_styles.indicator_on);
+    lv_style_set_bg_color(&g_ui_styles.indicator_on, UI_COLOR_OK);
+    lv_style_set_bg_opa(&g_ui_styles.indicator_on, LV_OPA_COVER);
+    lv_style_set_radius(&g_ui_styles.indicator_on, LV_RADIUS_CIRCLE);
+
+    /* ----- 状态指示器 暗 (灰色圆点) ----- */
+    lv_style_init(&g_ui_styles.indicator_off);
+    lv_style_set_bg_color(&g_ui_styles.indicator_off, UI_COLOR_INACTIVE);
+    lv_style_set_bg_opa(&g_ui_styles.indicator_off, LV_OPA_COVER);
+    lv_style_set_radius(&g_ui_styles.indicator_off, LV_RADIUS_CIRCLE);
 }
 
 #endif /* APP_LVGL_ENABLE */

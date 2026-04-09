@@ -50,8 +50,23 @@ extern "C" {
 /** @brief 高亮文字色 */
 #define UI_COLOR_TEXT_ACCENT   lv_color_hex(0x00D4FF)
 
-/** @brief chroma key 色 —— 洋红（与 lv_port_disp 一致） */
-#define UI_COLOR_CHROMA_KEY    lv_color_hex(0xF81F)
+/** @brief chroma key 色 —— 洋红（与 lv_port_disp 的 0xF81F RGB565 一致） */
+#define UI_COLOR_CHROMA_KEY    lv_color_hex(0xFF00FF)
+
+/** @brief 渐变顶部色 —— 深蓝 */
+#define UI_COLOR_GRADIENT_TOP  lv_color_hex(0x0F3460)
+/** @brief 渐变底部色 —— 深蓝黑 */
+#define UI_COLOR_GRADIENT_BOT  lv_color_hex(0x1A1A2E)
+
+/** @brief dB 量表 —— 安全区（绿） */
+#define UI_COLOR_METER_LOW     lv_color_hex(0x00CC66)
+/** @brief dB 量表 —— 警告区（琥珀） */
+#define UI_COLOR_METER_MID     lv_color_hex(0xFFAA00)
+/** @brief dB 量表 —— 危险区（红） */
+#define UI_COLOR_METER_HIGH    lv_color_hex(0xFF3333)
+
+/** @brief 快捷按钮激活色 —— 橙 (ARMED / RECORDING) */
+#define UI_COLOR_BTN_ACTIVE    lv_color_hex(0xFF6600)
 
 /* ============================================================================
  * 布局常量 (Layout Constants)
@@ -63,7 +78,7 @@ extern "C" {
 #define UI_PAD_NORMAL          8u    /**< 普通间距 (px) */
 #define UI_PAD_LARGE           12u   /**< 大间距 (px) */
 #define UI_STATUSBAR_H         28u   /**< 状态栏高度 (px) */
-#define UI_TOOLBAR_H           32u   /**< 工具栏高度 (px) */
+#define UI_TOOLBAR_H           28u   /**< 工具栏高度 (px) */
 
 /* ============================================================================
  * 全局样式表 (Global Style Table)
@@ -71,17 +86,21 @@ extern "C" {
 
 /** @brief 全局样式表结构体 */
 typedef struct {
-    lv_style_t scr_bg;       /**< 屏幕背景样式（深蓝黑底） */
-    lv_style_t panel;        /**< 面板/卡片样式 */
-    lv_style_t statusbar;    /**< 状态栏样式 */
-    lv_style_t toolbar;      /**< 工具栏样式 */
-    lv_style_t btn;          /**< 按钮默认样式 */
-    lv_style_t btn_pressed;  /**< 按钮按下样式 */
-    lv_style_t label_title;  /**< 标题文字样式 */
-    lv_style_t label_value;  /**< 数值读数样式 */
-    lv_style_t label_unit;   /**< 单位/辅助文字样式 */
-    lv_style_t slider;       /**< 滑块样式 */
-    lv_style_t chart;        /**< 图表样式 */
+    lv_style_t scr_bg;           /**< 屏幕背景样式（深蓝黑底） */
+    lv_style_t panel;            /**< 面板/卡片样式 */
+    lv_style_t statusbar;        /**< 状态栏样式 */
+    lv_style_t toolbar;          /**< 工具栏样式 */
+    lv_style_t btn;              /**< 按钮默认样式 */
+    lv_style_t btn_pressed;      /**< 按钮按下样式 */
+    lv_style_t label_title;      /**< 标题文字样式 (14px) */
+    lv_style_t label_value;      /**< 数值读数样式 (20px cyan) */
+    lv_style_t label_value_lg;   /**< 大号数值样式 (28px cyan) */
+    lv_style_t label_unit;       /**< 单位/辅助文字样式 (12px) */
+    lv_style_t label_small;      /**< 小号注释文字 (12px dim) */
+    lv_style_t slider;           /**< 滑块样式 */
+    lv_style_t chart;            /**< 图表样式 */
+    lv_style_t indicator_on;     /**< 状态指示点（亮） */
+    lv_style_t indicator_off;    /**< 状态指示点（暗） */
 } App_UiStyleTable_t;
 
 /** @brief 全局样式表单例（只读使用） */

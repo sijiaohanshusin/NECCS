@@ -53,6 +53,7 @@
 static uint8_t s_ready = 0u;
 volatile uint32_t g_display_init_stage = 0u;
 volatile uint32_t g_display_init_error = 0u;
+volatile uint8_t g_display_swap_inhibit = 0u;
 
 static uint16_t s_map_x0 = 0u;
 static uint16_t s_map_y0 = 0u;
@@ -95,6 +96,19 @@ static App_SpectrumFrame_t s_last_spectrum_frame;
 static float s_spectrum_ref_mag = APP_DISPLAY_SPECTRUM_MIN_MAG;
 static uint8_t s_spectrum_ema_valid = 0u;
 static uint8_t s_spectrum_frame_valid = 0u;
+
+/* ---- 声源轨迹追踪 ---- */
+#define TRAJECTORY_MAX   32u
+#define TRAJECTORY_MIN_E 0.01f   /**< 最低能量阈值 */
+typedef struct {
+    uint16_t x;
+    uint16_t y;
+    uint8_t  age;       /**< 0=最新，递增→淡出 */
+    uint8_t  valid;
+} TrajectoryPoint_t;
+static TrajectoryPoint_t s_traj[TRAJECTORY_MAX];
+static uint8_t s_traj_head = 0u;
+static uint8_t s_traj_count = 0u;
 
 /* * - `s_field_a` / `s_field_b`
  */
@@ -766,6 +780,12 @@ static void s_commit_frame(void)
     if (ltdc_draw_flush(APP_DISPLAY_DMA2D_TIMEOUT) != 0u)
     {
         DMA2D_Accel_Reset();
+        return;
+    }
+
+    /* BMP 截图期间抑制 swap — 防止前缓冲被覆盖导致撕裂 */
+    if (g_display_swap_inhibit != 0u)
+    {
         return;
     }
 
@@ -1760,6 +1780,72 @@ static uint16_t s_angle_to_y(float angle)
     return s_clamp_u16(y, s_map_y0, s_map_y1);
 }
 
+/* ============================================================================
+ * 声源轨迹追踪
+ * ============================================================================ */
+
+/** @brief 推入一个声源位置到轨迹环形缓冲 */
+static void s_trajectory_push(const Sound_Pos_t *pos)
+{
+    uint8_t i;
+    TrajectoryPoint_t *p;
+
+    if (pos->energy < TRAJECTORY_MIN_E)
+    {
+        return;
+    }
+    /* 老化所有现有点 */
+    for (i = 0u; i < s_traj_count; i++)
+    {
+        s_traj[i].age++;
+        if (s_traj[i].age >= TRAJECTORY_MAX)
+        {
+            s_traj[i].valid = 0u;
+        }
+    }
+    /* 写入新点 */
+    p = &s_traj[s_traj_head];
+    p->x = s_angle_to_x(pos->x_angle);
+    p->y = s_angle_to_y(pos->y_angle);
+    p->age = 0u;
+    p->valid = 1u;
+    s_traj_head = (uint8_t)((s_traj_head + 1u) % TRAJECTORY_MAX);
+    if (s_traj_count < TRAJECTORY_MAX)
+    {
+        s_traj_count++;
+    }
+}
+
+/** @brief 在热力图上绘制声源轨迹（淡出小十字） */
+static void s_trajectory_draw(void)
+{
+    uint8_t i;
+    for (i = 0u; i < s_traj_count; i++)
+    {
+        uint16_t color;
+        uint8_t alpha;
+        uint16_t px, py;
+        if (s_traj[i].valid == 0u)
+        {
+            continue;
+        }
+        /* 透明度随 age 线性衰减 */
+        alpha = (uint8_t)(255u - (uint32_t)s_traj[i].age * 255u / TRAJECTORY_MAX);
+        /* 使用半透明白色 → 简化为亮度减半的白色 */
+        color = (alpha > 128u) ? WHITE : (uint16_t)0x7BEF; /* 亮白 : 暗白 */
+        px = s_traj[i].x;
+        py = s_traj[i].y;
+        /* 绘制 3x3 十字 */
+        if (px >= s_map_x0 && px <= s_map_x1 && py >= s_map_y0 && py <= s_map_y1)
+        {
+            s_draw_hline_async((uint16_t)(px > s_map_x0 ? px - 1u : px), py,
+                               (uint16_t)(px < s_map_x1 ? px + 1u : px), color);
+            s_draw_vline_async(px, (uint16_t)(py > s_map_y0 ? py - 1u : py),
+                               (uint16_t)(py < s_map_y1 ? py + 1u : py), color);
+        }
+    }
+}
+
 /**
  * @brief 将 8bit 归一化场逐行渲染为 RGB565 并提交到帧缓冲
  * @details 支持双线性/最近邻插值。优先使用 L8+CLUT DMA2D 模式,
@@ -2177,6 +2263,14 @@ static void s_draw_overlay(const Sound_Pos_t *pos,
                            float field_peak,
                            uint8_t sai_dma_active)
 {
+#if (APP_LVGL_ENABLE != 0u)
+    /* LVGL 全权管理右侧面板区域，跳过遗留频谱渲染 */
+    (void)pos;
+    (void)spectrum_frame;
+    (void)field_peak;
+    (void)sai_dma_active;
+    return;
+#else
     App_FreqBand_t active_band = App_Spectrum_DefaultBand();
     App_FreqBand_t preview_band = active_band;
     uint16_t panel_x0 = s_text_x;
@@ -2443,6 +2537,7 @@ static void s_draw_overlay(const Sound_Pos_t *pos,
 #endif
 
     g_back_color = prev_back_color;
+#endif /* !APP_LVGL_ENABLE */
 }
 
 /**
@@ -2610,6 +2705,9 @@ void App_Display_Render(const Sound_Pos_t *pos,
             s_draw_vline_async(mcx, myt, myb, multi_colors[mi]);
         }
     }
+    /* ---- 声源轨迹 ---- */
+    s_trajectory_push(pos);
+    s_trajectory_draw();
     App_Perf_EndCycles(APP_PERF_SEC_DISP_RENDER, t_perf);
     if (App_Spectrum_GetLatestFrame(&spectrum_snapshot) != 0u)
     {

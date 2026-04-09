@@ -463,3 +463,35 @@ void App_Perf_Dump(void)
                max_ms);                    /* 最大耗时 */
     }
 }
+
+uint8_t App_Perf_GetSectionSummary(App_Perf_Section_t section,
+                                   App_Perf_SectionSummary_t *out)
+{
+    App_Perf_SectionStat_t *st;
+    uint32_t core_hz = SystemCoreClock;
+
+    if ((section >= APP_PERF_SEC_COUNT) || (out == NULL))
+    {
+        return 0u;
+    }
+
+    if (core_hz == 0u)
+    {
+        core_hz = 480000000u;
+    }
+
+    st = &s_perf_stats[section];
+    out->sample_count = st->sample_count;
+
+    if (st->sample_count == 0u)
+    {
+        out->avg_us = 0.0f;
+        out->max_us = 0.0f;
+        return 0u;
+    }
+
+    out->avg_us = (float)(((double)st->total_cycles / (double)st->sample_count)
+                          * 1e6 / (double)core_hz);
+    out->max_us = (float)((double)st->max_cycles * 1e6 / (double)core_hz);
+    return 1u;
+}

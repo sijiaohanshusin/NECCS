@@ -6,6 +6,7 @@
 
 #include "app_display.h"
 #include "app_perf.h"
+#include "app_spectrum.h"
 #include "app_task_cfg.h"
 
 #include "FreeRTOS.h"
@@ -39,7 +40,9 @@ static App_Runtime_Config_t s_runtime_cfg = {
                                                : APP_RUNTIME_DISP_INTERP_NEAREST,
         APP_RUNTIME_DISP_NORM_FAST,     /**< norm_mode：归一化策略，默认快速模式（仅用峰值） */
         APP_DISPLAY_TEXT_REFRESH_DIV,   /**< text_refresh_div：文字刷新分频（每 N 帧刷新一次） */
-        APP_DISPLAY_BLIT_ROWS_MAX       /**< blit_rows：每次 blit 传输的最大行数（DMA2D 分块） */
+        APP_DISPLAY_BLIT_ROWS_MAX,     /**< blit_rows：每次 blit 传输的最大行数（DMA2D 分块） */
+        (uint16_t)SRP_FREQ_BIN_START,  /**< freq_bin_start：默认频段起始 bin */
+        (uint16_t)SRP_FREQ_BIN_END     /**< freq_bin_end：默认频段结束 bin */
     }
 };
 
@@ -368,4 +371,41 @@ void App_RuntimeConfig_Init(void)
     s_runtime_cfg.perf_enabled = (App_Perf_IsEnabled() != 0u) ? 1u : 0u;
     taskEXIT_CRITICAL();
     s_runtime_sync_from_display();
+}
+
+void App_RuntimeConfig_SetFreqBand(uint16_t bin_start, uint16_t bin_end)
+{
+    App_FreqBand_t band;
+
+    if (bin_end > (uint16_t)SRP_FREQ_BIN_END)
+    {
+        bin_end = (uint16_t)SRP_FREQ_BIN_END;
+    }
+    if (bin_start > bin_end)
+    {
+        bin_start = bin_end;
+    }
+
+    taskENTER_CRITICAL();
+    s_runtime_cfg.display_cfg.freq_bin_start = bin_start;
+    s_runtime_cfg.display_cfg.freq_bin_end   = bin_end;
+    taskEXIT_CRITICAL();
+
+    band.start_bin = bin_start;
+    band.end_bin   = bin_end;
+    App_Spectrum_SetActiveBand(band);
+}
+
+void App_RuntimeConfig_GetFreqBand(uint16_t *bin_start, uint16_t *bin_end)
+{
+    taskENTER_CRITICAL();
+    if (bin_start != NULL)
+    {
+        *bin_start = s_runtime_cfg.display_cfg.freq_bin_start;
+    }
+    if (bin_end != NULL)
+    {
+        *bin_end = s_runtime_cfg.display_cfg.freq_bin_end;
+    }
+    taskEXIT_CRITICAL();
 }

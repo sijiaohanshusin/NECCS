@@ -339,7 +339,7 @@
               <MiscControls>--diag_suppress=1,68,111,188,223,546,1035,1295</MiscControls>
               <Define>USE_PWR_LDO_SUPPLY,USE_HAL_DRIVER,STM32H743xx,ARM_MATH_CM7</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../User/Algorithm;../User/App;../User/Hardware;../User/BSP;../User/common;..\User\BSP\TOUCH;..\Middlewares\LVGL;..\Middlewares\LVGL\GUI;..\Middlewares\LVGL\GUI\lvgl;..\Middlewares\LVGL\GUI\lvgl\src;..\Middlewares\LVGL\GUI\lvgl\examples;..\Middlewares\LVGL\GUI\lvgl\examples\porting;..\Middlewares\LVGL\GUI_APP;..\Middlewares\LVGL\GUI_APP\demos;..\Middlewares\LVGL\GUI_APP\custom;..\Middlewares\LVGL\GUI_APP\generated;..\Middlewares\LVGL\GUI_APP\generated\guider_customer_fonts;..\Middlewares\LVGL\GUI_APP\generated\guider_fonts;..\Middlewares\LVGL\GUI_APP\generated\images</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../User/Algorithm;../User/App;../User/Hardware;../User/BSP;../User/common;..\User\BSP\TOUCH;..\Middlewares\LVGL;..\Middlewares\LVGL\GUI;..\Middlewares\LVGL\GUI\lvgl;..\Middlewares\LVGL\GUI\lvgl\src;..\Middlewares\LVGL\GUI\lvgl\examples;..\Middlewares\LVGL\GUI\lvgl\examples\porting;..\Middlewares\LVGL\GUI_APP;..\Middlewares\LVGL\GUI_APP\demos;..\Middlewares\LVGL\GUI_APP\custom;..\Middlewares\LVGL\GUI_APP\generated;..\Middlewares\LVGL\GUI_APP\generated\guider_customer_fonts;..\Middlewares\LVGL\GUI_APP\generated\guider_fonts;..\Middlewares\LVGL\GUI_APP\generated\images;..\Middlewares\FATFS\source</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -835,6 +835,16 @@
               <FileType>1</FileType>
               <FilePath>..\Drivers\STM32H7xx_HAL_Driver\Src\stm32h7xx_ll_fmc.c</FilePath>
             </File>
+            <File>
+              <FileName>stm32h7xx_hal_sd.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\STM32H7xx_HAL_Driver\Src\stm32h7xx_hal_sd.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32h7xx_ll_sdmmc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\STM32H7xx_HAL_Driver\Src\stm32h7xx_ll_sdmmc.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -951,6 +961,11 @@
               <FilePath>..\User\App\app_ui_screens.c</FilePath>
             </File>
             <File>
+              <FileName>app_ui_spectrum_panel.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_ui_spectrum_panel.c</FilePath>
+            </File>
+            <File>
               <FileName>app_ui_styles.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\App\app_ui_styles.c</FilePath>
@@ -969,6 +984,46 @@
               <FileName>app_noise_floor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\App\app_noise_floor.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_anomaly.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_anomaly.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_tracker.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_tracker.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_sound_level.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_sound_level.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_profile.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_profile.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_sd.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_sd.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_capture.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_capture.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_recorder.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_recorder.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_storage_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\app_storage_task.c</FilePath>
             </File>
             <File>
               <FileName>app_runtime.c</FileName>
@@ -1029,6 +1084,16 @@
               <FileName>ai_preprocess.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\Algorithm\ai_preprocess.c</FilePath>
+            </File>
+            <File>
+              <FileName>ai_bandpass.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\Algorithm\ai_bandpass.c</FilePath>
+            </File>
+            <File>
+              <FileName>ai_beamsteer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\Algorithm\ai_beamsteer.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -1099,6 +1164,36 @@
               <FileName>touch_i2c.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\BSP\TOUCH\touch_i2c.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_sd.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\BSP\SD\bsp_sd.c</FilePath>
+            </File>
+            <File>
+              <FileName>diskio_sd.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\BSP\SD\diskio_sd.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Middlewares/FATFS</GroupName>
+          <Files>
+            <File>
+              <FileName>ff.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\FATFS\source\ff.c</FilePath>
+            </File>
+            <File>
+              <FileName>ffsystem.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\FATFS\source\ffsystem.c</FilePath>
+            </File>
+            <File>
+              <FileName>ffunicode.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Middlewares\FATFS\source\ffunicode.c</FilePath>
             </File>
           </Files>
         </Group>
