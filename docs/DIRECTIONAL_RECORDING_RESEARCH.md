@@ -299,29 +299,48 @@ void AI_BeamSteer_SetMode(AI_BeamSteer_Mode_t mode);
 
 ---
 
-## 8. 实现计划
+## 8. 实现计划与完成状态
 
-### Phase 1: 基本 DAS (整数延迟)
-1. 创建 `ai_beamsteer.h/c`
-2. 实现延迟计算 + 延迟求和
-3. 在 `Audio_Pipeline_Task` 中插入调用
-4. 验证输出波形（VOFA+ 串口波形）
+### Phase 1: 基本 DAS (整数延迟) — ✅ 已完成
+1. ✅ 创建 `ai_beamsteer.h/c` — 16 通道 DAS, 整数延迟, overlap 缓冲
+2. ✅ 实现延迟计算 + 延迟求和
+3. ✅ 在 `Audio_Pipeline_Task` 中插入调用 (deinterleave → DAS → FFT 管线顺序)
+4. ✅ 三种追踪模式: AUTO / MANUAL / TRIGGER
 
-### Phase 2: SD 卡录制集成
-1. 将波束输出写入环形缓冲
-2. Storage_Task 读取环形缓冲写入 WAV 文件
-3. UI 集成：Capture 屏幕增加 "定向录音" 按钮
+### Phase 2: SD 卡录制集成 — ✅ 已完成
+1. ✅ 波束输出通过 `App_Recorder_Feed()` 写入 64KB 环形缓冲
+2. ✅ `Storage_Task` 读取环形缓冲写入 WAV 文件
+3. ✅ UI 集成: Capture 屏幕增加双模式录音 (MONO 定向 / RAW16 原始)
+4. ✅ FatFS R0.14b 中间件 + BSP_SD 底层驱动
 
-### Phase 3: 增强 (可选)
-1. 分数延迟插值（线性）
-2. 交叉淡入淡出（方向突变保护）
-3. EMA 方向平滑
+### Phase 3: 增强 — 部分完成
+1. ⬜ 分数延迟插值 (线性) — 当前使用整数延迟, 满足需求
+2. ✅ 帧边界 overlap 缓冲 (16ch × 10 samples)
+3. ⬜ 交叉淡入淡出 — 自动模式下方向跟随足够平滑, 暂不需要
+
+### 实际实现与报告设计的差异
+
+| 项目 | 报告设计 | 实际实现 | 原因 |
+|------|---------|---------|------|
+| DAS 输出缓冲位置 | DTCM | DTCM (`__SECTION_DTCM`) | 一致 |
+| 环形缓冲大小 | 4 KB | 64 KB (8 帧) | 增大以容纳 RAW16 模式 |
+| 录音模式 | 仅 MONO | MONO + RAW16 | 扩展支持原始 16ch 存储 |
+| DAS 调用位置 | FFT 之后 | FFT 之前 | FFT 原地修改输入, DAS 必须先执行 |
+| Feed 调用条件 | 每帧调用 | 仅录音时调用 | 优化: 避免非录音时的无用开销 |
+| mono_frame 参数 | 总是有效 | 可为 NULL | 当 beamsteer 禁用时传 NULL, Feed 按模式处理 |
 
 ---
 
 ## 9. 结论
 
-DAS 延迟求和波束成形是 NECCS 声学相机平台上定向录音功能的最优首选方案。其计算开销极低 (~0.15 ms/帧，仅占 CPU 预算的 2.8%)，数值完全稳定，且实现复杂度低。通过与现有 SRP-PHAT 定位管线的紧密集成，可实现自动追踪录音和手动定向录音两种工作模式。
+DAS 延迟求和波束成形是 NECCS 声学相机平台上定向录音功能的最优首选方案。其计算开销极低 (~0.15 ms/帧，仅占 CPU 预算的 2.8%)，数值完全稳定，且实现复杂度低。通过与现有 SRP-PHAT 定位管线的紧密集成，已实现自动追踪录音和手动定向录音两种工作模式。
+
+**实际实现验证 (2026-04-09):**
+- DAS 模块 (`ai_beamsteer.c`) 已完整实现并集成到音频管线
+- 录音模块 (`app_recorder.c`) 支持 MONO 定向 + RAW16 原始两种模式
+- 存储任务 (`app_storage_task.c`) 实现异步 WAV 文件写入
+- Capture 屏幕 UI 提供完整的录音控制界面
+- 构建验证: 0 Error(s), 0 Warning(s)
 
 主要风险点是高频信号的整数延迟误差和帧边界效应，均有明确的缓解方案。建议在基本 DAS 功能验证后，根据实际板级测试结果决定是否引入分数延迟插值。
 
