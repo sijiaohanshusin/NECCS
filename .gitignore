@@ -42,6 +42,7 @@ Output/
 # Reference materials (large binaries, not part of source)
 OV2640摄像头模块产品资料/
 stm32n6资料/
+这是这个开发板的官方资料，需要可以取用/
 docs_current_backup_*/
 docs_extracted_backup_*/
 
