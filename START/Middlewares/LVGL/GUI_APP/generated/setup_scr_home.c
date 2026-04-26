@@ -21,6 +21,11 @@ LV_FONT_DECLARE(Font18);
 LV_FONT_DECLARE(Font30);
 LV_FONT_DECLARE(Font60);
 
+#define HOME_BASE_W   800
+#define HOME_BASE_H   480
+#define HOME_OFF_X    ((LV_PORT_OVERLAY_W - HOME_BASE_W) / 2)
+#define HOME_OFF_Y    ((LV_PORT_OVERLAY_H - HOME_BASE_H) / 2)
+
 #define UI_TXT_START      "\xE5\xBC\x80\xE5\xA7\x8B"
 #define UI_TXT_SETTINGS   "\xE8\xAE\xBE\xE7\xBD\xAE"
 #define UI_TXT_SCAN_MORE  "\xE6\x89\xAB\xE6\x88\x91\xE4\xBA\x86\xE8\xA7\xA3\xE6\x9B\xB4\xE5\xA4\x9A"
@@ -32,7 +37,7 @@ void setup_scr_home(lv_ui *ui)
 {
 	//Write codes home
 	ui->home = lv_obj_create(NULL);
-	lv_obj_set_size(ui->home, 800, 480);
+	lv_obj_set_size(ui->home, LV_PORT_OVERLAY_W, LV_PORT_OVERLAY_H);
 	lv_obj_clear_flag(ui->home, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_scrollbar_mode(ui->home, LV_SCROLLBAR_MODE_OFF);
 
@@ -45,7 +50,7 @@ void setup_scr_home(lv_ui *ui)
 	//Write codes home_start
 	ui->home_start = lv_obj_create(ui->home);
 	lv_obj_set_pos(ui->home_start, 0, 0);
-	lv_obj_set_size(ui->home_start, 800, 480);
+	lv_obj_set_size(ui->home_start, LV_PORT_OVERLAY_W, LV_PORT_OVERLAY_H);
 	lv_obj_clear_flag(ui->home_start, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_scrollbar_mode(ui->home_start, LV_SCROLLBAR_MODE_OFF);
 
@@ -68,7 +73,7 @@ void setup_scr_home(lv_ui *ui)
 		const char *home_qrcode_1_data = "https://www.kdocs.cn/l/ckkhoiIDxY3q";
 		lv_qrcode_update(ui->home_qrcode_1, home_qrcode_1_data, strlen(home_qrcode_1_data));
 	}
-	lv_obj_set_pos(ui->home_qrcode_1, 668, 349);
+	lv_obj_set_pos(ui->home_qrcode_1, 668 + HOME_OFF_X, 349 + HOME_OFF_Y);
 	lv_obj_set_size(ui->home_qrcode_1, 100, 100);
 
 	//Write codes home_img_1
@@ -77,7 +82,7 @@ void setup_scr_home(lv_ui *ui)
 	lv_img_set_src(ui->home_img_1, &_start2_alpha_100x100);
 	lv_img_set_pivot(ui->home_img_1, 50,50);
 	lv_img_set_angle(ui->home_img_1, 0);
-	lv_obj_set_pos(ui->home_img_1, 127, 116);
+	lv_obj_set_pos(ui->home_img_1, 127 + HOME_OFF_X, 116 + HOME_OFF_Y);
 	lv_obj_set_size(ui->home_img_1, 100, 100);
 	lv_obj_set_scrollbar_mode(ui->home_img_1, LV_SCROLLBAR_MODE_OFF);
 
@@ -97,7 +102,7 @@ void setup_scr_home(lv_ui *ui)
 		lv_style_set_text_decor(&home_spangroup_1_span->style, LV_TEXT_DECOR_NONE);
 		lv_style_set_text_font(&home_spangroup_1_span->style, &Font60);
 	}
-	lv_obj_set_pos(ui->home_spangroup_1, 248, 118);
+	lv_obj_set_pos(ui->home_spangroup_1, 248 + HOME_OFF_X, 118 + HOME_OFF_Y);
 	lv_obj_set_size(ui->home_spangroup_1, 363, 66);
 	lv_obj_set_scrollbar_mode(ui->home_spangroup_1, LV_SCROLLBAR_MODE_OFF);
 
@@ -129,7 +134,7 @@ void setup_scr_home(lv_ui *ui)
 		lv_style_set_text_decor(&home_spangroup_2_span->style, LV_TEXT_DECOR_NONE);
 		lv_style_set_text_font(&home_spangroup_2_span->style, &lv_font_montserratMedium_25);
 	}
-	lv_obj_set_pos(ui->home_spangroup_2, 248, 206);
+	lv_obj_set_pos(ui->home_spangroup_2, 248 + HOME_OFF_X, 206 + HOME_OFF_Y);
 	lv_obj_set_size(ui->home_spangroup_2, 363, 35);
 	lv_obj_set_scrollbar_mode(ui->home_spangroup_2, LV_SCROLLBAR_MODE_OFF);
 
@@ -155,7 +160,7 @@ void setup_scr_home(lv_ui *ui)
 	lv_label_set_long_mode(ui->home_btn_1_label, LV_LABEL_LONG_WRAP);
 	lv_obj_align(ui->home_btn_1_label, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_set_style_pad_all(ui->home_btn_1, 0, LV_STATE_DEFAULT);
-	lv_obj_set_pos(ui->home_btn_1, 330, 286);
+	lv_obj_set_pos(ui->home_btn_1, 330 + HOME_OFF_X, 286 + HOME_OFF_Y);
 	lv_obj_set_size(ui->home_btn_1, 132, 82);
 	lv_obj_set_scrollbar_mode(ui->home_btn_1, LV_SCROLLBAR_MODE_OFF);
 
@@ -187,7 +192,7 @@ void setup_scr_home(lv_ui *ui)
 		lv_style_set_text_decor(&home_spangroup_3_span->style, LV_TEXT_DECOR_NONE);
 		lv_style_set_text_font(&home_spangroup_3_span->style, &Font18);
 	}
-	lv_obj_set_pos(ui->home_spangroup_3, 618, 317);
+	lv_obj_set_pos(ui->home_spangroup_3, 618 + HOME_OFF_X, 317 + HOME_OFF_Y);
 	lv_obj_set_size(ui->home_spangroup_3, 200, 28);
 	lv_obj_set_scrollbar_mode(ui->home_spangroup_3, LV_SCROLLBAR_MODE_OFF);
 
@@ -213,7 +218,7 @@ void setup_scr_home(lv_ui *ui)
 	lv_label_set_long_mode(ui->home_btn_2_label, LV_LABEL_LONG_WRAP);
 	lv_obj_align(ui->home_btn_2_label, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_set_style_pad_all(ui->home_btn_2, 0, LV_STATE_DEFAULT);
-	lv_obj_set_pos(ui->home_btn_2, 30, 398);
+	lv_obj_set_pos(ui->home_btn_2, 30 + HOME_OFF_X, 398 + HOME_OFF_Y);
 	lv_obj_set_size(ui->home_btn_2, 58, 58);
 	lv_obj_set_scrollbar_mode(ui->home_btn_2, LV_SCROLLBAR_MODE_OFF);
 
@@ -234,7 +239,7 @@ void setup_scr_home(lv_ui *ui)
 
 	//Write codes home_cont_1
 	ui->home_cont_1 = lv_obj_create(ui->home_start);
-	lv_obj_set_pos(ui->home_cont_1, 88, 172);
+	lv_obj_set_pos(ui->home_cont_1, 88 + HOME_OFF_X, 172 + HOME_OFF_Y);
 	lv_obj_set_size(ui->home_cont_1, 335, 242);
 	lv_obj_clear_flag(ui->home_cont_1, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_scrollbar_mode(ui->home_cont_1, LV_SCROLLBAR_MODE_OFF);

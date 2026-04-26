@@ -10,6 +10,10 @@
 
 #include <string.h>
 
+/** @brief 简体中文字体 — SimHei, ASCII + 126 CJK (lv_font_conv 生成) */
+LV_FONT_DECLARE(lv_font_sc_14);
+LV_FONT_DECLARE(lv_font_sc_12);
+
 /** @brief 全局样式表实例 */
 App_UiStyleTable_t g_ui_styles;
 
@@ -66,6 +70,7 @@ void App_UiStyles_Init(void)
     lv_style_set_border_width(&g_ui_styles.btn, UI_BORDER_WIDTH);
     lv_style_set_radius(&g_ui_styles.btn, UI_RADIUS_DEFAULT);
     lv_style_set_text_color(&g_ui_styles.btn, UI_COLOR_TEXT_PRIMARY);
+    lv_style_set_text_font(&g_ui_styles.btn, &lv_font_sc_12);  /* CJK-capable font for button labels */
     lv_style_set_pad_ver(&g_ui_styles.btn, UI_PAD_SMALL);
     lv_style_set_pad_hor(&g_ui_styles.btn, UI_PAD_NORMAL);
 
@@ -75,10 +80,10 @@ void App_UiStyles_Init(void)
     lv_style_set_bg_opa(&g_ui_styles.btn_pressed, LV_OPA_80);
     lv_style_set_text_color(&g_ui_styles.btn_pressed, UI_COLOR_BG_MAIN);
 
-    /* ----- 标题文字 (14px) ----- */
+    /* ----- 标题文字 (14px SimHei 含 CJK) ----- */
     lv_style_init(&g_ui_styles.label_title);
     lv_style_set_text_color(&g_ui_styles.label_title, UI_COLOR_TEXT_PRIMARY);
-    lv_style_set_text_font(&g_ui_styles.label_title, &lv_font_montserrat_14);
+    lv_style_set_text_font(&g_ui_styles.label_title, &lv_font_sc_14);
 
     /* ----- 数值读数 (20px cyan) ----- */
     lv_style_init(&g_ui_styles.label_value);
@@ -90,15 +95,15 @@ void App_UiStyles_Init(void)
     lv_style_set_text_color(&g_ui_styles.label_value_lg, UI_COLOR_ACCENT);
     lv_style_set_text_font(&g_ui_styles.label_value_lg, &lv_font_montserrat_28);
 
-    /* ----- 单位/辅助 (12px) ----- */
+    /* ----- 单位/辅助 (12px SimHei 含 CJK) ----- */
     lv_style_init(&g_ui_styles.label_unit);
     lv_style_set_text_color(&g_ui_styles.label_unit, UI_COLOR_TEXT_SECONDARY);
-    lv_style_set_text_font(&g_ui_styles.label_unit, &lv_font_montserrat_12);
+    lv_style_set_text_font(&g_ui_styles.label_unit, &lv_font_sc_12);
 
-    /* ----- 小号注释 (12px dim) ----- */
+    /* ----- 小号注释 (12px SimHei dim) ----- */
     lv_style_init(&g_ui_styles.label_small);
     lv_style_set_text_color(&g_ui_styles.label_small, UI_COLOR_INACTIVE);
-    lv_style_set_text_font(&g_ui_styles.label_small, &lv_font_montserrat_12);
+    lv_style_set_text_font(&g_ui_styles.label_small, &lv_font_sc_12);
 
     /* ----- 滑块 ----- */
     lv_style_init(&g_ui_styles.slider);

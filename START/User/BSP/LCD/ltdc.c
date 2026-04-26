@@ -1033,6 +1033,7 @@ void ltdc_init(void)
 #endif
     g_ltdc_panel_id = lcdid;
 
+panel_profile_select:
     if (lcdid == 0X5571)
     {
         tft_spi_init();
@@ -1133,6 +1134,18 @@ void ltdc_init(void)
     }
     if ((lcdltdc.pwidth != LTDC_TARGET_WIDTH) || (lcdltdc.pheight != LTDC_TARGET_HEIGHT))
     {
+#if LTDC_ENABLE_ID_FALLBACK
+        if ((lcdid != LTDC_PANEL_FALLBACK_ID) && (LTDC_PANEL_FALLBACK_ID != 0U))
+        {
+            lcdid = LTDC_PANEL_FALLBACK_ID;
+            g_ltdc_panel_id = lcdid;
+            lcdltdc.pwidth = 0U;
+            lcdltdc.pheight = 0U;
+            lcdltdc.width = 0U;
+            lcdltdc.height = 0U;
+            goto panel_profile_select;
+        }
+#endif
         g_ltdc_init_stage = 0xE302u;
         lcddev.id = 0U;
         lcddev.width = 0U;
@@ -1156,7 +1169,7 @@ void ltdc_init(void)
 
     {
         uint32_t frame_bytes = lcdltdc.pwidth * lcdltdc.pheight * lcdltdc.pixsize;
-        uint32_t limit_end = LTDC_FRAME_BUF_ADDR + 0x00200000u; /* MPU non-cacheable window size */
+        uint32_t limit_end = LTDC_FRAME_BUF_ADDR + LTDC_FRAME_BUF_WINDOW_BYTES;
         if ((LTDC_FRAME_BUF_ADDR + frame_bytes * 2u) > limit_end)
         {
             g_ltdc_init_stage = 0xE303u;

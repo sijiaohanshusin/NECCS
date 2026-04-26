@@ -32,16 +32,30 @@ Err_t App_SD_Init(void)
     BSP_SD_Status_t sd_ret;
     FRESULT fr;
 
+    /* 如果之前曾初始化失败, 先清理再重试 */
+    if (s_state == APP_SD_ERROR)
+    {
+        App_SD_DeInit();
+    }
+
+    /* 已挂载 — 直接返回成功 */
+    if (s_state == APP_SD_MOUNTED)
+    {
+        return ERR_OK;
+    }
+
     /* Step 1: 初始化 SD 卡硬件 */
     sd_ret = BSP_SD_Init();
+    printf("[SD] BSP_SD_Init ret=%d\r\n", (int)sd_ret);
     if (sd_ret != BSP_SD_OK)
     {
         s_state = APP_SD_ERROR;
         return ERR_IO_FAILED;
     }
 
-    /* Step 2: 挂载 FatFS */
+    /* Step 2: 挂载 FatFS (会触发 disk_initialize → BSP_SD_Init, 由 init guard 跳过) */
     fr = f_mount(&s_fatfs, "0:", 1u);
+    printf("[SD] f_mount ret=%d\r\n", (int)fr);
     if (fr != FR_OK)
     {
         s_state = APP_SD_ERROR;

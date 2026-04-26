@@ -118,6 +118,20 @@ typedef struct {
  */
 void App_UiScreens_SetLiveData(const App_UiLiveData_t *data);
 
+/* ============================================================================
+ * 夜间模式十字准星 / 定向录音选区 (跨模块共享)
+ * ============================================================================ */
+
+extern uint16_t g_crosshair_x;       /**< 十字准星 X 坐标 (0..639) */
+extern uint16_t g_crosshair_y;       /**< 十字准星 Y 坐标 (0..423) */
+extern uint8_t  g_crosshair_enable;  /**< 十字准星使能 */
+
+extern uint16_t g_select_x1;         /**< 选区左上 X */
+extern uint16_t g_select_y1;         /**< 选区左上 Y */
+extern uint16_t g_select_x2;         /**< 选区右下 X */
+extern uint16_t g_select_y2;         /**< 选区右下 Y */
+extern uint8_t  g_select_enable;     /**< 选区使能 */
+
 #ifdef __cplusplus
 }
 #endif

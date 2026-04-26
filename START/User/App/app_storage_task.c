@@ -30,11 +30,12 @@
 #define STORAGE_CMD_QUEUE_DEPTH    8u
 #define STORAGE_FLUSH_INTERVAL_MS  20u      /**< 录音 flush 轮询间隔 */
 #define STORAGE_SPACE_REFRESH_MS   5000u    /**< 容量信息刷新间隔 */
+#define STORAGE_SD_CHECK_MS        2000u    /**< SD 卡健康检查间隔 */
 
 /* ========== BMP 文件格式 ========== */
 
-#define BMP_WIDTH          800u
-#define BMP_HEIGHT         480u
+#define BMP_WIDTH          1024u
+#define BMP_HEIGHT         600u
 #define BMP_BPP            2u   /* RGB565 = 2 bytes/pixel */
 #define BMP_ROW_BYTES      (BMP_WIDTH * BMP_BPP)
 #define BMP_PIXEL_SIZE     (BMP_WIDTH * BMP_HEIGHT * BMP_BPP)
@@ -60,13 +61,13 @@ static FIL s_fil;
 /** @brief 录音中标志 (需要持续 flush) */
 static uint8_t s_recording_active = 0u;
 
-/** @brief BMP 行缓冲: 800 × 2 = 1600 字节 */
+/** @brief BMP 行缓冲: 1024 × 2 = 2048 字节 */
 static uint8_t s_row_buf[BMP_ROW_BYTES];
 
 /* ========== BMP 头填充 ========== */
 
 /**
- * @brief 填充 66 字节 BMP 头 (BI_BITFIELDS, RGB565, 800×480, bottom-up)
+ * @brief 填充 66 字节 BMP 头 (BI_BITFIELDS, RGB565, 1024×600, bottom-up)
  */
 static void s_fill_bmp_header(uint8_t *buf)
 {
@@ -306,19 +307,14 @@ static Err_t s_handle_rec_stop(void)
         if ((fr != FR_OK) || (bw != 44u))
         {
             /* H2 fix: WAV 头回填失败 — 文件可能无法播放 */
-            s_state = STORAGE_STATE_ERROR;
         }
-    }
-    else
-    {
-        s_state = STORAGE_STATE_ERROR;
     }
 
     f_close(&s_fil);
     App_Recorder_Stop();
 
     s_recording_active = 0u;
-    s_state = STORAGE_STATE_IDLE;
+    s_state = STORAGE_STATE_IDLE;  /* 即使回填失败也恢复 IDLE (文件已关闭, 不应卡在 ERROR) */
 
     /* 刷新容量信息 */
     App_SD_RefreshSpace();
@@ -336,26 +332,35 @@ static void Storage_Task(void *pvParameters)
     App_StorageMsg_t msg;
     TickType_t wait_ticks;
     uint32_t space_refresh_tick = 0u;
+    uint32_t sd_check_tick = 0u;
 
     (void)pvParameters;
 
     for (;;)
     {
-        /* 录音期间: 短超时轮询 flush; 空闲: 长等待命令 */
+        /* 录音期间: 短超时轮询 flush; 空闲: 2s 超时用于 SD 健康检查 */
         wait_ticks = (s_recording_active != 0u) ?
                      pdMS_TO_TICKS(STORAGE_FLUSH_INTERVAL_MS) :
-                     portMAX_DELAY;
+                     pdMS_TO_TICKS(STORAGE_SD_CHECK_MS);
 
         if (xQueueReceive(s_cmd_queue, &msg, wait_ticks) == pdTRUE)
         {
+            /* ---- 命令到达前先检查 SD, 尝试自动恢复 ---- */
+            if (App_SD_GetState() != APP_SD_MOUNTED)
+            {
+                (void)App_SD_Init();  /* 尝试重新初始化 */
+            }
+
             switch (msg.cmd)
             {
             case STORAGE_CMD_CAPTURE_BMP:
-                s_handle_capture_bmp();
+                if (s_handle_capture_bmp() != ERR_OK)
+                {
+                    s_state = STORAGE_STATE_ERROR;
+                }
                 break;
 
             case STORAGE_CMD_REC_START:
-                /* M5 fix: 记录失败状态以便 UI 反馈 */
                 if (s_handle_rec_start(msg.param) != ERR_OK)
                 {
                     s_state = STORAGE_STATE_ERROR;
@@ -381,6 +386,33 @@ static void Storage_Task(void *pvParameters)
         if (s_recording_active == 0u)
         {
             uint32_t now = xTaskGetTickCount();
+
+            /* ---- SD 卡健康检查 + 自动恢复 ---- */
+            if ((now - sd_check_tick) >= pdMS_TO_TICKS(STORAGE_SD_CHECK_MS))
+            {
+                sd_check_tick = now;
+
+                if (App_SD_GetState() != APP_SD_MOUNTED)
+                {
+                    /* SD 未挂载 — 尝试重新初始化 */
+                    if (App_SD_Init() == ERR_OK)
+                    {
+                        s_state = STORAGE_STATE_IDLE;
+                        printf("[Storage] SD re-init OK\r\n");
+                    }
+                    else
+                    {
+                        s_state = STORAGE_STATE_ERROR;
+                    }
+                }
+                else if (s_state == STORAGE_STATE_ERROR)
+                {
+                    /* SD 已挂载但 storage 状态卡在 ERROR — 自动恢复 */
+                    s_state = STORAGE_STATE_IDLE;
+                    printf("[Storage] error cleared\r\n");
+                }
+            }
+
             if ((now - space_refresh_tick) >= pdMS_TO_TICKS(STORAGE_SPACE_REFRESH_MS))
             {
                 space_refresh_tick = now;

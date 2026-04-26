@@ -161,12 +161,14 @@
 
 #define APP_DISPLAY_DEFAULT_MODE     0u       /**< 上电默认显示模式：0=FAST，1=BALANCED，2=CLEAN。 */
 
+#define APP_DISPLAY_TARGET_SCREEN_W   1024u    /**< 当前 7 寸 RGB 屏目标分辨率宽度。 */
+#define APP_DISPLAY_TARGET_SCREEN_H   600u     /**< 当前 7 寸 RGB 屏目标分辨率高度。 */
 #define APP_DISPLAY_TEXT_WIDTH_PX    APP_DISPLAY_UI_PANEL_W /**< 兼容旧布局代码的 UI 宽度别名。 */
-#define APP_DISPLAY_CAMERA_VIEW_W     640u     /**< 摄像头显示区域宽度。 */
-#define APP_DISPLAY_CAMERA_VIEW_H     480u     /**< 摄像头显示区域高度。 */
-#define APP_DISPLAY_HEAT_VIEW_W       480u     /**< 热力图叠加区域宽度。 */
-#define APP_DISPLAY_HEAT_VIEW_H       480u     /**< 热力图叠加区域高度。 */
-#define APP_DISPLAY_UI_PANEL_W        160u     /**< 右侧状态/UI 面板宽度。 */
+#define APP_DISPLAY_CAMERA_VIEW_W     (APP_DISPLAY_TARGET_SCREEN_W - APP_DISPLAY_UI_PANEL_W) /**< 主工作区宽度。 */
+#define APP_DISPLAY_CAMERA_VIEW_H     544u     /**< 主工作区高度，与状态栏/工具栏留白对齐。 */
+#define APP_DISPLAY_HEAT_VIEW_W       APP_DISPLAY_CAMERA_VIEW_W   /**< 热力图叠加区域宽度。 */
+#define APP_DISPLAY_HEAT_VIEW_H       APP_DISPLAY_CAMERA_VIEW_H   /**< 热力图叠加区域高度。 */
+#define APP_DISPLAY_UI_PANEL_W        256u     /**< 7 寸主界面右侧状态/UI 面板宽度。 */
 #define APP_DISPLAY_MAX_LINE_PIXELS  1280u    /**< 单行临时缓冲允许的最大像素数。 */
 #define APP_DISPLAY_BLIT_ROWS_MAX    8u       /**< 单次块渲染最大行数。 */
 

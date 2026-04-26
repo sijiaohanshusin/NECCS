@@ -5,7 +5,7 @@
 ; - D2 SRAM: explicit DMA / dedicated sections only (.dma_buffer, .d2_sram_data)
 ; - SDRAM fixed windows used outside the linker:
 ;   * 0xC0000000..0xC06FFFFF reserved by LTDC/camera/display fixed buffers
-;   * 0xC0700000..0xC07BFFFF reserved by the LVGL full-screen panel framebuffer
+;   * 0xC0800000..0xC093FFFF reserved by the LVGL full-screen panel framebuffer
 ;   * 0xC07C0000..0xC07FBFFF reserved by the LVGL heap pool (128 KB)
 
 LR_IROM1 0x08000000 0x00200000  {

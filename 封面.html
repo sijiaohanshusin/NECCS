@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>超分辨率技术 · 封面</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1600px;height:900px;overflow:hidden;
+  font-family:"Microsoft YaHei","PingFang SC",sans-serif;color:#fff;
+  background:#07101f}
+
+/* ── Multi-layer background ── */
+.bg{position:absolute;inset:0;overflow:hidden}
+.bg-g1{position:absolute;width:900px;height:900px;border-radius:50%;
+  background:radial-gradient(circle,rgba(110,15,210,.32) 0%,transparent 70%);
+  top:-200px;right:-180px}
+.bg-g2{position:absolute;width:700px;height:700px;border-radius:50%;
+  background:radial-gradient(circle,rgba(56,189,248,.10) 0%,transparent 70%);
+  bottom:-200px;left:-100px}
+.bg-g3{position:absolute;width:500px;height:500px;border-radius:50%;
+  background:radial-gradient(circle,rgba(139,92,246,.14) 0%,transparent 70%);
+  top:180px;left:350px}
+
+/* ── Decorative grid lines (perspective feel) ── */
+.grid{position:absolute;inset:0;pointer-events:none;opacity:.045}
+.grid line{stroke:#fff;stroke-width:1}
+
+/* ── Decorative "SR" watermark ── */
+.watermark{position:absolute;right:-40px;top:50%;transform:translateY(-50%);
+  font-size:320px;font-weight:900;
+  background:linear-gradient(180deg,rgba(139,92,246,.12) 0%,rgba(56,189,248,.04) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  line-height:1;letter-spacing:-10px;pointer-events:none;user-select:none}
+
+/* ── Left accent stripe ── */
+.stripe{position:absolute;left:0;top:0;bottom:0;width:4px;
+  background:linear-gradient(180deg,transparent 0%,#a78bfa 30%,#38bdf8 70%,transparent 100%)}
+
+/* ── Main layout ── */
+.slide{position:relative;z-index:1;width:1600px;height:900px;
+  display:flex;align-items:stretch}
+
+/* Left content area */
+.left{flex:1;padding:76px 80px 0 88px;display:flex;flex-direction:column;justify-content:center}
+
+/* Tag line at top */
+.tag-row{display:flex;align-items:center;gap:14px;margin-bottom:36px}
+.tag{display:inline-block;padding:5px 18px;
+  border:1px solid rgba(139,92,246,.4);border-radius:6px;
+  color:rgba(255,255,255,.5);font-size:13px;letter-spacing:1px}
+.tag-line{height:1px;width:60px;background:linear-gradient(90deg,rgba(139,92,246,.5),transparent)}
+
+/* Main title */
+.main-title{font-size:86px;font-weight:800;line-height:1.08;letter-spacing:-2px;
+  margin-bottom:18px}
+.main-title .zh{
+  background:linear-gradient(135deg,#f0f4ff 0%,#e2d9f3 35%,#a78bfa 65%,#7dd3fc 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;display:block}
+
+/* Subtitle */
+.subtitle{font-size:28px;font-weight:400;color:rgba(255,255,255,.42);
+  letter-spacing:.5px;margin-bottom:48px;line-height:1.4}
+.subtitle em{font-style:normal;color:rgba(139,92,246,.75)}
+
+/* Divider */
+.divider{display:flex;align-items:center;gap:16px;margin-bottom:44px}
+.div-line{height:1px;flex:0 0 48px;
+  background:linear-gradient(90deg,rgba(255,255,255,.25),transparent)}
+.div-text{font-size:13px;color:rgba(255,255,255,.28);letter-spacing:1.5px}
+
+/* Course info */
+.course-info{display:flex;flex-direction:column;gap:5px}
+.course-name{font-size:16px;color:rgba(255,255,255,.38);letter-spacing:.5px}
+.school-name{font-size:15px;color:rgba(255,255,255,.25);letter-spacing:.5px}
+
+/* Right: Member panel */
+.right{flex:0 0 460px;display:flex;flex-direction:column;
+  padding:60px 52px 60px 0;justify-content:center;gap:16px}
+
+.panel-title{font-size:13px;letter-spacing:2px;color:rgba(255,255,255,.3);
+  margin-bottom:8px;font-weight:600}
+
+.member{border-radius:10px;padding:13px 20px;display:flex;align-items:center;gap:18px;
+  position:relative;overflow:hidden}
+.member::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:2px}
+
+.m1{background:rgba(139,92,246,.05);border:1px solid rgba(139,92,246,.14)}
+.m1::before{background:linear-gradient(180deg,#a78bfa,#7c3aed)}
+.m1 .avatar{background:rgba(139,92,246,.12);color:#c4b5fd;border-color:rgba(139,92,246,.25)}
+.m1 .mname{color:#c4b5fd}
+
+.m2{background:rgba(251,191,36,.04);border:1px solid rgba(251,191,36,.12)}
+.m2::before{background:linear-gradient(180deg,#fbbf24,#d97706)}
+.m2 .avatar{background:rgba(251,191,36,.10);color:#fde68a;border-color:rgba(251,191,36,.22)}
+.m2 .mname{color:#fde68a}
+
+.m3{background:rgba(45,212,191,.04);border:1px solid rgba(45,212,191,.12)}
+.m3::before{background:linear-gradient(180deg,#2dd4bf,#0d9488)}
+.m3 .avatar{background:rgba(45,212,191,.10);color:#99f6e4;border-color:rgba(45,212,191,.22)}
+.m3 .mname{color:#99f6e4}
+
+.m4{background:rgba(56,189,248,.04);border:1px solid rgba(56,189,248,.12)}
+.m4::before{background:linear-gradient(180deg,#38bdf8,#0284c7)}
+.m4 .avatar{background:rgba(56,189,248,.10);color:#7dd3fc;border-color:rgba(56,189,248,.22)}
+.m4 .mname{color:#7dd3fc}
+
+.member-info{flex:1;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.mname{font-size:19px;font-weight:700}
+.mid{font-family:Consolas,"Courier New",monospace;font-size:13px;
+  color:rgba(255,255,255,.32);letter-spacing:.5px}
+
+/* Date badge at bottom right */
+.date-badge{margin-top:8px;text-align:right;
+  font-size:13px;color:rgba(255,255,255,.22);letter-spacing:.5px}
+</style></head>
+<body>
+
+<!-- Background -->
+<div class="bg">
+  <div class="bg-g1"></div>
+  <div class="bg-g2"></div>
+  <div class="bg-g3"></div>
+  <!-- SVG grid -->
+  <svg style="position:absolute;inset:0;opacity:.04" width="1600" height="900" viewBox="0 0 1600 900">
+    <defs>
+      <pattern id="g" width="80" height="80" patternUnits="userSpaceOnUse">
+        <path d="M80 0 L0 0 0 80" fill="none" stroke="rgba(255,255,255,1)" stroke-width=".6"/>
+      </pattern>
+    </defs>
+    <rect width="1600" height="900" fill="url(#g)"/>
+    <!-- fade mask -->
+    <rect width="1600" height="900" fill="url(#fade)"/>
+    <defs>
+      <radialGradient id="fade" cx="50%" cy="50%" r="70%">
+        <stop offset="30%" stop-color="#07101f" stop-opacity="0"/>
+        <stop offset="100%" stop-color="#07101f" stop-opacity="1"/>
+      </radialGradient>
+    </defs>
+  </svg>
+</div>
+
+<!-- Left accent stripe -->
+<div class="stripe"></div>
+
+<!-- Watermark -->
+<div class="watermark">SR</div>
+
+<!-- Main slide layout -->
+<div class="slide">
+
+  <!-- Left: Title & Info -->
+  <div class="left">
+    <div class="tag-row">
+      <span class="tag">SUPER-RESOLUTION</span>
+      <div class="tag-line"></div>
+    </div>
+
+    <div class="main-title">
+      <span class="zh">超分辨率技术</span>
+    </div>
+
+    <div class="subtitle">
+      从模糊到清晰的 <em>AI</em> 魔法
+    </div>
+
+    <div class="divider">
+      <div class="div-line"></div>
+      <div class="div-text">HARBIN ENGINEERING UNIVERSITY · 2026.04</div>
+    </div>
+
+    <div class="course-info">
+      <div class="course-name">信号与信息处理前沿技术</div>
+      <div class="school-name">哈尔滨工程大学</div>
+    </div>
+  </div>
+
+  <!-- Right: Members -->
+  <div class="right">
+    <div class="panel-title">汇 报 团 队</div>
+
+    <div class="member m1">
+      <div class="member-info">
+        <div class="mname">卓文高</div>
+        <div class="mid">2024080524</div>
+      </div>
+    </div>
+
+    <div class="member m2">
+      <div class="member-info">
+        <div class="mname">夏智元</div>
+        <div class="mid">2024081615</div>
+      </div>
+    </div>
+
+    <div class="member m3">
+      <div class="member-info">
+        <div class="mname">王喆</div>
+        <div class="mid">2024081619</div>
+      </div>
+    </div>
+
+    <div class="member m4">
+      <div class="member-info">
+        <div class="mname">张铭哲</div>
+        <div class="mid">2024081617</div>
+      </div>
+    </div>
+
+    <div class="date-badge">2026 年 4 月</div>
+  </div>
+
+</div>
+</body></html>

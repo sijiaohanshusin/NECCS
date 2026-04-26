@@ -45,6 +45,7 @@ static uint8_t s_touch_is_gt_panel(uint16_t panel_id)
 {
     return (uint8_t)((panel_id == 0x4342u) ||
                      (panel_id == 0x4384u) ||
+                     (panel_id == 0x7016u) ||
                      (panel_id == 0x5571u) ||
                      (panel_id == 0x8081u) ||
                      (panel_id == 0x1018u));
@@ -57,8 +58,7 @@ static uint8_t s_touch_is_gt_panel(uint16_t panel_id)
  */
 static uint8_t s_touch_is_ft_panel(uint16_t panel_id)
 {
-    return (uint8_t)((panel_id == 0x7084u) ||
-                     (panel_id == 0x7016u));
+    return (uint8_t)(panel_id == 0x7084u);
 }
 
 /**

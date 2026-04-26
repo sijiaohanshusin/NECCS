@@ -5,6 +5,7 @@
 #include "app_runtime.h"
 
 #include "app_display.h"
+#include "app_laser.h"
 #include "app_perf.h"
 #include "app_spectrum.h"
 #include "app_task_cfg.h"
@@ -24,6 +25,7 @@ static App_Runtime_Config_t s_runtime_cfg = {
     0u,                         /**< perf_enabled：性能统计默认关闭 */
     {0u, 0u, 0u},               /**< reserved[3]：对齐填充，保留备用 */
     APP_RUNTIME_DISP_MODE_BALANCED, /**< display_mode：默认均衡模式（兼顾清晰度与 CPU） */
+    APP_MODE_MAIN,                  /**< operating_mode：默认主模式 */
     {
         APP_DISPLAY_EMA_ATTACK,         /**< ema_attack：EMA 攻击系数（能量上升速率） */
         APP_DISPLAY_EMA_DECAY,          /**< ema_decay：EMA 衰减系数（能量下降速率） */
@@ -32,6 +34,7 @@ static App_Runtime_Config_t s_runtime_cfg = {
         APP_DISPLAY_DYNAMIC_GAMMA,      /**< gamma：伽马校正系数，调整热力图视觉对比度 */
         APP_DISPLAY_NOISE_GATE_RATIO,   /**< noise_gate_ratio：噪声门限比例，抑制弱信号假峰 */
         APP_DISPLAY_NOISE_ADAPT_GAIN,   /**< noise_adapt_gain：自适应噪声估计增益 */
+        0.85f,                          /**< heatmap_opacity：热力图叠加透明度 (0.0-1.0) */
         APP_DISPLAY_SMOOTH_PASSES,      /**< smooth_passes：空间平滑迭代次数（0=不平滑） */
         APP_DISPLAY_FINE_FUSION_ENABLE, /**< fine_fusion_enable：是否叠加精细 SRP 网格 */
         APP_DISPLAY_DRAW_COARSE_GRID,   /**< draw_coarse_grid：是否绘制粗网格参考线 */
@@ -127,6 +130,7 @@ static void s_runtime_displaycfg_from_display(const App_Display_RuntimeCfg_t *sr
     dst->gamma             = src->gamma;             /* 伽马系数直接复制 */
     dst->noise_gate_ratio  = src->noise_gate_ratio;  /* 噪声门限比例直接复制 */
     dst->noise_adapt_gain  = src->noise_adapt_gain;  /* 自适应噪声增益直接复制 */
+    dst->heatmap_opacity   = src->heatmap_opacity;   /* 热力图透明度直接复制 */
     dst->smooth_passes     = src->smooth_passes;     /* 平滑迭代次数直接复制 */
     dst->fine_fusion_enable = src->fine_fusion_enable; /* 精细融合开关直接复制 */
     dst->draw_coarse_grid  = src->draw_coarse_grid;  /* 粗网格绘制开关直接复制 */
@@ -165,6 +169,7 @@ static void s_runtime_displaycfg_to_display(const App_Runtime_DisplayCfg_t *src,
     dst->gamma             = src->gamma;             /* 伽马系数 */
     dst->noise_gate_ratio  = src->noise_gate_ratio;  /* 噪声门限比例 */
     dst->noise_adapt_gain  = src->noise_adapt_gain;  /* 自适应噪声增益 */
+    dst->heatmap_opacity   = src->heatmap_opacity;   /* 热力图透明度 */
     dst->smooth_passes     = src->smooth_passes;     /* 平滑迭代次数 */
     dst->fine_fusion_enable = src->fine_fusion_enable; /* 精细融合开关 */
     dst->draw_coarse_grid  = src->draw_coarse_grid;  /* 粗网格绘制开关 */
@@ -359,6 +364,54 @@ void App_RuntimeConfig_GetDisplayCfg(App_Runtime_DisplayCfg_t *cfg)
     taskENTER_CRITICAL();
     *cfg = s_runtime_cfg.display_cfg;  /* 整体结构体复制，保证一致性 */
     taskEXIT_CRITICAL();
+}
+
+/* -------------------------------------------------------------------- */
+/*  操作模式 (Operating Mode)                                            */
+/* -------------------------------------------------------------------- */
+
+/**
+ * @brief 设置设备操作模式 (含硬件侧效应)
+ * @param mode 目标操作模式
+ */
+void App_RuntimeConfig_SetOperatingMode(App_OperatingMode_t mode)
+{
+    App_OperatingMode_t old_mode;
+
+    if ((uint32_t)mode >= (uint32_t)APP_MODE_COUNT)
+    {
+        return;
+    }
+
+    taskENTER_CRITICAL();
+    old_mode = s_runtime_cfg.operating_mode;
+    s_runtime_cfg.operating_mode = mode;
+    taskEXIT_CRITICAL();
+
+    /* 硬件侧效应: 切离旧模式 */
+    if (old_mode == APP_MODE_NIGHT && mode != APP_MODE_NIGHT)
+    {
+        App_NightMode_Disable();
+    }
+
+    /* 硬件侧效应: 切入新模式 */
+    if (mode == APP_MODE_NIGHT && old_mode != APP_MODE_NIGHT)
+    {
+        App_NightMode_Enable();
+    }
+}
+
+/**
+ * @brief 获取当前操作模式
+ * @return 当前操作模式
+ */
+App_OperatingMode_t App_RuntimeConfig_GetOperatingMode(void)
+{
+    App_OperatingMode_t mode;
+    taskENTER_CRITICAL();
+    mode = s_runtime_cfg.operating_mode;
+    taskEXIT_CRITICAL();
+    return mode;
 }
 
 /**

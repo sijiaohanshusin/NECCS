@@ -15,10 +15,10 @@
 
 /* If panel ID pins are floating/unwired, fall back to a fixed panel profile. */
 #define LTDC_ENABLE_ID_FALLBACK  1
-#define LTDC_PANEL_FALLBACK_ID   0X4384U
+#define LTDC_PANEL_FALLBACK_ID   0X7016U
 
 /* Force a known panel profile for this project. Set to 0U to enable auto-detect. */
-#define LTDC_FORCE_PANEL_ID      0X4384U
+#define LTDC_FORCE_PANEL_ID      0U
 
 /* LTDC panel timing and active layer state. */
 typedef struct
@@ -95,8 +95,9 @@ extern volatile uint32_t g_ltdc_swap_error_count;
 
 /* Framebuffer base in SDRAM. */
 #define LTDC_FRAME_BUF_ADDR      0XC0000000U
-#define LTDC_TARGET_WIDTH        800U
-#define LTDC_TARGET_HEIGHT       480U
+#define LTDC_TARGET_WIDTH        1024U
+#define LTDC_TARGET_HEIGHT       600U
+#define LTDC_FRAME_BUF_WINDOW_BYTES 0x00400000U
 
 /* Backlight polarity: 0=active-high, 1=active-low. */
 #define LTDC_BL_ACTIVE_LOW       0

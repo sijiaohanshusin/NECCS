@@ -22,8 +22,8 @@ extern "C" {
 /*********************
  *      DEFINES
  *********************/
-#define LV_PORT_OVERLAY_W                  800u
-#define LV_PORT_OVERLAY_H                  480u
+#define LV_PORT_OVERLAY_W                  1024u
+#define LV_PORT_OVERLAY_H                  600u
 #define LV_PORT_OVERLAY_DRAW_BUF_ROWS      16u
 #define LV_PORT_OVERLAY_MARGIN_X           0u
 #define LV_PORT_OVERLAY_MARGIN_Y           0u

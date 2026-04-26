@@ -1,4 +1,32 @@
 *** Using Compiler 'V5.06 update 7 (build 960)', folder: 'C:\Keil_v5\ARM\ARMCC\Bin'
 Build target 'START'
-"START\START.axf" - 0 Error(s), 0 Warning(s).
-Build Time Elapsed:  00:00:04
+compiling app_sd.c...
+compiling app_storage_task.c...
+compiling app_ui_screens.c...
+compiling app_display.c...
+..\User\App\app_display.c(68): warning:  #550-D: variable "s_ui_x1"  was set but never used
+  static uint16_t s_ui_x1 = 0u;
+..\User\App\app_display.c(71): warning:  #550-D: variable "s_last_noise_floor"  was set but never used
+  static float s_last_noise_floor = 0.0f;
+..\User\App\app_display.c(97): warning:  #550-D: variable "s_spectrum_ref_mag"  was set but never used
+  static float s_spectrum_ref_mag = APP_DISPLAY_SPECTRUM_MIN_MAG;
+..\User\App\app_display.c(98): warning:  #550-D: variable "s_spectrum_ema_valid"  was set but never used
+  static uint8_t s_spectrum_ema_valid = 0u;
+..\User\App\app_display.c(1972): warning:  #177-D: function "s_spectrum_clamp_band"  was declared but never referenced
+  static App_FreqBand_t s_spectrum_clamp_band(App_FreqBand_t band, uint16_t bin_count)
+..\User\App\app_display.c(2018): warning:  #177-D: function "s_spectrum_axis_min_hz"  was declared but never referenced
+  static float s_spectrum_axis_min_hz(uint16_t bin_count)
+..\User\App\app_display.c(2023): warning:  #177-D: function "s_spectrum_axis_max_hz"  was declared but never referenced
+  static float s_spectrum_axis_max_hz(uint16_t bin_count)
+..\User\App\app_display.c(2081): warning:  #177-D: function "s_spectrum_bin_to_y"  was declared but never referenced
+  static uint16_t s_spectrum_bin_to_y(uint16_t bin,
+..\User\App\app_display.c(2090): warning:  #177-D: function "s_spectrum_db_to_bar_x"  was declared but never referenced
+  static uint16_t s_spectrum_db_to_bar_x(float rel_db,
+..\User\App\app_display.c(2170): warning:  #177-D: function "s_spectrum_draw_guides"  was declared but never referenced
+  static void s_spectrum_draw_guides(uint16_t panel_x0,
+..\User\App\app_display.c: 10 warnings, 0 errors
+linking...
+Program Size: Code=287100 RO-data=352108 RW-data=207156 ZI-data=262936  
+FromELF: creating hex file...
+"START\START.axf" - 0 Error(s), 10 Warning(s).
+Build Time Elapsed:  00:00:14

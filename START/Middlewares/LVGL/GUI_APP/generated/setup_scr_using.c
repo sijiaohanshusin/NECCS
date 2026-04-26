@@ -23,7 +23,7 @@ void setup_scr_using(lv_ui *ui)
 {
 	//Write codes using
 	ui->using = lv_obj_create(NULL);
-	lv_obj_set_size(ui->using, 800, 480);
+	lv_obj_set_size(ui->using, LV_PORT_OVERLAY_W, LV_PORT_OVERLAY_H);
 	lv_obj_clear_flag(ui->using, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_scrollbar_mode(ui->using, LV_SCROLLBAR_MODE_OFF);
 
@@ -40,7 +40,9 @@ void setup_scr_using(lv_ui *ui)
 	lv_label_set_long_mode(ui->using_btn_1_label, LV_LABEL_LONG_WRAP);
 	lv_obj_align(ui->using_btn_1_label, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_set_style_pad_all(ui->using_btn_1, 0, LV_STATE_DEFAULT);
-	lv_obj_set_pos(ui->using_btn_1, 8, 414);
+	lv_obj_set_pos(ui->using_btn_1,
+                   8 + (lv_coord_t)((LV_PORT_OVERLAY_W - 800u) / 2u),
+                   414 + (lv_coord_t)((LV_PORT_OVERLAY_H - 480u) / 2u));
 	lv_obj_set_size(ui->using_btn_1, 56, 56);
 	lv_obj_set_scrollbar_mode(ui->using_btn_1, LV_SCROLLBAR_MODE_OFF);
 

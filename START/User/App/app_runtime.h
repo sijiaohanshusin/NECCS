@@ -32,6 +32,14 @@ typedef enum {
     APP_RUNTIME_DISP_NORM_FULL = 1u  /**< 完整归一化 */
 } App_Runtime_DisplayNorm_t;
 
+/** @brief 设备操作模式枚举 */
+typedef enum {
+    APP_MODE_MAIN            = 0u,  /**< 标准声源定位 (摄像头+热力图+频谱) */
+    APP_MODE_NIGHT           = 1u,  /**< 夜间校准 (激光+十字准星, 无摄像头) */
+    APP_MODE_DIRECTIONAL_REC = 2u,  /**< 定向录音 (可拖拽选区+波束成形) */
+    APP_MODE_COUNT           = 3u   /**< 哨兵值 */
+} App_OperatingMode_t;
+
 /** @brief 显示配置参数结构体 */
 typedef struct
 {
@@ -42,6 +50,7 @@ typedef struct
     float gamma;                /**< Gamma 校正系数 */
     float noise_gate_ratio;     /**< 噪声门限比率 */
     float noise_adapt_gain;     /**< 噪声自适应增益 */
+    float heatmap_opacity;      /**< 热力图叠加透明度 (0.0-1.0) */
     uint8_t smooth_passes;      /**< 平滑处理次数 */
     uint8_t fine_fusion_enable; /**< 精细融合使能标志 */
     uint8_t draw_coarse_grid;   /**< 粗网格绘制使能标志 */
@@ -61,6 +70,7 @@ typedef struct
     uint8_t perf_enabled;                  /**< 性能统计使能标志 */
     uint8_t reserved[3];                   /**< 预留对齐字节 */
     App_Runtime_DisplayMode_t display_mode; /**< 当前显示模式 */
+    App_OperatingMode_t operating_mode;     /**< 当前操作模式 */
     App_Runtime_DisplayCfg_t display_cfg;   /**< 显示配置参数 */
 } App_Runtime_Config_t;
 
@@ -167,6 +177,18 @@ void App_UiRenderer_SetBackend(App_UiRenderBackend_t backend);
  * @return 当前渲染后端
  */
 App_UiRenderBackend_t App_UiRenderer_GetBackend(void);
+
+/**
+ * @brief 设置设备操作模式 (含硬件侧效应: 摄像头/激光)
+ * @param mode 目标操作模式
+ */
+void App_RuntimeConfig_SetOperatingMode(App_OperatingMode_t mode);
+
+/**
+ * @brief 获取当前操作模式
+ * @return 当前操作模式
+ */
+App_OperatingMode_t App_RuntimeConfig_GetOperatingMode(void);
 #ifdef __cplusplus
 }
 #endif

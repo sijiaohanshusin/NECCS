@@ -45,6 +45,16 @@ stm32n6资料/
 这是这个开发板的官方资料，需要可以取用/
 docs_current_backup_*/
 docs_extracted_backup_*/
+/.codex/context/
+/PPT/_extracted2/
+/PPT/~$*.pptx
+/PPT/中间部分.pptx
+/tmp/
+/claude-code-best-practice-main/
+/claude-code-best-practice-main.zip
+/docs.zip
+/VSCodeUserSetup-*.exe
+/信息公选课PPT.pptx
 
 # User-specific files
 .claude/settings.local.json

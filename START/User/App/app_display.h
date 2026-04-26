@@ -102,6 +102,9 @@ typedef struct
     /* 背景噪声自适应增益。 */
     float noise_adapt_gain;
 
+    /* 热力图叠加透明度 (0.0-1.0)。 */
+    float heatmap_opacity;
+
     /* 高斯平滑迭代次数。 */
     uint8_t smooth_passes;
 

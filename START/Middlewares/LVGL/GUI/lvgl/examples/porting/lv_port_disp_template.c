@@ -29,9 +29,9 @@ static void s_clean_dcache_by_addr(const void *addr, uint32_t size);
 /**********************
  *  STATIC VARIABLES
  **********************/
-#define LV_PORT_PANEL_FB_ADDR   0xC0700000u
+#define LV_PORT_PANEL_FB_ADDR   0xC0800000u
 #define LV_PORT_PANEL_FB_BYTES  (LV_PORT_OVERLAY_W * LV_PORT_OVERLAY_H * 2u)
-#define LV_PORT_PANEL_FB_LIMIT  0xC0800000u
+#define LV_PORT_PANEL_FB_LIMIT  0xC0940000u
 
 #if ((LV_PORT_PANEL_FB_ADDR + LV_PORT_PANEL_FB_BYTES) > LV_PORT_PANEL_FB_LIMIT)
 #error "LVGL panel framebuffer must stay inside the reserved SDRAM window"

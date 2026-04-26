@@ -971,6 +971,16 @@
               <FilePath>..\User\App\app_ui_styles.c</FilePath>
             </File>
             <File>
+              <FileName>lv_font_sc_14.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\lv_font_sc_14.c</FilePath>
+            </File>
+            <File>
+              <FileName>lv_font_sc_12.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\User\App\lv_font_sc_12.c</FilePath>
+            </File>
+            <File>
               <FileName>app_trigger.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\User\App\app_trigger.c</FilePath>

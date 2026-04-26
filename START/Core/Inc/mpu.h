@@ -8,7 +8,7 @@
  * - SRAM1/SRAM2 (0x30000000 起，256KB)：MPU 设为 Non-Cacheable，适合 DMA 共享缓冲
  * - DTCM (0x20000000 起)：CPU 紧耦合内存，低延迟，不适合 DMA 访问
  * - AXI SRAM (0x24000000 起)：默认 Cacheable，适合大容量通用数据
- * - SDRAM (0xC0000000 起)：大部分 Cacheable，前 2MB 被单独覆盖为 Non-Cacheable
+ * - SDRAM (0xC0000000 起)：大部分 Cacheable，前 4MB 被单独覆盖为 Non-Cacheable
  *
  * 使用方式：
  * - 在变量定义前添加对应段属性宏
@@ -109,7 +109,7 @@ extern "C" {
  * 当前区域配置：
  * - Region 0: SRAM1 (0x30000000, 256KB) - Non-Cacheable
  * - Region 1: SDRAM (0xC0000000, 32MB) - Cacheable
- * - Region 2: SDRAM (0xC0000000, 2MB) - Non-Cacheable（覆盖 Region 1 的前 2MB）
+ * - Region 2: SDRAM (0xC0000000, 4MB) - Non-Cacheable（覆盖 Region 1 的前 4MB）
  *
  * 调用时机：
  * - 建议在 `HAL_Init()` 与 `SystemClock_Config()` 完成后调用

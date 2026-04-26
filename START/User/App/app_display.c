@@ -22,6 +22,7 @@
 #include "app_perf.h"
 #include "app_spectrum.h"
 #include "app_touch_test.h"
+#include "app_ui_screens.h"
 
 #include "LCD/lcd.h"
 #include "LCD/ltdc.h"
@@ -143,6 +144,7 @@ static App_Display_RuntimeCfg_t s_cfg = {
     APP_DISPLAY_MODE_FAST_GAMMA,
     APP_DISPLAY_MODE_FAST_NOISE_GATE_RATIO,
     APP_DISPLAY_MODE_FAST_NOISE_ADAPT_GAIN,
+    0.85f,  /* heatmap_opacity */
     APP_DISPLAY_MODE_FAST_SMOOTH_PASSES,
     APP_DISPLAY_MODE_FAST_FINE_FUSION_ENABLE,
     APP_DISPLAY_MODE_FAST_DRAW_COARSE_GRID,
@@ -158,6 +160,7 @@ static App_Display_RuntimeCfg_t s_cfg = {
     APP_DISPLAY_MODE_CLEAN_GAMMA,
     APP_DISPLAY_MODE_CLEAN_NOISE_GATE_RATIO,
     APP_DISPLAY_MODE_CLEAN_NOISE_ADAPT_GAIN,
+    0.85f,  /* heatmap_opacity */
     APP_DISPLAY_MODE_CLEAN_SMOOTH_PASSES,
     APP_DISPLAY_MODE_CLEAN_FINE_FUSION_ENABLE,
     APP_DISPLAY_MODE_CLEAN_DRAW_COARSE_GRID,
@@ -173,6 +176,7 @@ static App_Display_RuntimeCfg_t s_cfg = {
     APP_DISPLAY_DYNAMIC_GAMMA,
     APP_DISPLAY_NOISE_GATE_RATIO,
     APP_DISPLAY_NOISE_ADAPT_GAIN,
+    0.85f,  /* heatmap_opacity */
     APP_DISPLAY_SMOOTH_PASSES,
     APP_DISPLAY_FINE_FUSION_ENABLE,
     APP_DISPLAY_DRAW_COARSE_GRID,
@@ -490,6 +494,7 @@ void App_Display_SetConfig(const App_Display_RuntimeCfg_t *cfg)
     s_cfg.gamma = s_clamp_f32(cfg->gamma, 0.5f, 2.5f);
     s_cfg.noise_gate_ratio = s_clamp_f32(cfg->noise_gate_ratio, 0.0f, 0.6f);
     s_cfg.noise_adapt_gain = s_clamp_f32(cfg->noise_adapt_gain, 0.0f, 6.0f);
+    s_cfg.heatmap_opacity = s_clamp_f32(cfg->heatmap_opacity, 0.0f, 1.0f);
     s_cfg.smooth_passes = s_clamp_u8(cfg->smooth_passes, 0u, 3u);
     s_cfg.fine_fusion_enable = (cfg->fine_fusion_enable != 0u) ? 1u : 0u;
     s_cfg.draw_coarse_grid = (cfg->draw_coarse_grid != 0u) ? 1u : 0u;
@@ -551,7 +556,8 @@ App_Display_CameraView_t App_Display_GetCameraView(void)
 /** @brief 切换显示模式并加载对应默认配置 */
 void App_Display_SetMode(App_Display_Mode_t mode)
 {
-    App_Display_RuntimeCfg_t mode_cfg;
+    /* H1 fix: 从当前配置初始化,保留 heatmap_opacity 等用户设置 */
+    App_Display_RuntimeCfg_t mode_cfg = s_cfg;
 
     if ((mode != APP_DISPLAY_MODE_FAST) &&
         (mode != APP_DISPLAY_MODE_BALANCED) &&
@@ -1550,6 +1556,8 @@ static void s_render_field_alpha_rows(const App_CameraFrame_t *camera_frame, uin
     uint8_t blit_rows = s_clamp_u8(s_cfg.blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
     uint8_t use_bilinear = (s_cfg.interp_mode == APP_DISPLAY_INTERP_BILINEAR) ? 1u : 0u;
     uint16_t y_blk;
+    /* 每帧预计算 opacity: float → uint8 (0-255), 避免逐像素浮点运算 */
+    uint8_t opacity_u8 = (uint8_t)(s_cfg.heatmap_opacity * 255.0f + 0.5f);
     (void)color565;
 
     if ((map_w == 0u) ||
@@ -1640,6 +1648,8 @@ static void s_render_field_alpha_rows(const App_CameraFrame_t *camera_frame, uin
             {
                 uint8_t alpha = s_overlay_alpha_from_norm(src[x]);
                 uint16_t bg_px = bg[s_camera_col_near_cache[x]];
+                /* 应用用户透明度: alpha = alpha * opacity_u8 / 255 */
+                alpha = (uint8_t)(((uint32_t)alpha * (uint32_t)opacity_u8 + 127u) / 255u);
                 dst[x] = (alpha == 0u) ? bg_px : s_blend_rgb565(bg_px, s_heat_lut[src[x]], alpha);
             }
         }
@@ -2704,6 +2714,27 @@ void App_Display_Render(const Sound_Pos_t *pos,
             s_draw_hline_async(mxl, mcy, mxr, multi_colors[mi]);
             s_draw_vline_async(mcx, myt, myb, multi_colors[mi]);
         }
+    }
+    /* ---- 夜间模式全幅十字准星 (绿色) ---- */
+    if (g_crosshair_enable != 0u)
+    {
+        uint16_t gx = (uint16_t)(s_map_x0 + g_crosshair_x);
+        uint16_t gy = (uint16_t)(s_map_y0 + g_crosshair_y);
+        if (gx >= s_map_x0 && gx <= s_map_x1)
+            s_draw_vline_async(gx, s_map_y0, s_map_y1, GREEN);
+        if (gy >= s_map_y0 && gy <= s_map_y1)
+            s_draw_hline_async(s_map_x0, gy, s_map_x1, GREEN);
+    }
+    /* ---- 定向录音选区框 (青色虚线感) ---- */
+    if (g_select_enable != 0u)
+    {
+        uint16_t sx0 = (uint16_t)(s_map_x0 + g_select_x1);
+        uint16_t sy0 = (uint16_t)(s_map_y0 + g_select_y1);
+        uint16_t sx1 = (uint16_t)(s_map_x0 + g_select_x2);
+        uint16_t sy1 = (uint16_t)(s_map_y0 + g_select_y2);
+        if (sx1 > s_map_x1) sx1 = s_map_x1;
+        if (sy1 > s_map_y1) sy1 = s_map_y1;
+        s_draw_rect_async(sx0, sy0, sx1, sy1, CYAN);
     }
     /* ---- 声源轨迹 ---- */
     s_trajectory_push(pos);

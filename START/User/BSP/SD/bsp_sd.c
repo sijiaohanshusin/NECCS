@@ -1,12 +1,14 @@
 /**
  * @file    bsp_sd.c
- * @brief   SD 卡 BSP 驱动实现 (SDMMC1, 4-bit mode)
+ * @brief   SD 卡 BSP 驱动实现 (SDMMC1, 1-bit init → 4-bit upgrade)
  * @details GPIO: PC8(D0), PC9(D1), PC10(D2), PC11(D3), PC12(CLK), PD2(CMD)
- *          时钟: SDMMC1 使用 PLL1Q (最高 240 MHz), 分频后 ≤ 50 MHz
+ *          时钟: SDMMC1 使用 PLL1Q (240 MHz, PLLQ=4), 分频后 30 MHz
  */
 #include "bsp_sd.h"
 
 #include <string.h>
+#include <stdio.h>         /* 临时诊断: printf */
+#include "stm32h7xx_hal.h" /* HAL_RCCEx_GetPeriphCLKFreq */
 
 /** @brief SD 句柄 */
 static SD_HandleTypeDef s_hsd;
@@ -52,34 +54,64 @@ static void s_sd_gpio_deinit(void)
 BSP_SD_Status_t BSP_SD_Init(void)
 {
     HAL_StatusTypeDef hal_ret;
-    RCC_PeriphCLKInitTypeDef clk_init = {0};
+    uint8_t retry;
+
+    /* 防止 FatFS disk_initialize 二次调用导致 handle 被 memset 清零 */
+    if (s_initialized != 0u)
+    {
+        return BSP_SD_OK;
+    }
 
     /* GPIO 初始化 */
     s_sd_gpio_init();
 
-    /* 配置 SDMMC1 内核时钟源为 PLL2R (270 MHz)
-     * PLL2 已在 SAI MspInit 中配置: HSE/5 × 108 = 540 MHz VCO, R=2 → 270 MHz
-     * SDMMC_CK = 270 / (2 × ClockDiv) = 270 / 8 = 33.75 MHz */
-    clk_init.PeriphClockSelection = RCC_PERIPHCLK_SDMMC;
-    clk_init.SdmmcClockSelection  = RCC_SDMMCCLKSOURCE_PLL2;
-    if (HAL_RCCEx_PeriphCLKConfig(&clk_init) != HAL_OK)
+    /* SDMMC1 内核时钟: PLL1Q = 960 MHz VCO / 4 = 240 MHz (SystemClock_Config 中 PLLQ=4)
+     * SDMMC_CK = 240 / (2 × ClockDiv) — ClockDiv=4 → 30 MHz
+     *
+     * 注意: 不可使用 PLL2R 作为 SDMMC 时钟源, 因为 HAL_RCCEx_PeriphCLKConfig 会
+     * 停止 PLL2 并重配, 破坏 SAI1 的 PLL2P 时钟, 导致 PCMD3180 无音频. */
+    __HAL_RCC_SDMMC_CONFIG(RCC_SDMMCCLKSOURCE_PLL);  /* 显式选择 PLL1Q, 防止暖启动残留 */
+
+    printf("[SD] init: clk=%lu tick=%lu\r\n",
+           HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_SDMMC), HAL_GetTick());
+
+    hal_ret = HAL_ERROR;
+
+    for (retry = 0u; retry < 5u; retry++)
     {
-        return BSP_SD_ERROR;
+        /* ---- 每次重试: RCC 硬复位 SDMMC1 外设 (清除 DPSMACT/STA 等残留) ---- */
+        __HAL_RCC_SDMMC1_CLK_ENABLE();
+        __HAL_RCC_SDMMC1_FORCE_RESET();
+        __HAL_RCC_SDMMC1_RELEASE_RESET();
+
+        /* 确保 SDMMC 电源关闭, 给 SD 卡内部状态机充足复位时间 */
+        SDMMC1->POWER = 0u;
+        HAL_Delay(200u);  /* 200ms: cold-start/warm-restart need extra time for card reset */
+
+        /* 清零 handle 并配置参数 */
+        (void)memset(&s_hsd, 0, sizeof(s_hsd));
+        s_hsd.Instance                 = SDMMC1;
+        s_hsd.Init.ClockEdge           = SDMMC_CLOCK_EDGE_RISING;
+        s_hsd.Init.ClockPowerSave      = SDMMC_CLOCK_POWER_SAVE_DISABLE;
+        s_hsd.Init.BusWide             = SDMMC_BUS_WIDE_1B;  /* Init 1-bit; upgrade to 4-bit post-init */
+        s_hsd.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
+        s_hsd.Init.ClockDiv            = 4u; /* SDMMC1 CLK = kernel_clk / (2 * ClockDiv) */
+
+        hal_ret = HAL_SD_Init(&s_hsd);
+        if (hal_ret == HAL_OK)
+        {
+            break;
+        }
+
+        /* 诊断: 输出每次重试的外设寄存器状态 */
+        printf("[SD_DIAG] try=%u err=0x%08lX STA=0x%08lX PWR=0x%08lX CLKCR=0x%08lX\r\n",
+               (unsigned)retry, s_hsd.ErrorCode,
+               SDMMC1->STA, SDMMC1->POWER, SDMMC1->CLKCR);
+
+        /* 不调用 HAL_SD_DeInit (在外设异常态下可能阻塞), 
+         * 下一轮 RCC FORCE_RESET 会彻底清除所有寄存器 */
     }
 
-    /* 使能 SDMMC1 时钟 */
-    __HAL_RCC_SDMMC1_CLK_ENABLE();
-
-    /* 配置 SDMMC1：4-bit, 起始低速 (识别阶段), 后续提速 */
-    (void)memset(&s_hsd, 0, sizeof(s_hsd));
-    s_hsd.Instance                 = SDMMC1;
-    s_hsd.Init.ClockEdge           = SDMMC_CLOCK_EDGE_RISING;
-    s_hsd.Init.ClockPowerSave      = SDMMC_CLOCK_POWER_SAVE_DISABLE;
-    s_hsd.Init.BusWide             = SDMMC_BUS_WIDE_4B;
-    s_hsd.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
-    s_hsd.Init.ClockDiv            = 4u; /* SDMMC1 CLK = kernel_clk / (2 * ClockDiv) */
-
-    hal_ret = HAL_SD_Init(&s_hsd);
     if (hal_ret != HAL_OK)
     {
         s_initialized = 0u;
@@ -95,6 +127,7 @@ BSP_SD_Status_t BSP_SD_Init(void)
     }
 
     s_initialized = 1u;
+    printf("[SD] init OK\r\n");
     return BSP_SD_OK;
 }
 
