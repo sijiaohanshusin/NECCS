@@ -467,31 +467,36 @@ void App_Perf_Dump(void)
 uint8_t App_Perf_GetSectionSummary(App_Perf_Section_t section,
                                    App_Perf_SectionSummary_t *out)
 {
-    App_Perf_SectionStat_t *st;
-    uint32_t core_hz = SystemCoreClock;
+    App_Perf_SectionStat_t *st;          /* 目标区间统计数据指针 */
+    uint32_t core_hz = SystemCoreClock;  /* 读取系统主频，用于周期 → 微秒换算 */
 
-    if ((section >= APP_PERF_SEC_COUNT) || (out == NULL))
+    if ((section >= APP_PERF_SEC_COUNT) || (out == NULL))  /* 参数合法性检查 */
     {
-        return 0u;
+        return 0u;  /* 区间越界或输出指针为空，返回失败 */
     }
 
-    if (core_hz == 0u)
+    if (core_hz == 0u)              /* SystemCoreClock 未初始化的安全回退 */
     {
-        core_hz = 480000000u;
+        core_hz = 480000000u;       /* 假设 480 MHz（STM32H7 典型主频） */
     }
 
-    st = &s_perf_stats[section];
-    out->sample_count = st->sample_count;
+    st = &s_perf_stats[section];          /* 取目标区间统计结构体指针 */
+    out->sample_count = st->sample_count; /* 输出已采集样本总数 */
 
-    if (st->sample_count == 0u)
+    if (st->sample_count == 0u)           /* 无样本：输出全零并返回"无数据" */
     {
-        out->avg_us = 0.0f;
-        out->max_us = 0.0f;
-        return 0u;
+        out->avg_us = 0.0f;  /* 均值微秒置零 */
+        out->max_us = 0.0f;  /* 最大值微秒置零 */
+        return 0u;           /* 返回 0 表示数据无效 */
     }
 
+    /* 均值微秒 = (总周期 / 样本数) × (1e6 / 主频)
+     * 先除样本数得均值周期，再乘 1e6 / core_hz 转换为微秒 */
     out->avg_us = (float)(((double)st->total_cycles / (double)st->sample_count)
                           * 1e6 / (double)core_hz);
+
+    /* 最大值微秒 = 历史最大周期数 × (1e6 / 主频) */
     out->max_us = (float)((double)st->max_cycles * 1e6 / (double)core_hz);
-    return 1u;
+
+    return 1u;  /* 返回 1 表示输出数据有效 */
 }
