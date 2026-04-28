@@ -298,43 +298,55 @@ static uint16_t s_heat_color(float t)
 /** @brief 构建 256 级热力图 colormap LUT (s_heat_lut[]) */
 static void s_build_heat_lut(void)
 {
-    
     uint32_t i;
 
+    /* 将 LUT 索引 0~255 线性映射到归一化值 0.0~1.0，再通过五色段热力图函数生成 RGB565 颜色 */
+    /* LUT[0] = 最冷色（深蓝近黑），LUT[255] = 最热色（亮红） */
     for (i = 0u; i < APP_DISPLAY_HEAT_LUT_SIZE; i++)
     {
-        s_heat_lut[i] = s_heat_color((float)i / 255.0f);
+        s_heat_lut[i] = s_heat_color((float)i / 255.0f);   /* 将 [0,255] 线性归一化到 [0,1] 再取色 */
     }
 }
 
 /** @brief 构建高斯模糊核 (s_blur_kernel) 和精细融合核 (s_fine_kernel) */
 static void s_build_kernels(void)
 {
-    
     uint32_t i;
     uint32_t j;
-    float sum = 0.0f;
+    float sum = 0.0f;   /* 归一化用累加和 */
 
+    /* 若已构建过则直接返回（OTP 式初始化，只需一次） */
     if (s_kernel_ready != 0u)
     {
         return;
     }
 
+    /* ---- 构建 1D 高斯模糊核（用于分离式水平/垂直高斯平滑）----
+     * 公式：w[i] = exp(-dx² / (2σ²))
+     * dx = i - radius（使中心权重最大），σ = APP_DISPLAY_SMOOTH_SIGMA
+     * 最后除以累加和做归一化，使卷积不改变总能量
+     */
     for (i = 0u; i < APP_DISPLAY_BLUR_KERNEL_LEN; i++)
     {
-        int32_t dx = (int32_t)i - (int32_t)APP_DISPLAY_SMOOTH_RADIUS;
+        int32_t dx = (int32_t)i - (int32_t)APP_DISPLAY_SMOOTH_RADIUS;   /* 到核中心的有符号距离 */
         float w = expf(-((float)(dx * dx)) / (2.0f * APP_DISPLAY_SMOOTH_SIGMA * APP_DISPLAY_SMOOTH_SIGMA));
-        s_blur_kernel[i] = w;
-        sum += w;
+        s_blur_kernel[i] = w;   /* 存储未归一化权重 */
+        sum += w;               /* 累加供后续归一化 */
     }
     if (sum > 0.0f)
     {
         for (i = 0u; i < APP_DISPLAY_BLUR_KERNEL_LEN; i++)
         {
-            s_blur_kernel[i] /= sum;
+            s_blur_kernel[i] /= sum;   /* 归一化：使权重之和为 1.0 */
         }
     }
 
+    /* ---- 构建 2D 高斯精细融合核（用于精细网格的高斯权重叠加）----
+     * 公式：w[i,j] = exp(-(dx² + dy²) / (2σ'²))
+     * dx = i - radius_x, dy = j - radius_y
+     * σ' = APP_DISPLAY_FINE_KERNEL_SIGMA（通常比模糊核更小/更尖锐）
+     * 同样做归一化
+     */
     sum = 0.0f;
     for (i = 0u; i < APP_DISPLAY_FINE_KERNEL_LEN; i++)
     {
@@ -342,9 +354,9 @@ static void s_build_kernels(void)
         {
             int32_t dx = (int32_t)i - (int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS;
             int32_t dy = (int32_t)j - (int32_t)APP_DISPLAY_FINE_KERNEL_RADIUS;
-            float d2 = (float)(dx * dx + dy * dy);
+            float d2 = (float)(dx * dx + dy * dy);   /* 到核中心的欧氏距离平方 */
             float w = expf(-d2 / (2.0f * APP_DISPLAY_FINE_KERNEL_SIGMA * APP_DISPLAY_FINE_KERNEL_SIGMA));
-            s_fine_kernel[i * APP_DISPLAY_FINE_KERNEL_LEN + j] = w;
+            s_fine_kernel[i * APP_DISPLAY_FINE_KERNEL_LEN + j] = w;   /* 行优先存储 */
             sum += w;
         }
     }
@@ -352,11 +364,11 @@ static void s_build_kernels(void)
     {
         for (i = 0u; i < APP_DISPLAY_FINE_KERNEL_LEN * APP_DISPLAY_FINE_KERNEL_LEN; i++)
         {
-            s_fine_kernel[i] /= sum;
+            s_fine_kernel[i] /= sum;   /* 2D 核归一化 */
         }
     }
 
-    s_kernel_ready = 1u;
+    s_kernel_ready = 1u;   /* 标记内核已就绪，后续调用直接跳过 */
 }
 
 /** @brief 返回显示模式的可读名称 ("FAST"/"BAL"/"CLEAN") */
@@ -808,96 +820,145 @@ static void s_commit_frame(void)
  */
 void App_Display_Init(void)
 {
-    uint16_t draw_w;
-    uint16_t draw_h;
-    uint16_t camera_w;
-    uint16_t camera_h;
-    uint16_t heat_w;
-    uint16_t heat_h;
-    g_display_init_stage = 1u;
-    g_display_init_error = 0u;
-    s_ready = 0u;
-    s_build_kernels();
-    s_build_heat_lut();
-    s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
+    uint16_t draw_w;     /* LCD 物理宽度（像素）*/
+    uint16_t draw_h;     /* LCD 物理高度（像素）*/
+    uint16_t camera_w;   /* 摄像头区域宽度（总宽 - 右侧 UI 面板宽）*/
+    uint16_t camera_h;   /* 摄像头区域高度（= 总高）*/
+    uint16_t heat_w;     /* 热力图宽度（≤camera_w 且 ≤HEAT_VIEW_W）*/
+    uint16_t heat_h;     /* 热力图高度（≤camera_h 且 ≤HEAT_VIEW_H）*/
+
+    /* ---- 阶段 1: 初始化诊断变量与模块状态 ---- */
+    g_display_init_stage = 1u;   /* 用于 CLI 诊断：1=开始初始化 */
+    g_display_init_error = 0u;   /* 清零错误代码 */
+    s_ready = 0u;                /* 标记为"未就绪"，防止 render 提前运行 */
+
+    /* 预计算渲染所需的 DSP 内核和颜色 LUT */
+    s_build_kernels();           /* 高斯模糊核 + 精细融合核（一次性，结果缓存）*/
+    s_build_heat_lut();          /* 构建 256 级热力图 colormap LUT */
+
+    /* 初始化 EMA 峰值追踪参数 */
+    s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;   /* 防止初始帧出现全亮画面 */
     s_last_noise_floor = 0.0f;
-    s_fb_addr_a = 0u;
-    s_fb_addr_b = 0u;
-    s_cache_map_w = 0u;
+
+    /* 清零所有帧缓冲地址和尺寸缓存 */
+    s_fb_addr_a = 0u;                /* 前缓冲帧地址（待 ltdc_init 后填入）*/
+    s_fb_addr_b = 0u;                /* 后缓冲帧地址 */
+    s_cache_map_w = 0u;              /* 插值缓存宽度（0 = 未建立，下次 render 时重建）*/
     s_cache_map_h = 0u;
-    s_camera_cache_map_w = 0u;
+    s_camera_cache_map_w = 0u;       /* 摄像头缩放缓存尺寸 */
     s_camera_cache_map_h = 0u;
-    s_camera_cache_src_w = 0u;
+    s_camera_cache_src_w = 0u;       /* 摄像头帧源尺寸 */
     s_camera_cache_src_h = 0u;
-    s_camera_cache_seq = 0u;
-    s_camera_cache_valid = 0u;
+    s_camera_cache_seq = 0u;         /* 摄像头缓存帧序号 */
+    s_camera_cache_valid = 0u;       /* 摄像头缓存是否有效 */
+
+    /* 清零冻结画面相关状态 */
     s_camera_freeze_w = 0u;
     s_camera_freeze_h = 0u;
     s_camera_freeze_stride = 0u;
     s_camera_freeze_valid = 0u;
+
+    /* 清零调试统计计数器 */
     s_dbg_camera_path_count = 0u;
     s_dbg_camera_overlay_count = 0u;
     s_dbg_camera_input_seq = 0u;
+
+    /* 重置为默认摄像头叠加显示模式 */
     s_camera_view_mode = APP_DISPLAY_CAMERA_VIEW_OVERLAY;
-    s_norm_lut_valid = 0u;
+
+    /* 清零频谱显示相关状态 */
+    s_norm_lut_valid = 0u;   /* LUT 失效，下次使用前重建 */
     memset(s_spectrum_ema, 0, sizeof(s_spectrum_ema));
     memset(&s_last_spectrum_frame, 0, sizeof(s_last_spectrum_frame));
     s_spectrum_ref_mag = APP_DISPLAY_SPECTRUM_MIN_MAG;
     s_spectrum_ema_valid = 0u;
     s_spectrum_frame_valid = 0u;
+
+    /* 应用默认渲染模式（FAST/BAL/CLEAN）并加载对应参数 */
     App_Display_SetMode((App_Display_Mode_t)APP_DISPLAY_DEFAULT_MODE);
+
+    /* ---- 阶段 2: 初始化 LCD 硬件 ---- */
     g_display_init_stage = 2u;
-    lcd_init();
+    lcd_init();   /* 驱动 LTDC + FMC-SDRAM，建立与 LCD 屏的通信 */
+
+    /* ---- 阶段 3: 读取 LCD 分辨率并计算布局 ---- */
     g_display_init_stage = 3u;
-    draw_w = lcddev.width;
-    draw_h = lcddev.height;
+    draw_w = lcddev.width;    /* 由 lcd_init 填入，通常 1024 像素 */
+    draw_h = lcddev.height;   /* 通常 600 像素 */
+
+    /* 分辨率有效性检查：宽高均不能为 0 */
     if ((draw_w == 0u) || (draw_h == 0u))
     {
         g_display_init_error = 1u;
-        g_display_init_stage = 0xE001u;
+        g_display_init_stage = 0xE001u;   /* 错误码 E001：LCD init 后宽或高为 0 */
         return;
     }
+
+    /* 检查是否满足最小可用布局：宽度必须大于 UI 面板宽度，高度 ≥ 32px */
     if ((draw_w <= APP_DISPLAY_UI_PANEL_W) || (draw_h < 32u))
     {
         g_display_init_error = 2u;
-        g_display_init_stage = 0xE002u;
+        g_display_init_stage = 0xE002u;   /* 错误码 E002：屏幕太小无法放置 UI 面板 */
         return;
     }
-    camera_w = (uint16_t)(draw_w - APP_DISPLAY_UI_PANEL_W);
-    camera_h = draw_h;
+
+    /* 计算各区域坐标 */
+    camera_w = (uint16_t)(draw_w - APP_DISPLAY_UI_PANEL_W);  /* 左侧视频/热力图区域宽 */
+    camera_h = draw_h;                                         /* 视频区域高度 = 全屏高 */
+
+    /* 热力图尺寸：取"屏幕配置"和"目标视图"中的较小值（防止热力图超出屏幕）*/
     heat_w = (camera_w < APP_DISPLAY_HEAT_VIEW_W) ? camera_w : (uint16_t)APP_DISPLAY_HEAT_VIEW_W;
     heat_h = (camera_h < APP_DISPLAY_HEAT_VIEW_H) ? camera_h : (uint16_t)APP_DISPLAY_HEAT_VIEW_H;
+
+    /* 确保热力图有最小可用面积（至少 32×32 像素）*/
     if ((heat_w < 32u) || (heat_h < 32u))
     {
         g_display_init_error = 3u;
-        g_display_init_stage = 0xE003u;
+        g_display_init_stage = 0xE003u;   /* 错误码 E003：热力图区域太小 */
         return;
     }
-    s_map_x0 = (uint16_t)((camera_w - heat_w) / 2u);
-    s_map_y0 = (uint16_t)((camera_h - heat_h) / 2u);
-    s_map_x1 = (uint16_t)(s_map_x0 + heat_w - 1u);
-    s_map_y1 = (uint16_t)(s_map_y0 + heat_h - 1u);
+
+    /* 将热力图居中在摄像头区域内 */
+    s_map_x0 = (uint16_t)((camera_w - heat_w) / 2u);          /* 热力图左边界 */
+    s_map_y0 = (uint16_t)((camera_h - heat_h) / 2u);          /* 热力图上边界 */
+    s_map_x1 = (uint16_t)(s_map_x0 + heat_w - 1u);            /* 热力图右边界（含端点）*/
+    s_map_y1 = (uint16_t)(s_map_y0 + heat_h - 1u);            /* 热力图下边界（含端点）*/
+
+    /* 摄像头叠加区域与热力图区域一致（全叠加模式）*/
     s_camera_x0 = s_map_x0;
     s_camera_y0 = s_map_y0;
     s_camera_x1 = s_map_x1;
     s_camera_y1 = s_map_y1;
-    s_text_x = camera_w;
-    s_ui_x1 = (uint16_t)(draw_w - 1u);
+
+    /* 文字/数值显示区域 X 起始 = 摄像头区域右边（= 热力图右边 + 1）*/
+    s_text_x  = camera_w;
+    /* UI 面板最右侧像素 */
+    s_ui_x1   = (uint16_t)(draw_w - 1u);
+
+    /* 预先填充插值坐标缓存（避免第一帧渲染时触发重建）*/
     s_refresh_render_map_cache((uint16_t)(s_map_x1 - s_map_x0 + 1u),
                                (uint16_t)(s_map_y1 - s_map_y0 + 1u));
+
+    /* ---- 阶段 4: 初始化 LTDC 硬件 + 预加载 CLUT ---- */
     g_display_init_stage = 4u;
-    s_fb_addr_a = ltdc_get_frontbuf_addr();
-    s_fb_addr_b = ltdc_get_backbuf_addr();
+    s_fb_addr_a = ltdc_get_frontbuf_addr();   /* 获取前缓冲（当前显示帧）地址 */
+    s_fb_addr_b = ltdc_get_backbuf_addr();    /* 获取后缓冲（待绘制帧）地址 */
+
+    /* 将热力图 colormap LUT 预装载到 DMA2D CLUT（硬件 L8→RGB565 转换加速）*/
     DMA2D_Accel_LoadClutFromRgb565(s_heat_lut, APP_DISPLAY_HEAT_LUT_SIZE);
+
+    /* 初始清屏：填充全黑背景，绘制热力图区域边框（白色）*/
     s_fill_rect_async(0u, 0u, (uint16_t)(draw_w - 1u), (uint16_t)(draw_h - 1u), BLACK);
     s_draw_rect_async(s_map_x0, s_map_y0, s_map_x1, s_map_y1, WHITE);
     if (s_text_x > 0u)
     {
+        /* 在摄像头区域和 UI 面板之间绘制分割线 */
         s_draw_vline_async((uint16_t)(s_text_x - 1u), 0u, (uint16_t)(draw_h - 1u), WHITE);
     }
-    s_commit_frame();
-    s_ready = 1u;
-    g_display_init_stage = 0x8000u;
+    s_commit_frame();   /* 提交帧：触发 LTDC 换页，让初始界面显示出来 */
+
+    s_ready = 1u;                   /* 标记模块就绪，render 函数可开始调用 */
+    g_display_init_stage = 0x8000u;  /* 成功完成：阶段码 0x8000 */
 }
 
 /** @brief 安全取功率值: 过滤 NaN/Inf/负值, 返回 0.0 或正值 */
@@ -1670,13 +1731,16 @@ static void s_render_field_alpha_rows(const App_CameraFrame_t *camera_frame, uin
  */
 static void s_update_norm_field(float field_peak, uint32_t frame_seq)
 {
-    
     uint32_t i;
-    float ref;
-    float floor_linear;
-    float bg_sum = 0.0f;
-    uint32_t bg_cnt = 0u;
+    float ref;              /* 峰值参考（EMA 峰值），归一化分母 */
+    float floor_linear;     /* 噪声门限（线性域）：低于此值的像素归零 */
+    float bg_sum = 0.0f;    /* 背景能量累加（用于自适应噪声估计） */
+    uint32_t bg_cnt = 0u;   /* 背景像素计数 */
 
+    /* ---- 特殊情况 1: 空闲测试图案 ----
+     * 若峰值低于最小可信阈值且测试图案开关打开，
+     * 则渲染一个棋盘格纹理以区分"无声"和"系统未运行"
+     */
     if ((field_peak <= APP_DISPLAY_DYNAMIC_MIN_PEAK) && (APP_DISPLAY_IDLE_TEST_PATTERN != 0u))
     {
         for (i = 0u; i < APP_DISPLAY_FIELD_H; i++)
@@ -1684,7 +1748,9 @@ static void s_update_norm_field(float field_peak, uint32_t frame_seq)
             uint32_t x;
             for (x = 0u; x < APP_DISPLAY_FIELD_W; x++)
             {
+                /* 用帧序号低 bits 驱动相位，使棋盘格动起来（视觉确认系统在运行） */
                 uint32_t phase = (frame_seq >> 2) & 1u;
+                /* 若 (x格 + y格 + 相位) 为奇数则亮，否则暗，形成棋盘 */
                 s_field_norm_u8[i * APP_DISPLAY_FIELD_W + x] = ((((x >> 3) + (i >> 3) + phase) & 1u) != 0u) ? 48u : 12u;
             }
         }
@@ -1692,6 +1758,10 @@ static void s_update_norm_field(float field_peak, uint32_t frame_seq)
         return;
     }
 
+    /* ---- 特殊情况 2: 信号过弱 ----
+     * 峰值低于最小可信阈值（DYNAMIC_MIN_PEAK）且测试图案关闭，
+     * 则清空归一化场（全黑显示）
+     */
     if (field_peak <= APP_DISPLAY_DYNAMIC_MIN_PEAK)
     {
         memset(s_field_norm_u8, 0, sizeof(s_field_norm_u8));
@@ -1699,48 +1769,67 @@ static void s_update_norm_field(float field_peak, uint32_t frame_seq)
         return;
     }
 
+    /* ---- EMA 峰值作为归一化参考 ----
+     * s_peak_ema 由外部每帧用 EMA 更新（attack/decay 双速率）
+     * 若 EMA 尚未建立（< MIN_PEAK），用 MIN_PEAK 兜底
+     */
     ref = (s_peak_ema < APP_DISPLAY_DYNAMIC_MIN_PEAK) ? APP_DISPLAY_DYNAMIC_MIN_PEAK : s_peak_ema;
+
+    /* ---- 自适应噪声本底估计 ----
+     * 收集所有能量值低于当前帧峰值 50% 的像素作为"背景"
+     * bg_floor = mean(background) × noise_adapt_gain
+     * 将 bg_floor 与固定比例门限 (peak × noise_gate_ratio) 取较大者
+     * 这样在安静环境下能更智能地抑制低能背景噪声
+     */
     for (i = 0u; i < APP_DISPLAY_FIELD_PIXELS; i++)
     {
-        
-        if (s_field_a[i] < (field_peak * 0.5f))
+        if (s_field_a[i] < (field_peak * 0.5f))   /* 低于峰值一半 → 视为背景 */
         {
             bg_sum += s_field_a[i];
             bg_cnt++;
         }
     }
-    
+
+    /* 固定比例噪声门限：能量低于 (peak × noise_gate_ratio) 的区域归零 */
     floor_linear = field_peak * s_cfg.noise_gate_ratio;
     if (bg_cnt > 0u)
     {
-        
+        /* 自适应门限：背景均值 × 增益 */
         float bg_floor = (bg_sum / (float)bg_cnt) * s_cfg.noise_adapt_gain;
         if (bg_floor > floor_linear)
         {
-            floor_linear = bg_floor;
+            floor_linear = bg_floor;   /* 取两者较大值，保留更强的抑制 */
         }
     }
+    /* 钳位：门限不能超过当前帧峰值（否则整帧清零） */
     floor_linear = s_clamp_f32(floor_linear, 0.0f, field_peak);
-    s_last_noise_floor = floor_linear;
+    s_last_noise_floor = floor_linear;   /* 记录供 UI 调试显示 */
 
+    /* ---- 归一化到 uint8 ----
+     * FAST 模式：使用预计算的 LUT（快速查表，每次换参才重建）
+     * FULL 模式：每像素逐一调用精确浮点 log/pow 计算
+     * 公式（两模式相同）：
+     *   v ← (field_a[i] - floor_linear) / ref
+     *   norm_u8 ← 255 × clamp(v / LUT_RANGE, 0, 1) ^ (1/gamma) × dB_scale
+     */
     if (s_cfg.norm_mode == APP_DISPLAY_NORM_FAST)
     {
-        s_refresh_norm_lut();
+        s_refresh_norm_lut();   /* 若参数变化则重建 LUT */
         for (i = 0u; i < APP_DISPLAY_FIELD_PIXELS; i++)
         {
-            float v = s_field_a[i] - floor_linear;
+            float v = s_field_a[i] - floor_linear;    /* 减去噪声门限 */
             if (v <= 0.0f)
             {
-                
-                s_field_norm_u8[i] = 0u;
+                s_field_norm_u8[i] = 0u;   /* 低于门限 → 归零（热力图黑色）*/
                 continue;
             }
-            
+            /* FAST 查表：ratio = v/ref, 在 LUT 中线性插值得到 uint8 */
             s_field_norm_u8[i] = s_norm_fast_lookup(v / ref);
         }
         return;
     }
 
+    /* FULL 模式：每像素完整 log/pow 计算，精度更高但 CPU 开销更大 */
     for (i = 0u; i < APP_DISPLAY_FIELD_PIXELS; i++)
     {
         float v = s_field_a[i] - floor_linear;
@@ -1749,7 +1838,7 @@ static void s_update_norm_field(float field_peak, uint32_t frame_seq)
             s_field_norm_u8[i] = 0u;
             continue;
         }
-        
+        /* s_compute_norm_full 完整执行：10*log10(v/ref) → clamp → gamma → uint8 */
         s_field_norm_u8[i] = s_compute_norm_full(v / ref);
     }
 }
@@ -1863,13 +1952,15 @@ static void s_trajectory_draw(void)
  */
 static void s_render_field_rows(void)
 {
-    
+    /* 计算热力图区域的像素尺寸（从屏幕坐标缓存中派生） */
     uint16_t map_w = (uint16_t)(s_map_x1 - s_map_x0 + 1u);
     uint16_t map_h = (uint16_t)(s_map_y1 - s_map_y0 + 1u);
+    /* blit_rows：每次 DMA2D 传输的行数，值越大传输次数越少但延迟越高 */
     uint8_t blit_rows = s_clamp_u8(s_cfg.blit_rows, 1u, APP_DISPLAY_BLIT_ROWS_MAX);
     uint8_t use_bilinear = (s_cfg.interp_mode == APP_DISPLAY_INTERP_BILINEAR) ? 1u : 0u;
-    uint16_t y_blk;
+    uint16_t y_blk;   /* 当前块的起始行（以热力图本地坐标为准） */
 
+    /* 尺寸合法性检查：零尺寸或超过缓冲区上限则退出 */
     if ((map_w == 0u) ||
         (map_h == 0u) ||
         (map_w > APP_DISPLAY_MAX_LINE_PIXELS) ||
@@ -1877,63 +1968,85 @@ static void s_render_field_rows(void)
     {
         return;
     }
+    /* 刷新插值坐标缓存（仅在尺寸/分辨率变化时重新计算，后续调用直接复用） */
     s_refresh_render_map_cache(map_w, map_h);
 
+    /* ---- 主渲染循环：按 blit_rows 行数分块渲染 ---- */
     for (y_blk = 0u; y_blk < map_h; y_blk = (uint16_t)(y_blk + blit_rows))
     {
+        /* 最后一块可能不足 blit_rows 行，取实际剩余行数 */
         uint16_t rows = map_h - y_blk;
         uint16_t row;
 
         if (rows > blit_rows)
         {
-            rows = blit_rows;
+            rows = blit_rows;   /* 超过 blit_rows 则截断 */
         }
 
+        /* ---- 将本块每行像素写入 L8 缓冲区（s_blit_l8_buf）---- */
         for (row = 0u; row < rows; row++)
         {
-            uint16_t y = (uint16_t)(y_blk + row);
+            uint16_t y = (uint16_t)(y_blk + row);    /* 目标行（热力图坐标，0=顶）*/
             uint16_t x;
-            uint8_t *dst = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];
+            uint8_t *dst = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];  /* 当前行目标指针 */
 
             if (use_bilinear != 0u)
             {
-                
-                uint16_t y0 = s_row_y0_cache[y];
-                uint16_t y1 = s_row_y1_cache[y];
-                uint16_t wy = s_row_wy256_cache[y];
-                uint16_t wy0 = (uint16_t)(256u - wy);
+                /* ---- 双线性插值路径 ----
+                 * 预计算的行缓存：
+                 *   y0/y1     = 插值源行号（上/下两行）
+                 *   wy        = 下权重（定点 Q8，范围 0~255）
+                 *   wy0 = 256 - wy = 上权重
+                 * 预计算的列缓存同理：x0/x1/wx/wx0
+                 *
+                 * 公式（全定点，无浮点）：
+                 *   q = (v00*wx0 + v01*wx) * wy0 + (v10*wx0 + v11*wx) * wy
+                 *   再右移 16 位（256×256 = 65536 = 2^16）
+                 *   + 32768 用于四舍五入
+                 */
+                uint16_t y0  = s_row_y0_cache[y];     /* 上方源行 */
+                uint16_t y1  = s_row_y1_cache[y];     /* 下方源行 */
+                uint16_t wy  = s_row_wy256_cache[y];  /* 下行权重（Q8，0~255） */
+                uint16_t wy0 = (uint16_t)(256u - wy); /* 上行权重 */
                 const uint8_t *src0 = &s_field_norm_u8[(uint32_t)y0 * APP_DISPLAY_FIELD_W];
                 const uint8_t *src1 = &s_field_norm_u8[(uint32_t)y1 * APP_DISPLAY_FIELD_W];
 
                 for (x = 0u; x < map_w; x++)
                 {
-                    uint16_t x0 = s_col_x0_cache[x];
-                    uint16_t x1 = s_col_x1_cache[x];
-                    uint16_t wx = s_col_wx256_cache[x];
-                    uint16_t wx0 = (uint16_t)(256u - wx);
-                    uint32_t v00 = src0[x0];
-                    uint32_t v01 = src0[x1];
-                    uint32_t v10 = src1[x0];
-                    uint32_t v11 = src1[x1];
-                    uint32_t vx0 = v00 * wx0 + v01 * wx;
-                    uint32_t vx1 = v10 * wx0 + v11 * wx;
+                    uint16_t x0  = s_col_x0_cache[x];     /* 左侧源列 */
+                    uint16_t x1  = s_col_x1_cache[x];     /* 右侧源列 */
+                    uint16_t wx  = s_col_wx256_cache[x];  /* 右列权重 */
+                    uint16_t wx0 = (uint16_t)(256u - wx); /* 左列权重 */
+                    uint32_t v00 = src0[x0];   /* 左上角样本值 */
+                    uint32_t v01 = src0[x1];   /* 右上角样本值 */
+                    uint32_t v10 = src1[x0];   /* 左下角样本值 */
+                    uint32_t v11 = src1[x1];   /* 右下角样本值 */
+                    uint32_t vx0 = v00 * wx0 + v01 * wx;   /* 上行水平内插 */
+                    uint32_t vx1 = v10 * wx0 + v11 * wx;   /* 下行水平内插 */
+                    /* 垂直内插，加 32768 做四舍五入，再右移 16 位还原 uint8 */
                     uint32_t q = (vx0 * wy0 + vx1 * wy + 32768u) >> 16;
-                    
-                    dst[x] = (q > 255u) ? 255u : (uint8_t)q;
+                    dst[x] = (q > 255u) ? 255u : (uint8_t)q;   /* 截断到 [0,255] */
                 }
             }
             else
             {
-                
-                uint16_t y_idx = s_row_near_cache[y];
+                /* ---- 最近邻插值路径（速度最快，无浮点运算）----
+                 * s_row_near_cache[y] 和 s_col_near_cache[x] 存储源场坐标
+                 * 直接按索引抄值，没有插值计算
+                 */
+                uint16_t y_idx = s_row_near_cache[y];   /* 源行（场坐标）*/
                 const uint8_t *src = &s_field_norm_u8[(uint32_t)y_idx * APP_DISPLAY_FIELD_W];
                 for (x = 0u; x < map_w; x++)
                 {
-                    dst[x] = src[s_col_near_cache[x]];
+                    dst[x] = src[s_col_near_cache[x]];   /* 直接取最近邻 */
                 }
             }
         }
 
+        /* ---- 尝试用 LTDC L8 硬件 CLUT 路径传输（最快，GPU 直接转色）----
+         * ltdc_l8_fill_async 若返回 0，说明 LTDC 硬件不支持 L8 或正在忙，
+         * 则回退到软件 CPU 路径（依次将 L8 转 RGB565，再用 DMA2D blit）
+         */
         if (ltdc_l8_fill_async(s_map_x0,
                                (uint16_t)(s_map_y0 + y_blk),
                                s_map_x1,
@@ -1941,19 +2054,20 @@ static void s_render_field_rows(void)
                                s_blit_l8_buf,
                                map_w) == 0u)
         {
-            
+            /* ---- 软件回退路径：将 L8 索引逐像素查 heat LUT 转为 RGB565 ---- */
             for (row = 0u; row < rows; row++)
             {
-                uint8_t *src = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];
-                uint16_t *dst = &s_blit_buf[(uint32_t)row * (uint32_t)map_w];
+                uint8_t  *src = &s_blit_l8_buf[(uint32_t)row * (uint32_t)map_w];
+                uint16_t *dst = &s_blit_buf[(uint32_t)row * (uint32_t)map_w];   /* RGB565 输出缓冲 */
                 uint16_t x;
 
                 for (x = 0u; x < map_w; x++)
                 {
-                    dst[x] = s_heat_lut[src[x]];
+                    dst[x] = s_heat_lut[src[x]];   /* L8 → RGB565，通过预建 colormap LUT */
                 }
             }
 
+            /* 将 RGB565 块 blit 到帧缓冲（DMA2D 或 CPU memcpy） */
             s_submit_rgb565_block(s_map_x0,
                                   (uint16_t)(s_map_y0 + y_blk),
                                   s_map_x1,
@@ -2569,129 +2683,185 @@ void App_Display_Render(const Sound_Pos_t *pos,
                         uint32_t frame_seq,
                         uint8_t sai_dma_active)
 {
-    float field_peak;
-    uint32_t t_perf;
-    App_SpectrumFrame_t spectrum_snapshot;
-    const App_SpectrumFrame_t *spectrum_frame = NULL;
-    uint8_t back_slot = s_backbuf_slot();
-    uint32_t peak_idx = 0u;
-    float peak_theta = 0.0f;
-    float peak_phi = 0.0f;
-    uint8_t camera_valid;
+    float field_peak;                         /* 当前帧 SRP 功率场峰值（线性域）*/
+    uint32_t t_perf;                          /* 性能计时起点（DWT 计数）*/
+    App_SpectrumFrame_t spectrum_snapshot;    /* 频谱帧局部快照 */
+    const App_SpectrumFrame_t *spectrum_frame = NULL; /* 传入 s_draw_overlay 的频谱指针 */
+    uint8_t back_slot = s_backbuf_slot();     /* 当前后缓冲槽号（0 或 1） */
+    uint32_t peak_idx = 0u;     /* SRP 功率场峰值点在网格中的索引 */
+    float peak_theta = 0.0f;    /* 峰值点的水平角度（°，映射后）*/
+    float peak_phi = 0.0f;      /* 峰值点的俯仰角度（°，映射后）*/
+    uint8_t camera_valid;       /* 摄像头帧是否有效（有数据 + 尺寸合法）*/
+
+    /* 就绪检查：模块未初始化或关键输入为 NULL 时直接返回 */
     if ((s_ready == 0u) || (pos == NULL) || (vis_frame == NULL))
     {
         return;
     }
-    (void)back_slot;
+    (void)back_slot;   /* 当前版本未直接使用 back_slot，但保留供未来 LTDC 双缓冲扩展用 */
+
+    /* ---- 等待上一帧 LTDC 换页完成 ----
+     * 确保在写入后缓冲前前一帧已经显示出来（防止撕裂）
+     * 超时时间 = 一帧预算（约 33ms @30fps），超时则跳过本帧
+     */
     if (ltdc_wait_for_swap_complete(s_display_frame_budget_ms()) != 0u)
     {
         return;
     }
+
+    /* ---- 步骤 1: 准备功率场 (s_prepare_field) ----
+     * 将 SRP 功率网格（粗搜+精细）上采样到 APP_DISPLAY_FIELD_W × FIELD_H 的显示分辨率
+     * 可选：精细融合（将精细网格叠加到粗搜场）、高斯平滑（space smooth passes）
+     * 输出：s_field_a[] 浮点功率场，返回场峰值
+     */
     t_perf = App_Perf_BeginCycles();
     field_peak = s_prepare_field(vis_frame);
     App_Perf_EndCycles(APP_PERF_SEC_DISP_PREPARE, t_perf);
+
+    /* ---- 步骤 2: 更新 EMA 峰值跟踪 ----
+     * 双速率 EMA：上升边（fast attack）和下降边（slow decay）分开跟踪
+     * 保证热力图在声源出现时快速点亮，消失时缓慢淡出（视觉效果更自然）
+     * s_peak_ema 作为后续归一化的参考值
+     */
     if (field_peak > s_peak_ema)
     {
+        /* 上升沿：快速追随（attack 系数通常较大，如 0.3～0.7）*/
         s_peak_ema += s_cfg.ema_attack * (field_peak - s_peak_ema);
     }
     else
     {
+        /* 下降沿：缓慢衰减（decay 系数通常较小，如 0.05～0.2）*/
         s_peak_ema += s_cfg.ema_decay * (field_peak - s_peak_ema);
     }
+    /* 防止 EMA 跌入数值不稳定区（低于最小可信峰值就钳位）*/
     if (s_peak_ema < APP_DISPLAY_EMA_MIN_PEAK)
     {
         s_peak_ema = APP_DISPLAY_EMA_MIN_PEAK;
     }
+
+    /* ---- 步骤 3: 归一化场到 uint8 (s_update_norm_field) ----
+     * 包含：噪声门限自适应估计、动态范围映射（dBFloor~0dB → 0~255）、伽马校正
+     * 输出：s_field_norm_u8[] 供后续 s_render_field_rows 使用
+     */
     t_perf = App_Perf_BeginCycles();
     s_update_norm_field(field_peak, frame_seq);
     App_Perf_EndCycles(APP_PERF_SEC_DISP_NORM, t_perf);
+
+    /* 判断摄像头帧是否可用（有效帧必须同时满足：非 NULL + valid + pixels + 非零尺寸）*/
     camera_valid = (uint8_t)((camera_frame != NULL) &&
                              (camera_frame->valid != 0u) &&
                              (camera_frame->pixels != NULL) &&
                              (camera_frame->width != 0u) &&
                              (camera_frame->height != 0u));
+
+    /* ---- 步骤 4: 渲染主视图（摄像头/热力图/叠加）----  */
     t_perf = App_Perf_BeginCycles();
-    s_clear_scene_gutters();
+    s_clear_scene_gutters();   /* 清除上一帧可能残留在边缘的旧像素 */
+
+    /* 有摄像头帧（或冻结帧），且当前模式不是纯热力图 */
     if (((camera_valid != 0u) ||
          ((s_camera_view_mode == APP_DISPLAY_CAMERA_VIEW_CAMERA_FREEZE) && (s_camera_freeze_valid != 0u))) &&
         (s_camera_view_mode != APP_DISPLAY_CAMERA_VIEW_HEAT_ONLY))
     {
-        s_dbg_camera_path_count++;
+        s_dbg_camera_path_count++;   /* 统计走到摄像头路径的帧数（用于调试） */
         s_dbg_camera_input_seq = (camera_valid != 0u) ? camera_frame->seq : s_camera_cache_seq;
+
         if (s_camera_view_mode == APP_DISPLAY_CAMERA_VIEW_CAMERA_ONLY)
         {
+            /* 纯摄像头模式：直接渲染摄像头帧，不叠加热力图 */
             s_render_camera_frame_rows(camera_frame);
         }
         else if (s_camera_view_mode == APP_DISPLAY_CAMERA_VIEW_CAMERA_FREEZE)
         {
             App_CameraFrame_t frozen_frame;
 
+            /* 若冻结帧尚未捕获，先捕获当前摄像头帧存入 SDRAM 缓存 */
             if (s_camera_freeze_valid == 0u)
             {
                 (void)s_capture_frozen_camera_frame(camera_frame);
             }
 
+            /* 用缓存中的冻结帧构造临时 App_CameraFrame_t 并渲染 */
             memset(&frozen_frame, 0, sizeof(frozen_frame));
             if (s_camera_freeze_valid != 0u)
             {
-                frozen_frame.pixels = s_camera_cache_pixels;
-                frozen_frame.width = s_camera_freeze_w;
+                frozen_frame.pixels = s_camera_cache_pixels;   /* 指向 SDRAM 冻结像素 */
+                frozen_frame.width  = s_camera_freeze_w;
                 frozen_frame.height = s_camera_freeze_h;
                 frozen_frame.stride = s_camera_freeze_stride;
-                frozen_frame.seq = s_camera_cache_seq;
-                frozen_frame.valid = 1u;
+                frozen_frame.seq    = s_camera_cache_seq;
+                frozen_frame.valid  = 1u;
                 s_render_camera_frame_rows(&frozen_frame);
             }
         }
         else
         {
+            /* 叠加模式（默认）：以半透明方式将热力图叠加到摄像头帧上
+             * APP_CAMERA_OVERLAY_COLOR_565 为热力图在摄像头上的着色键（chroma-key）
+             */
             s_render_field_alpha_rows(camera_frame, APP_CAMERA_OVERLAY_COLOR_565);
-            s_dbg_camera_overlay_count++;
+            s_dbg_camera_overlay_count++;   /* 统计叠加帧数 */
         }
     }
+
+    /* 无摄像头帧，或纯热力图模式：黑底上直接渲染热力图 */
     if ((((camera_valid == 0u) &&
           !((s_camera_view_mode == APP_DISPLAY_CAMERA_VIEW_CAMERA_FREEZE) && (s_camera_freeze_valid != 0u))) ||
          (s_camera_view_mode == APP_DISPLAY_CAMERA_VIEW_HEAT_ONLY)))
     {
-        s_camera_cache_valid = 0u;
-        s_fill_rect_async(s_camera_x0, s_camera_y0, s_camera_x1, s_camera_y1, BLACK);
-        s_render_field_rows();
+        s_camera_cache_valid = 0u;                                   /* 缓存失效（无摄像头数据可用）*/
+        s_fill_rect_async(s_camera_x0, s_camera_y0, s_camera_x1, s_camera_y1, BLACK);  /* 黑底 */
+        s_render_field_rows();   /* 渲染热力图（L8 CLUT 硬件加速 或 CPU 软件回退）*/
     }
+
+    /* ---- 步骤 5: 绘制固定图形元素 ---- */
+    /* 热力图区域白色边框 */
     s_draw_rect_async(s_map_x0, s_map_y0, s_map_x1, s_map_y1, WHITE);
+    /* 摄像头区域与 UI 面板之间的分割竖线 */
     if (s_text_x > 0u)
     {
         s_draw_vline_async((uint16_t)(s_text_x - 1u), 0u, (uint16_t)(lcddev.height - 1u), WHITE);
     }
+
+    /* ---- 步骤 6: 绘制声源定位十字准星 ----
+     * 从 pos->x_angle/y_angle 映射到像素坐标，绘制白色十字线（水平+垂直）
+     */
     if (vis_frame->peak_idx < SRP_GRID_TOTAL)
     {
-        peak_idx = vis_frame->peak_idx;
-        peak_theta = vis_frame->theta_deg[peak_idx];
-        peak_phi = vis_frame->phi_deg[peak_idx];
+        peak_idx   = vis_frame->peak_idx;      /* SRP 功率峰值点索引 */
+        peak_theta = vis_frame->theta_deg[peak_idx];  /* 水平角（原始坐标系）*/
+        peak_phi   = vis_frame->phi_deg[peak_idx];    /* 俯仰角（原始坐标系）*/
     }
-    s_apply_output_remap(&peak_theta, &peak_phi);
+    s_apply_output_remap(&peak_theta, &peak_phi);   /* 应用 XY 交换/反转映射 */
+
     {
+        /* 将方位角/仰角转换为屏幕像素坐标，并钳位到热力图边界内 */
         float ax = s_clamp_f32(pos->x_angle, (float)COARSE_ANGLE_MIN_DEG, (float)COARSE_ANGLE_MAX_DEG);
         float ay = s_clamp_f32(pos->y_angle, (float)COARSE_ANGLE_MIN_DEG, (float)COARSE_ANGLE_MAX_DEG);
-        uint16_t cx = s_angle_to_x(ax);
-        uint16_t cy = s_angle_to_y(ay);
-        uint16_t half = APP_DISPLAY_CROSSHAIR_HALF_PX;
+        uint16_t cx = s_angle_to_x(ax);    /* 当前帧声源 X 像素坐标 */
+        uint16_t cy = s_angle_to_y(ay);    /* 当前帧声源 Y 像素坐标 */
+        uint16_t half = APP_DISPLAY_CROSSHAIR_HALF_PX;   /* 十字臂半长（像素）*/
         uint16_t xl = (cx > (uint16_t)(s_map_x0 + half)) ? (uint16_t)(cx - half) : s_map_x0;
         uint16_t xr = ((uint32_t)cx + half < s_map_x1) ? (uint16_t)(cx + half) : s_map_x1;
         uint16_t yt = (cy > (uint16_t)(s_map_y0 + half)) ? (uint16_t)(cy - half) : s_map_y0;
         uint16_t yb = ((uint32_t)cy + half < s_map_y1) ? (uint16_t)(cy + half) : s_map_y1;
+        /* 水平臂 + 垂直臂（白色）*/
         s_draw_hline_async(xl, cy, xr, WHITE);
         s_draw_vline_async(cx, yt, yb, WHITE);
     }
+
     {
+        /* 绘制 SRP 峰值点矩形标记（与 EMA 声源标注有别：这是帧峰值位置，不含时间平滑）*/
         uint16_t px = s_angle_to_x(peak_theta);
         uint16_t py = s_angle_to_y(peak_phi);
-        uint16_t r = APP_DISPLAY_PEAK_MARKER_RADIUS_PX;
+        uint16_t r  = APP_DISPLAY_PEAK_MARKER_RADIUS_PX;   /* 峰值方框半宽（像素）*/
         uint16_t x0 = (px > (uint16_t)(s_map_x0 + r)) ? (uint16_t)(px - r) : s_map_x0;
         uint16_t y0 = (py > (uint16_t)(s_map_y0 + r)) ? (uint16_t)(py - r) : s_map_y0;
         uint16_t x1 = ((uint32_t)px + r < s_map_x1) ? (uint16_t)(px + r) : s_map_x1;
         uint16_t y1 = ((uint32_t)py + r < s_map_y1) ? (uint16_t)(py + r) : s_map_y1;
-        s_draw_rect_async(x0, y0, x1, y1, WHITE);
+        s_draw_rect_async(x0, y0, x1, y1, WHITE);   /* 白色矩形框标记峰值位置 */
     }
+
     /* ---- 多声源标注：为第 2、3 声源绘制彩色十字准星 ---- */
     {
         static const uint32_t multi_colors[MULTI_SOURCE_MAX] = { WHITE, CYAN, YELLOW };
@@ -2704,57 +2874,73 @@ void App_Display_Render(const Sound_Pos_t *pos,
             float mya = s_clamp_f32(g_multi_source.sources[mi].y_angle,
                                      (float)COARSE_ANGLE_MIN_DEG,
                                      (float)COARSE_ANGLE_MAX_DEG);
-            uint16_t mcx = s_angle_to_x(mxa);
-            uint16_t mcy = s_angle_to_y(mya);
+            uint16_t mcx = s_angle_to_x(mxa);   /* 第 mi 声源 X 像素坐标 */
+            uint16_t mcy = s_angle_to_y(mya);   /* 第 mi 声源 Y 像素坐标 */
             uint16_t mh  = APP_DISPLAY_CROSSHAIR_HALF_PX;
             uint16_t mxl = (mcx > (uint16_t)(s_map_x0 + mh)) ? (uint16_t)(mcx - mh) : s_map_x0;
             uint16_t mxr = ((uint32_t)mcx + mh < s_map_x1)    ? (uint16_t)(mcx + mh) : s_map_x1;
             uint16_t myt = (mcy > (uint16_t)(s_map_y0 + mh)) ? (uint16_t)(mcy - mh) : s_map_y0;
             uint16_t myb = ((uint32_t)mcy + mh < s_map_y1)    ? (uint16_t)(mcy + mh) : s_map_y1;
+            /* 使用不同颜色区分多声源（第1声源白色，第2青色，第3黄色）*/
             s_draw_hline_async(mxl, mcy, mxr, multi_colors[mi]);
             s_draw_vline_async(mcx, myt, myb, multi_colors[mi]);
         }
     }
+
     /* ---- 夜间模式全幅十字准星 (绿色) ---- */
     if (g_crosshair_enable != 0u)
     {
+        /* 以准星中心坐标（s_map_x0 + g_crosshair_x）为基准绘制全幅绿色十字 */
         uint16_t gx = (uint16_t)(s_map_x0 + g_crosshair_x);
         uint16_t gy = (uint16_t)(s_map_y0 + g_crosshair_y);
         if (gx >= s_map_x0 && gx <= s_map_x1)
-            s_draw_vline_async(gx, s_map_y0, s_map_y1, GREEN);
+            s_draw_vline_async(gx, s_map_y0, s_map_y1, GREEN);   /* 竖线：全高度 */
         if (gy >= s_map_y0 && gy <= s_map_y1)
-            s_draw_hline_async(s_map_x0, gy, s_map_x1, GREEN);
+            s_draw_hline_async(s_map_x0, gy, s_map_x1, GREEN);  /* 横线：全宽度 */
     }
-    /* ---- 定向录音选区框 (青色虚线感) ---- */
+
+    /* ---- 定向录音选区框 (青色) ---- */
     if (g_select_enable != 0u)
     {
+        /* 将热力图相对坐标（g_select_x1/y1/x2/y2）转为屏幕坐标并绘制选区矩形 */
         uint16_t sx0 = (uint16_t)(s_map_x0 + g_select_x1);
         uint16_t sy0 = (uint16_t)(s_map_y0 + g_select_y1);
         uint16_t sx1 = (uint16_t)(s_map_x0 + g_select_x2);
         uint16_t sy1 = (uint16_t)(s_map_y0 + g_select_y2);
-        if (sx1 > s_map_x1) sx1 = s_map_x1;
+        if (sx1 > s_map_x1) sx1 = s_map_x1;   /* 防止超出热力图范围 */
         if (sy1 > s_map_y1) sy1 = s_map_y1;
         s_draw_rect_async(sx0, sy0, sx1, sy1, CYAN);
     }
-    /* ---- 声源轨迹 ---- */
-    s_trajectory_push(pos);
-    s_trajectory_draw();
+
+    /* ---- 声源轨迹（历史路径）---- */
+    s_trajectory_push(pos);     /* 将当前帧声源位置压入环形轨迹缓冲 */
+    s_trajectory_draw();        /* 将轨迹点从新到旧逐渐淡出绘制 */
     App_Perf_EndCycles(APP_PERF_SEC_DISP_RENDER, t_perf);
+
+    /* ---- 步骤 7: 获取频谱快照（如有新帧）---- */
     if (App_Spectrum_GetLatestFrame(&spectrum_snapshot) != 0u)
     {
-        s_last_spectrum_frame = spectrum_snapshot;
-        s_spectrum_frame_valid = 1u;
+        s_last_spectrum_frame = spectrum_snapshot;  /* 保存最新帧备份 */
+        s_spectrum_frame_valid = 1u;                /* 标记帧有效 */
     }
+    /* 用上一帧有效频谱（持续显示，即使频谱模块暂时没有新帧）*/
     if (s_spectrum_frame_valid != 0u)
     {
         spectrum_frame = &s_last_spectrum_frame;
     }
+
+    /* ---- 步骤 8: 绘制 UI 文字叠加层（角度/能量/dB/帧率等信息）---- */
     t_perf = App_Perf_BeginCycles();
     s_draw_overlay(pos, spectrum_frame, field_peak, sai_dma_active);
     App_Perf_EndCycles(APP_PERF_SEC_DISP_OVERLAY, t_perf);
+
+    /* ---- 步骤 9: 绘制触摸测试（若 APP_TOUCH_TEST_ENABLE != 0）---- */
     App_TouchTest_Render();
-    /* Blend the optional LVGL overlay last so it stays above the legacy scene. */
+
+    /* ---- 步骤 10: 将 LVGL 叠加层合成到帧缓冲 (最后执行，保证 LVGL 在最上层) ---- */
     App_LvglUi_BlitToDisplay();
+
+    /* ---- 步骤 11: 提交帧（触发 LTDC 换页，新帧开始显示）---- */
     t_perf = App_Perf_BeginCycles();
     s_commit_frame();
     App_Perf_EndCycles(APP_PERF_SEC_DISP_COMMIT, t_perf);
