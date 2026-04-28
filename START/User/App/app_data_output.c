@@ -56,27 +56,37 @@ static volatile uint32_t s_coarse_hold_count = 0u;
  */
 static void VOFA_JustFloat_Send(const float32_t *data, uint16_t count)
 {
+    /* 参数有效性检查：空指针、零数量、或超出最大允许浮点数都直接返回 */
     if ((data == NULL) || (count == 0u) || (count > VOFA_MAX_FLOATS))
     {
         return;
     }
 
+    /* 检查 UART1 是否处于就绪状态；若正在发送则丢弃本帧，递增丢帧计数 */
+    /* [注意] 此处使用轮询发送，若 UART 持续忙则会大量丢帧，可改为 DMA 发送 */
     if (huart1.gState != HAL_UART_STATE_READY)
     {
-        s_vofa_tx_drop_count++;
+        s_vofa_tx_drop_count++;   /* 记录丢帧次数，供 VOFA+ 诊断通道显示 */
         return;
     }
 
+    /* 计算有效载荷字节数：每个 float32 占 4 字节 */
     uint16_t payload_bytes = (uint16_t)(count * sizeof(float32_t));
+    /* 将浮点数据拷贝到发送缓冲区前半部分 */
     memcpy(&s_tx_buf[0], data, payload_bytes);
+    /* 追加 VOFA+ JustFloat 帧尾标记：0x00 0x00 0x80 0x7F（IEEE754 +Inf 小端） */
+    /* VOFA+ 软件通过此 4 字节序列识别帧边界并切割帧 */
     memcpy(&s_tx_buf[payload_bytes], s_vofa_tail, sizeof(s_vofa_tail));
 
+    /* 以阻塞方式发送完整帧（payload + 4 字节帧尾），超时 = VOFA_UART_TX_TIMEOUT */
+    /* [注意] 阻塞发送会占用 CPU 时间；921600bps 下 100 字节约耗时 ~1.1ms */
+    /* [改进] 可改为 HAL_UART_Transmit_DMA 以释放 CPU，但需要增加缓冲区管理 */
     if (HAL_UART_Transmit(&huart1,
                           s_tx_buf,
                           (uint16_t)(payload_bytes + sizeof(s_vofa_tail)),
                           VOFA_UART_TX_TIMEOUT) != HAL_OK)
     {
-        s_vofa_tx_drop_count++;
+        s_vofa_tx_drop_count++;   /* 发送失败（超时）也计入丢帧 */
     }
 }
 
@@ -87,13 +97,17 @@ static void VOFA_JustFloat_Send(const float32_t *data, uint16_t count)
  */
 void VOFA_Send_Channel_RMS(void)
 {
-    float32_t ac_rms_buf[MIC_CHANNELS];
+    float32_t ac_rms_buf[MIC_CHANNELS];   /* 存放各通道的交流 RMS 值 */
 
     for (uint32_t ch = 0u; ch < MIC_CHANNELS; ch++)
     {
+        /* arm_std_f32 计算标准差，等价于零均值信号的 AC RMS（不含 DC 分量） */
+        /* 输入：第 ch 通道的时域浮点帧，长度 FRAME_LEN (256 点) */
+        /* [改进] 若需要真 RMS（含 DC），应改用 arm_rms_f32 */
         arm_std_f32(&Mic_Process_Buffer[ch * FRAME_LEN], FRAME_LEN, &ac_rms_buf[ch]);
     }
 
+    /* 将 16 个通道 RMS 值打包发送，VOFA+ 可绘制 16 条实时曲线 */
     VOFA_JustFloat_Send(ac_rms_buf, MIC_CHANNELS);
 }
 
@@ -106,18 +120,28 @@ void VOFA_Send_Channel_RMS(void)
  */
 void VOFA_Send_FFT_Magnitude(uint8_t channel)
 {
+    /* 越界检查：通道号超出 MIC_CHANNELS 直接返回 */
     if (channel >= MIC_CHANNELS)
     {
         return;
     }
 
+    /* 指向频域缓冲区中该通道的起始位置（每通道 FRAME_LEN 个复数 float） */
     const float32_t *p_freq = &Mic_Freq_Buffer[(uint32_t)channel * FRAME_LEN];
-    float32_t mag_buf[FRAME_LEN / 2u];
+    float32_t mag_buf[FRAME_LEN / 2u];   /* 幅度谱缓冲区，128 点 */
 
+    /* RFFT 输出布局：[DC(实), Nyquist(实), Re1, Im1, Re2, Im2, ..., Re127, Im127] */
+    /* CMSIS-DSP arm_rfft_fast_f32 将 DC 和奈奎斯特分量压缩到 [0] 和 [1] 位置 */
+
+    /* DC 分量：p_freq[0] 是纯实数，直接取绝对值 */
     mag_buf[0] = fabsf(p_freq[0]);
+    /* bin 1 ~ 126：复数幅度 sqrt(Re² + Im²)，由 arm_cmplx_mag_f32 批量计算 */
+    /* 输入从 p_freq[2] 开始（跳过 DC/奈奎斯特），计算 (FRAME_LEN/2 - 2) = 126 个幅度值 */
     arm_cmplx_mag_f32(&p_freq[2], &mag_buf[1], (FRAME_LEN / 2u) - 2u);
+    /* 奈奎斯特分量（24kHz）：p_freq[1] 是纯实数，放到 mag_buf 最后一位 */
     mag_buf[(FRAME_LEN / 2u) - 1u] = fabsf(p_freq[1]);
 
+    /* 发送 128 点幅度谱到 VOFA+，频率分辨率 = 187.5 Hz/bin */
     VOFA_JustFloat_Send(mag_buf, FRAME_LEN / 2u);
 }
 
@@ -134,40 +158,49 @@ void VOFA_Send_FFT_Magnitude(uint8_t channel)
  */
 void VOFA_Send_SRP_Result(const Sound_Pos_t *pos)
 {
+    /* 空指针保护 */
     if (pos == NULL)
     {
         return;
     }
 
-    float32_t send_buf[VOFA_SRP_FLOATS];
-    float32_t coarse_abs_sum = 0.0f;
-    uint32_t coarse_nonfinite_count = 0u;
+    float32_t send_buf[VOFA_SRP_FLOATS];   /* 完整发送帧缓冲，含定位结果+粗搜图+诊断 */
+    float32_t coarse_abs_sum = 0.0f;       /* 粗搜功率图的绝对值累加，用于判断是否全零 */
+    uint32_t coarse_nonfinite_count = 0u;  /* 粗搜图中 NaN/Inf 的数量 */
 
+    /* 前 3 个浮点：x 轴角度（°）、y 轴角度（°）、SRP 峰值能量 */
     send_buf[0] = pos->x_angle;
     send_buf[1] = pos->y_angle;
     send_buf[2] = pos->energy;
 
+    /* 将本帧粗搜功率图（9×9 = 81 点）复制到发送缓冲区的 [3 ... 83] 位置 */
     memcpy(&send_buf[3], SRP_Power, COARSE_TOTAL * sizeof(float32_t));
 
+    /* 扫描粗搜图：统计非有限值数量和绝对值总和，用于判断本帧是否有效 */
     for (uint32_t i = 0u; i < COARSE_TOTAL; i++)
     {
         float32_t v = send_buf[3u + i];
         if (!isfinite(v))
         {
-            coarse_nonfinite_count++;
+            coarse_nonfinite_count++;   /* 发现 NaN 或 Inf，跳过累加 */
             continue;
         }
-        coarse_abs_sum += fabsf(v);
+        coarse_abs_sum += fabsf(v);    /* 正常值累加绝对值 */
     }
 
+    /* 异常帧处理：含 NaN/Inf 或功率图全零则使用上一帧备份数据（hold 机制） */
     if ((coarse_nonfinite_count > 0u) || (coarse_abs_sum < 1.0e-6f))
     {
+        /* 若已有上一帧有效数据，且连续坏帧数为 0（严格只替换一次），则用备份替换本帧 */
+        /* [注意] s_coarse_bad_streak == 0 条件意味着只有第一次坏帧才会 hold，之后放弃 */
+        /* [改进] 可放宽为允许连续多帧 hold：改为 s_coarse_bad_streak < MAX_HOLD_FRAMES */
         if ((s_has_last_coarse == 1u) && (s_coarse_bad_streak == 0u))
         {
             memcpy(&send_buf[3], s_last_coarse_power, COARSE_TOTAL * sizeof(float32_t));
-            s_coarse_hold_count++;
+            s_coarse_hold_count++;   /* 记录 hold 次数，供诊断通道显示 */
         }
 
+        /* 递增连续坏帧计数器，防止溢出 */
         if (s_coarse_bad_streak < 255u)
         {
             s_coarse_bad_streak++;
@@ -175,28 +208,32 @@ void VOFA_Send_SRP_Result(const Sound_Pos_t *pos)
     }
     else
     {
+        /* 本帧数据有效：更新备份缓存，清空坏帧计数 */
         memcpy(s_last_coarse_power, &send_buf[3], COARSE_TOTAL * sizeof(float32_t));
-        s_has_last_coarse = 1u;
-        s_coarse_bad_streak = 0u;
+        s_has_last_coarse = 1u;      /* 标记已有至少一帧有效历史数据 */
+        s_coarse_bad_streak = 0u;    /* 清零连续坏帧计数 */
     }
 
-    uint32_t base = 3u + COARSE_TOTAL;
-    send_buf[base + 0u] = (float32_t)g_audio_both_flags_count;
-    send_buf[base + 1u] = (float32_t)s_vofa_tx_drop_count;
-    send_buf[base + 2u] = (float32_t)g_srp_invalid_count;
-    send_buf[base + 3u] = (float32_t)s_coarse_hold_count;
-    send_buf[base + 4u] = (float32_t)g_srp_low_contrast_count;
-    send_buf[base + 5u] = g_srp_last_contrast;
-    send_buf[base + 6u] = g_srp_last_quality;
-    send_buf[base + 7u] = (float32_t)(++s_vofa_frame_seq);
+    /* 在粗搜图之后追加 8 个诊断浮点（VOFA_DIAG_FLOATS = 8） */
+    uint32_t base = 3u + COARSE_TOTAL;    /* 诊断数据起始偏移 */
+    send_buf[base + 0u] = (float32_t)g_audio_both_flags_count;  /* 音频双缓冲同时就绪次数（理想情况为 0）*/
+    send_buf[base + 1u] = (float32_t)s_vofa_tx_drop_count;      /* UART 发送丢帧次数 */
+    send_buf[base + 2u] = (float32_t)g_srp_invalid_count;       /* SRP 无效帧计数（峰值不可信） */
+    send_buf[base + 3u] = (float32_t)s_coarse_hold_count;       /* 粗搜图 hold 次数 */
+    send_buf[base + 4u] = (float32_t)g_srp_low_contrast_count;  /* SRP 低对比度（峰不突出）计数 */
+    send_buf[base + 5u] = g_srp_last_contrast;   /* 上一帧的对比度值（峰值/均值之比） */
+    send_buf[base + 6u] = g_srp_last_quality;    /* 上一帧的综合质量评分 */
+    send_buf[base + 7u] = (float32_t)(++s_vofa_frame_seq);  /* 帧序号，自增，用于检测丢帧 */
 
+    /* 最终非有限值清零保护：防止 VOFA+ 解析失败 */
     for (uint32_t i = 0u; i < VOFA_SRP_FLOATS; i++)
     {
         if (!isfinite(send_buf[i]))
         {
-            send_buf[i] = 0.0f;
+            send_buf[i] = 0.0f;   /* 将任何残留 NaN/Inf 替换为 0 */
         }
     }
 
+    /* 发送完整的 3+81+8 = 92 个浮点值到 VOFA+ */
     VOFA_JustFloat_Send(send_buf, VOFA_SRP_FLOATS);
 }

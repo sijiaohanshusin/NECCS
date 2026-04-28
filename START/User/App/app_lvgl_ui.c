@@ -72,11 +72,14 @@ void App_LvglUi_SetOverlayEnabled(uint8_t enabled)
  */
 void App_LvglUi_BlitToDisplay(void)
 {
+    /* 双重保护：叠加层未启用或 UI 尚未创建时均跳过 blit 操作 */
     if ((s_overlay_enabled == 0u) || (s_lvgl_ui_created == 0u))
     {
         return;
     }
 
+    /* 将 LVGL 渲染后的叠加层帧缓冲内容传输到 LTDC 显示控制器 */
+    /* lv_port_disp_blit_to_display 内部通过 DMA2D 或 memcpy 实现像素搬运 */
     lv_port_disp_blit_to_display();
 }
 

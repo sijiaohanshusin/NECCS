@@ -103,9 +103,10 @@ void App_TouchTest_Render(void)
 
     for (i = 0u; (i < state->count) && (i < TOUCH_MAX_POINTS); i++)
     {
-        uint16_t x = state->x[i];
-        uint16_t y = state->y[i];
+        uint16_t x = state->x[i];   /* 当前触摸点 X 坐标（像素） */
+        uint16_t y = state->y[i];   /* 当前触摸点 Y 坐标（像素） */
 
+        /* 越界检查：LCD 尺寸由 lcddev.width/height 描述（通常 1024×600），跳过越界点 */
         if ((x >= lcddev.width) || (y >= lcddev.height))
         {
             continue;
@@ -113,13 +114,16 @@ void App_TouchTest_Render(void)
 
         if (s_touch_last_valid[i] != 0u)
         {
+            /* 从上一帧位置到本帧位置绘制连线，形成触摸轨迹效果 */
             lcd_draw_line(s_touch_last_x[i], s_touch_last_y[i], x, y, s_touch_test_colors[i]);
         }
 
+        /* 在当前触摸坐标绘制十字标记（含圆圈），每个手指颜色不同 */
         s_touch_test_draw_cross(x, y, s_touch_test_colors[i]);
+        /* 更新本触摸点的历史坐标，供下一帧绘制连线使用 */
         s_touch_last_x[i] = x;
         s_touch_last_y[i] = y;
-        s_touch_last_valid[i] = 1u;
+        s_touch_last_valid[i] = 1u;   /* 标记本点历史坐标有效 */
     }
 }
 
