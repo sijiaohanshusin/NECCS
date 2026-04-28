@@ -328,49 +328,54 @@ void App_UiScreens_Init(void)
 {
     uint8_t i;
 
+    /* 防止重复初始化：若已初始化则直接返回 */
     if (s_inited != 0u)
     {
         return;
     }
 
+    /* 清零所有屏幕对象指针（懒加载模式：NULL = 尚未创建）*/
     (void)memset(s_screen_obj, 0, sizeof(s_screen_obj));
 
-    /* 初始化工业深色主题样式表 */
+    /* 初始化工业深色主题样式表（全局共享 g_ui_styles）*/
     App_UiStyles_Init();
 
-    /* 创建 Home 屏幕并显示 */
+    /* 懒加载创建 Home 屏幕并立即显示（作为启动画面）*/
     (void)s_ensure_created(APP_SCR_HOME);
     if (s_screen_obj[APP_SCR_HOME] != NULL)
     {
-        lv_scr_load(s_screen_obj[APP_SCR_HOME]);
+        lv_scr_load(s_screen_obj[APP_SCR_HOME]);   /* 切换 LVGL 当前屏幕到 Home */
     }
 
-    s_current_screen = APP_SCR_HOME;
-    s_inited = 1u;
-    (void)i;
+    s_current_screen = APP_SCR_HOME;   /* 记录当前活跃屏幕 ID */
+    s_inited = 1u;                     /* 标记初始化完成：避免重复调用 */
+    (void)i;   /* 消除未使用变量警告 */
 }
 
 void App_UiScreens_Switch(App_ScreenId_t id)
 {
     lv_obj_t *scr;
 
+    /* 屏幕 ID 范围检查：超出 APP_SCR_COUNT 的值无对应注册表项 */
     if (id >= APP_SCR_COUNT)
     {
         return;
     }
+    /* 已在目标屏幕则不触发重复切换（避免 LVGL 执行不必要的 scr_load）*/
     if (id == s_current_screen)
     {
         return;
     }
 
+    /* 懒加载：若目标屏幕尚未创建过 LVGL 对象则立即创建 */
     scr = s_ensure_created(id);
     if (scr == NULL)
     {
-        return;
+        return;   /* 创建失败（内存不足或布局错误）则放弃切换 */
     }
 
-    lv_scr_load(scr);
-    s_current_screen = id;
+    lv_scr_load(scr);       /* 切换 LVGL 当前屏幕（带默认过渡动画）*/
+    s_current_screen = id;  /* 更新当前屏幕 ID 缓存 */
 }
 
 App_ScreenId_t App_UiScreens_GetCurrent(void)
@@ -380,10 +385,15 @@ App_ScreenId_t App_UiScreens_GetCurrent(void)
 
 void App_UiScreens_Update(void)
 {
+    /* 若未初始化则直接返回（防止在 LVGL 启动前被调用）*/
     if (s_inited == 0u)
     {
         return;
     }
+    /* 调用当前活跃屏幕的 update 回调（刷新实时数据标签/进度条等）
+     * 注意：s_screen_ops 是 const 虚表，每个屏幕独立实现 update
+     * [注意] 仅当 live_data 标记为 dirty 时回调内部才执行刷新（避免每帧重绘）
+     */
     if (s_current_screen < APP_SCR_COUNT)
     {
         if (s_screen_ops[s_current_screen].update != NULL)
