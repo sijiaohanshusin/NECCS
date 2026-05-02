@@ -3,6 +3,14 @@
  * @brief   SD 卡 BSP 驱动实现 (SDMMC1, 1-bit init → 4-bit upgrade)
  * @details GPIO: PC8(D0), PC9(D1), PC10(D2), PC11(D3), PC12(CLK), PD2(CMD)
  *          时钟: SDMMC1 使用 PLL1Q (240 MHz, PLLQ=4), 分频后 30 MHz
+ *
+ *          设计要点：
+ *          1) 初始化阶段强制 1-bit 总线，提升枚举兼容性；成功后再切换 4-bit。
+ *          2) 采用 RCC FORCE_RESET + POWER=0 的硬复位重试，处理暖启动残留状态。
+ *          3) 对外统一返回 BSP_SD_Status_t，屏蔽 HAL_StatusTypeDef 细节。
+ *
+ * @note    [改进] 目前读写完成等待使用 busy-wait 轮询，
+ *          后续可切换到中断/IDMA + 事件通知以降低 CPU 占用。
  */
 #include "bsp_sd.h"
 
@@ -62,7 +70,7 @@ BSP_SD_Status_t BSP_SD_Init(void)
         return BSP_SD_OK;
     }
 
-    /* GPIO 初始化 */
+    /* Step1: 初始化 SDMMC 引脚复用。 */
     s_sd_gpio_init();
 
     /* SDMMC1 内核时钟: PLL1Q = 960 MHz VCO / 4 = 240 MHz (SystemClock_Config 中 PLLQ=4)
@@ -75,7 +83,7 @@ BSP_SD_Status_t BSP_SD_Init(void)
     printf("[SD] init: clk=%lu tick=%lu\r\n",
            HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_SDMMC), HAL_GetTick());
 
-    hal_ret = HAL_ERROR;
+    hal_ret = HAL_ERROR; /* 默认失败，重试成功后覆盖为 HAL_OK */
 
     for (retry = 0u; retry < 5u; retry++)
     {
@@ -97,7 +105,7 @@ BSP_SD_Status_t BSP_SD_Init(void)
         s_hsd.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
         s_hsd.Init.ClockDiv            = 4u; /* SDMMC1 CLK = kernel_clk / (2 * ClockDiv) */
 
-        hal_ret = HAL_SD_Init(&s_hsd);
+        hal_ret = HAL_SD_Init(&s_hsd); /* 发 CMD0/CMD8/ACMD41 等识别流程 */
         if (hal_ret == HAL_OK)
         {
             break;
@@ -118,7 +126,7 @@ BSP_SD_Status_t BSP_SD_Init(void)
         return BSP_SD_ERROR;
     }
 
-    /* 切换到 4-bit 宽总线 */
+    /* Step2: 枚举成功后尝试切换到 4-bit 宽总线，提升吞吐。 */
     hal_ret = HAL_SD_ConfigWideBusOperation(&s_hsd, SDMMC_BUS_WIDE_4B);
     if (hal_ret != HAL_OK)
     {
@@ -133,10 +141,10 @@ BSP_SD_Status_t BSP_SD_Init(void)
 
 BSP_SD_Status_t BSP_SD_DeInit(void)
 {
-    (void)HAL_SD_DeInit(&s_hsd);
-    s_sd_gpio_deinit();
-    __HAL_RCC_SDMMC1_CLK_DISABLE();
-    s_initialized = 0u;
+    (void)HAL_SD_DeInit(&s_hsd);   /* 反初始化 HAL 句柄和外设状态 */
+    s_sd_gpio_deinit();            /* 释放 GPIO 复用，降低漏电与冲突风险 */
+    __HAL_RCC_SDMMC1_CLK_DISABLE();/* 关闭 SDMMC1 时钟 */
+    s_initialized = 0u;            /* 清除初始化标志 */
     return BSP_SD_OK;
 }
 
@@ -150,10 +158,10 @@ BSP_SD_Status_t BSP_SD_ReadBlocks(uint8_t *pData, uint32_t block_addr,
         return BSP_SD_NOT_INIT;
     }
 
-    ret = HAL_SD_ReadBlocks(&s_hsd, pData, block_addr, num_blocks, timeout);
+    ret = HAL_SD_ReadBlocks(&s_hsd, pData, block_addr, num_blocks, timeout); /* 启动读传输 */
     if (ret == HAL_OK)
     {
-        /* 等待传输完成 — 带超时保护 */
+        /* 等待卡回到 TRANSFER 态，表示本次读操作完成。 */
         uint32_t retry = 0u;
         while (HAL_SD_GetCardState(&s_hsd) != HAL_SD_CARD_TRANSFER)
         {
@@ -182,9 +190,10 @@ BSP_SD_Status_t BSP_SD_WriteBlocks(const uint8_t *pData, uint32_t block_addr,
     }
 
     /* HAL_SD_WriteBlocks 参数不使用 const — 转换 */
-    ret = HAL_SD_WriteBlocks(&s_hsd, (uint8_t *)pData, block_addr, num_blocks, timeout);
+    ret = HAL_SD_WriteBlocks(&s_hsd, (uint8_t *)pData, block_addr, num_blocks, timeout); /* 启动写传输 */
     if (ret == HAL_OK)
     {
+        /* 写后等待卡内部编程完成，避免上层紧接着读到旧数据。 */
         uint32_t retry = 0u;
         while (HAL_SD_GetCardState(&s_hsd) != HAL_SD_CARD_TRANSFER)
         {
@@ -211,11 +220,11 @@ BSP_SD_Status_t BSP_SD_GetCardInfo(BSP_SD_CardInfo_t *info)
         return BSP_SD_ERROR;
     }
 
-    (void)HAL_SD_GetCardInfo(&s_hsd, &hal_info);
+    (void)HAL_SD_GetCardInfo(&s_hsd, &hal_info); /* 读取 CSD/CID 解析后的逻辑信息 */
     info->card_type      = hal_info.CardType;
     info->block_count    = hal_info.LogBlockNbr;
     info->block_size     = hal_info.LogBlockSize;
-    info->capacity_bytes = (uint64_t)hal_info.LogBlockNbr * hal_info.LogBlockSize;
+    info->capacity_bytes = (uint64_t)hal_info.LogBlockNbr * hal_info.LogBlockSize; /* 容量 = 块数×块大小 */
 
     return BSP_SD_OK;
 }
