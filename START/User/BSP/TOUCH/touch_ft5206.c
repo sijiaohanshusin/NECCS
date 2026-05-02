@@ -3,6 +3,16 @@
  * @brief   FT5206 电容触摸控制器驱动实现
  * @details 通过软件模拟 I2C 与 FT5206 触摸 IC 通信，
  *          实现初始化、寄存器读写和多点触摸扫描。
+ *
+ *          通信模式：
+ *          - 写寄存器：START -> 0x70 -> REG -> DATA... -> STOP
+ *          - 读寄存器：START -> 0x70 -> REG -> RESTART -> 0x71 -> DATA... -> STOP
+ *
+ *          坐标读取：每个触点 4 字节，X/Y 坐标各 12 bit（高4位在首字节低半字节）。
+ *          本驱动按 lcddev.dir 做横/竖屏映射，输出统一逻辑坐标给上层。
+ *
+ * @note    [改进] 当前为轮询读取（Touch_Scan 主动拉取）；
+ *          可利用 INT 引脚做中断触发，降低空闲总线占用与扫描延迟。
  *          适用于 STM32H743 平台。
  */
 
@@ -35,14 +45,14 @@ static uint8_t s_ft_write_reg(uint8_t reg, const uint8_t *buf, uint8_t len)
 {
     uint8_t i;
 
-    Touch_I2C_Start();
-    Touch_I2C_SendByte(TOUCH_FT5206_CMD_WR);
+    Touch_I2C_Start();                        /* 起始信号 */
+    Touch_I2C_SendByte(TOUCH_FT5206_CMD_WR); /* 发送写地址 0x70 */
     if (Touch_I2C_WaitAck() != 0u)
     {
         Touch_I2C_Stop();
         return 1u;
     }
-    Touch_I2C_SendByte(reg);
+    Touch_I2C_SendByte(reg);                  /* 发送寄存器地址 */
     if (Touch_I2C_WaitAck() != 0u)
     {
         Touch_I2C_Stop();
@@ -51,7 +61,7 @@ static uint8_t s_ft_write_reg(uint8_t reg, const uint8_t *buf, uint8_t len)
 
     for (i = 0u; i < len; i++)
     {
-        Touch_I2C_SendByte(buf[i]);
+        Touch_I2C_SendByte(buf[i]);           /* 连续写入数据字节 */
         if (Touch_I2C_WaitAck() != 0u)
         {
             Touch_I2C_Stop();
@@ -74,6 +84,7 @@ static uint8_t s_ft_read_reg(uint8_t reg, uint8_t *buf, uint8_t len)
 {
     uint8_t i;
 
+    /* 阶段1：写寄存器地址（随机读前导）*/
     Touch_I2C_Start();
     Touch_I2C_SendByte(TOUCH_FT5206_CMD_WR);
     if (Touch_I2C_WaitAck() != 0u)
@@ -88,6 +99,7 @@ static uint8_t s_ft_read_reg(uint8_t reg, uint8_t *buf, uint8_t len)
         return 1u;
     }
 
+    /* 阶段2：重复起始后切换到读地址，连续读取 len 字节。 */
     Touch_I2C_Start();
     Touch_I2C_SendByte(TOUCH_FT5206_CMD_RD);
     if (Touch_I2C_WaitAck() != 0u)
@@ -98,6 +110,7 @@ static uint8_t s_ft_read_reg(uint8_t reg, uint8_t *buf, uint8_t len)
 
     for (i = 0u; i < len; i++)
     {
+        /* 非最后一字节回 ACK，最后一字节回 NACK 结束读取。 */
         buf[i] = Touch_I2C_ReadByte((i + 1u) < len);
     }
 
@@ -131,6 +144,7 @@ uint8_t Touch_FT5206_Init(void)
     gpio_init.Speed = GPIO_SPEED_FREQ_MEDIUM;
     HAL_GPIO_Init(TOUCH_FT5206_INT_GPIO_PORT, &gpio_init);
 
+    /* 硬复位时序：RST 低脉冲后拉高，等待内部状态机稳定。 */
     s_ft_rst_write(0u);
     HAL_Delay(20u);
     s_ft_rst_write(1u);
@@ -145,12 +159,12 @@ uint8_t Touch_FT5206_Init(void)
     {
         return 1u;
     }
-    temp[0] = 22u;
+    temp[0] = 22u; /* 触摸阈值：数值越大越不敏感，22 为经验值 */
     if (s_ft_write_reg(TOUCH_FT5206_ID_G_THGROUP, temp, 1u) != 0u)
     {
         return 1u;
     }
-    temp[0] = 12u;
+    temp[0] = 12u; /* Active 周期：控制扫描速率与功耗折中 */
     if (s_ft_write_reg(TOUCH_FT5206_ID_G_PERIODACTIVE, temp, 1u) != 0u)
     {
         return 1u;
@@ -161,11 +175,13 @@ uint8_t Touch_FT5206_Init(void)
         return 1u;
     }
 
+    /* 固件版本白名单校验，过滤异常器件或总线误读。 */
     if ((((temp[0] == 0x30u) && (temp[1] == 0x03u)) ||
          ((temp[0] == 0x00u) && (temp[1] == 0x01u)) ||
          ((temp[0] == 0x00u) && (temp[1] == 0x02u)) ||
          ((temp[0] == 0x00u) && (temp[1] == 0x00u))) == 0u)
     {
+        /* [改进] 白名单策略较保守，可考虑允许更多版本并输出告警而非直接失败。 */
         return 1u;
     }
 
@@ -181,6 +197,8 @@ uint8_t Touch_FT5206_Init(void)
  */
 uint8_t Touch_FT5206_Scan(Touch_State_t *state)
 {
+    /* 各触点寄存器首地址：P1=0x03, P2=0x09 ... 每个触点占 6 字节，
+     * 本驱动只读取坐标相关前4字节（事件+XH+XL+YH/YL布局）。 */
     static const uint8_t reg_table[5] = {0x03u, 0x09u, 0x0Fu, 0x15u, 0x1Bu};
     uint8_t finger_count = 0u;
     uint8_t i;
@@ -192,7 +210,7 @@ uint8_t Touch_FT5206_Scan(Touch_State_t *state)
         return 0u;
     }
 
-    finger_count &= 0x0Fu;
+    finger_count &= 0x0Fu; /* bit[3:0] = 当前触点个数 */
     if ((finger_count == 0u) || (finger_count > 5u))
     {
         state->pressed = 0u;
@@ -211,6 +229,7 @@ uint8_t Touch_FT5206_Scan(Touch_State_t *state)
         {
             continue;
         }
+        /* buf[0] bit[7:6] 为事件标志，0b10 表示 Contact（接触中）。 */
         if ((buf[0] & 0xF0u) != 0x80u)
         {
             continue;
@@ -218,11 +237,13 @@ uint8_t Touch_FT5206_Scan(Touch_State_t *state)
 
         if (landscape != 0u)
         {
+            /* 横屏：坐标轴按当前板级定义直接映射。 */
             y = (uint16_t)(((uint16_t)(buf[0] & 0x0Fu) << 8) | buf[1]);
             x = (uint16_t)(((uint16_t)(buf[2] & 0x0Fu) << 8) | buf[3]);
         }
         else
         {
+            /* 竖屏：X 做镜像翻转，Y 保持；与现有 UI 坐标系保持一致。 */
             x = (uint16_t)(lcddev.width - ((((uint16_t)(buf[0] & 0x0Fu) << 8) | buf[1])));
             y = (uint16_t)(((uint16_t)(buf[2] & 0x0Fu) << 8) | buf[3]);
         }
@@ -235,7 +256,7 @@ uint8_t Touch_FT5206_Scan(Touch_State_t *state)
         state->x[valid_count] = x;
         state->y[valid_count] = y;
         state->active_mask |= (uint16_t)(1u << valid_count);
-        valid_count++;
+        valid_count++; /* 压缩存放有效点，跳过无效点后仍保持数组连续 */
     }
 
     state->count = valid_count;

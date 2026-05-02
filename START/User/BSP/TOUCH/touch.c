@@ -3,6 +3,16 @@
  * @brief   触摸屏高层接口实现
  * @details 实现触摸屏的统一初始化与扫描流程，
  *          根据 LCD 面板 ID 自动探测并选择 GT9XXX 或 FT5206 驱动。
+ *          设计目标：上层只调用 Touch_Init/Touch_Scan，不感知底层控制器差异。
+ *          探测策略：先按面板白名单优先探测，再执行兜底探测，提升跨批次兼容性。
+ *
+ *          当前探测顺序：
+ *          1) 若 panel_id 属于 GT 面板白名单：优先 GT9XXX
+ *          2) 若 panel_id 属于 FT 面板白名单：优先 FT5206，再尝试 GT9XXX
+ *          3) 最终兜底：GT9XXX -> FT5206
+ *
+ * @note    [改进] 当前探测顺序硬编码在 if 分支中，后续可改为 probe table
+ *          （控制器类型 + init 函数指针 + 适配面板列表）以便扩展新触控 IC。
  *          适用于 STM32H743 平台。
  */
 
@@ -26,12 +36,12 @@ static void s_touch_clear_points(Touch_State_t *state)
 {
     uint8_t i;
 
-    state->pressed = 0u;
-    state->count = 0u;
-    state->active_mask = 0u;
+    state->pressed = 0u;      /* 默认无按下 */
+    state->count = 0u;        /* 有效触点数清零 */
+    state->active_mask = 0u;  /* 触点位掩码清零 */
     for (i = 0u; i < TOUCH_MAX_POINTS; i++)
     {
-        state->x[i] = 0xFFFFu;
+        state->x[i] = 0xFFFFu; /* 用 0xFFFF 作为无效坐标哨兵值 */
         state->y[i] = 0xFFFFu;
     }
 }
@@ -90,10 +100,11 @@ uint8_t Touch_Init(void)
 {
     uint16_t panel_id;
 
-    memset(&s_touch_state, 0, sizeof(s_touch_state));
-    s_touch_clear_points(&s_touch_state);
-    panel_id = lcddev.id;
+    memset(&s_touch_state, 0, sizeof(s_touch_state)); /* 清空内部状态结构 */
+    s_touch_clear_points(&s_touch_state);             /* 初始化坐标哨兵值与掩码 */
+    panel_id = lcddev.id;                             /* 读取 LCD 模块识别到的面板 ID */
 
+    /* 路径1：GT 面板白名单优先探测 GT9XXX。 */
     if (s_touch_is_gt_panel(panel_id) != 0u)
     {
         if (Touch_GT9XXX_Init() == 0u)
@@ -101,9 +112,11 @@ uint8_t Touch_Init(void)
             s_touch_use_gt9xxx();
             return 0u;
         }
+        /* [注意] 该日志仅在初始化阶段打印，不在高频扫描路径中。 */
         printf("Touch GT probe failed on panel 0x%04X\r\n", panel_id);
     }
 
+    /* 路径2：FT 面板白名单优先 FT5206，失败后退到 GT9XXX。 */
     if (s_touch_is_ft_panel(panel_id) != 0u)
     {
         if (Touch_FT5206_Init() == 0u)
@@ -119,6 +132,7 @@ uint8_t Touch_Init(void)
         }
     }
 
+    /* 路径3：通用兜底探测，覆盖面板 ID 异常或新批次兼容场景。 */
     if (Touch_GT9XXX_Init() == 0u)
     {
         s_touch_use_gt9xxx();
@@ -148,6 +162,7 @@ uint8_t Touch_Scan(void)
         return 0u;
     }
 
+    /* 每次扫描先清空上一帧触点，避免控制器读失败时残留旧坐标。 */
     s_touch_clear_points(&s_touch_state);
 
     switch ((Touch_Controller_t)s_touch_state.controller)
@@ -160,6 +175,7 @@ uint8_t Touch_Scan(void)
 
         case TOUCH_CTRL_NONE:
         default:
+            /* 控制器未就绪或枚举值异常，按无触摸处理。 */
             return 0u;
     }
 }
