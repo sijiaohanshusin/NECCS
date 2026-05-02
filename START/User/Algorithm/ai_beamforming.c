@@ -710,6 +710,19 @@ void AI_SRP_PHAT_Init(void)
     s_low_conf_streak = 0u;
 }
 
+/**
+ * @brief   动态设置 GCC-PHAT 活动频率范围
+ * @details 限制 SRP-PHAT 只累加指定频率 bin 范围内的响应，可突出特定声源频段。
+ *          例如 500Hz-4kHz 对应语音定位，200Hz-1kHz 对应低频机器噪声。
+ *
+ *          换算关系：频率(Hz) = bin_index × (fs / N) = bin_index × (48000 / 256) ≈ 187.5 × bin_index
+ *
+ *          输入值会被钳位到编译期宏 [SRP_FREQ_BIN_START, SRP_FREQ_BIN_END] 范围内，
+ *          超出范围的值会被静默钳位而不会报错。
+ *
+ * @param   bin_start  活动起始频率 bin（含，FFT 空间）
+ * @param   bin_end    活动结束频率 bin（含，FFT 空间，bin_end >= bin_start）
+ */
 void AI_SRP_SetActiveFreqRange(uint16_t bin_start, uint16_t bin_end)
 {
     /* 钳位到编译期允许范围 */
@@ -729,6 +742,11 @@ void AI_SRP_SetActiveFreqRange(uint16_t bin_start, uint16_t bin_end)
     s_active_bin_end   = bin_end;
 }
 
+/**
+ * @brief   获取当前活动频率 bin 范围
+ * @param   bin_start  输出起始 bin（若非 NULL）
+ * @param   bin_end    输出结束 bin（若非 NULL）
+ */
 void AI_SRP_GetActiveFreqRange(uint16_t *bin_start, uint16_t *bin_end)
 {
     if (bin_start != NULL)
