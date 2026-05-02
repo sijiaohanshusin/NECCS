@@ -211,96 +211,148 @@ void PCMD_Config_TDM_Slots(uint8_t devAddr, uint8_t startSlot)
  */
 void PCMD_Config_Clock_Mode(uint8_t devAddr)
 {
-    // 写入 0x00 即可完美适配
+    /* MST_CFG0 = 0x00: Slave 模式
+     *   bit7=0: FSYNC 方向为输入 (由 SAI 主机驱动)
+     *   bit6=0: BCLK  方向为输入 (由 SAI 主机驱动)
+     *   其余位默认 0，无需额外配置 */
     PCMD_WriteReg(devAddr, PCMD_REG_MST_CFG0, 0x00);
+
+    /* MST_CFG1 = 0x00: Auto Clock 模式
+     *   芯片自动检测输入的 BCLK/FSYNC 频率，内部分频链自适应
+     *   无需软件手动配置 PLL 分频比，简化配置流程 */
     PCMD_WriteReg(devAddr, PCMD_REG_MST_CFG1, 0x00);
-    //配置时钟输入引脚
+
+    /* CLK_SRC = 0x00: 时钟源选择外部 BCLK 引脚
+     *   本工程 BCLK 由 STM32 SAI2 提供，频率 = 16ch × 16bit × 48kHz = 12.288 MHz */
     PCMD_WriteReg(devAddr, PCMD_REG_CLK_SRC, 0x00);
 }
 
 /**
- * @brief  配置 PDM 接口与 GPIO
- * @param  devAddr  I2C 设备地址 (7-bit)
- * @note   GPO1-4 配置为 PDM CLK 输出 (High Drive)
- *         GPI 配置为 PDM 数据输入
+ * @brief   配置 PDM 接口与 GPIO 复用
+ * @details 本芯片通过 GPO1-4 向外输出 PDM 时钟（到麦克风），
+ *          通过 GPI1-4 接收麦克风输出的 PDM 数据。
+ *          GPO 使用 High Drive 模式（大电流驱动），确保 3.072 MHz 时钟边沿质量，
+ *          降低线路阻抗导致的时钟占空比畸变。
+ *
+ * 寄存器说明：
+ * - PDMCLK_CFG (0x1F) = 0x40: bit6=1 使能 PDM CLK 输出，bit[1:0]=0 不分频
+ * - PDMIN_CFG  (0x20) = 0x00: 所有 PDM 数据引脚使能（默认值）
+ * - GPIO_CFG0  (0x21) = 0x00: GPIO 方向全部由各 GPOx_CFG 决定（默认）
+ * - GPO1-4_CFG (0x22-0x25) = 0x41:
+ *     bit6=1: High Drive 模式（约 8mA 驱动电流，默认 4mA）
+ *     bit[5:0]=0x01: GPO 功能选择 PDM CLK Output
+ * - GPI_CFG0 (0x2B) = 0x45: GPI1=func_4 (PDMIN_0), GPI2=func_5 (PDMIN_1)
+ * - GPI_CFG1 (0x2C) = 0x67: GPI3=func_6 (PDMIN_2), GPI4=func_7 (PDMIN_3)
+ *   (每个寄存器低 4 位 = 奇数 GPI 功能，高 4 位 = 偶数 GPI 功能)
+ * @param   devAddr  7-bit I2C 设备地址 (0x4C 或 0x4D)
  */
 void PCMD_Config_PDM_IO(uint8_t devAddr)
 {
+    /* 使能 PDM CLK 输出，不分频 (直接输出由 PLL 生成的 3.072 MHz) */
     PCMD_WriteReg(devAddr, PCMD_REG_PDMCLK_CFG, 0x40);
+    /* PDM 数据输入引脚全部使能（默认配置，无需修改） */
     PCMD_WriteReg(devAddr, PCMD_REG_PDMIN_CFG, 0x00);
-    //配置 GPIO 复用
+    /* GPIO_CFG0: GPIO 方向由各 GPOx_CFG 独立控制，此处保持默认 */
     PCMD_WriteReg(devAddr, PCMD_REG_GPIO_CFG0, 0x00);
-    // GPO1-4 (Reg 0x22-0x25) 全部设为 PDM CLK Output (通常是 0x04)
+    /* GPO1-4 全部配置为 PDM CLK 输出，High Drive 模式
+     * 0x41 = bit6(High Drive=1) | bit[5:0](func=0x01=PDM CLK Out) */
     PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG0, 0x41);
     PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG1, 0x41);
     PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG2, 0x41);
     PCMD_WriteReg(devAddr, PCMD_REG_GPO_CFG3, 0x41);
-    //GPO_VAL Register跳过
-    //GPIO_MON Register跳过
-    //GPI配置
+    /* GPO_VAL / GPIO_MON 寄存器：只读监控，初始化阶段无需写入 */
+    /* GPI1/GPI2 功能映射 (0x45 = GPI1→PDMIN_0, GPI2→PDMIN_1) */
     PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG0, 0x45);
+    /* GPI3/GPI4 功能映射 (0x67 = GPI3→PDMIN_2, GPI4→PDMIN_3) */
     PCMD_WriteReg(devAddr, PCMD_REG_GPI_CFG1, 0x67);
 }
 
 /**
- * @brief  配置 DSP 处理链
- * @param  devAddr  I2C 设备地址 (7-bit)
- * @note   启用 HPF (高通滤波器)，当前配置对应 96Hz @ 48kHz
- *         用于去除直流偏置和低频噪声
+ * @brief   配置 DSP 数字信号处理链
+ * @details 本工程仅启用高通滤波器 (HPF)，用于：
+ *          1. 去除直流偏置 (DC offset)，防止 FFT 频谱 0Hz 处尖峰
+ *          2. 滤除麦克风低频机械噪声（风声、结构振动）
+ *
+ *          HPF 截止频率由 DSP_CFG0[2:1] 决定：
+ *          - 0x00 = 禁用 HPF
+ *          - 0x02 = 截止频率 ~4Hz   (采样率 48kHz)
+ *          - 0x04 = 截止频率 ~96Hz  (采样率 48kHz) ← 本工程配置
+ *          - 0x06 = 截止频率 ~410Hz (采样率 48kHz)
+ *
+ *          @note 若后续 SRP-PHAT 算法在低频段有明显噪声积累，
+ *                可尝试将截止频率从 96Hz 提高至 410Hz。
+ * @param   devAddr  7-bit I2C 设备地址 (0x4C 或 0x4D)
  */
 void PCMD_Config_DSP(uint8_t devAddr)
 {
-    //启用 HPF (Reg 0x6B) -> 0x02 (96Hz for 48k)
-    PCMD_WriteReg(devAddr, PCMD_REG_DSP_CFG0, 0x02);//可在图形界面配置
+    /* DSP_CFG0 = 0x02: bit[2:1]=01 选择 HPF 截止频率档位（~96Hz @ 48kHz）
+     * bit0=0: 不使能 DRC（动态范围压缩），保持原始幅度以便声源定位 */
+    PCMD_WriteReg(devAddr, PCMD_REG_DSP_CFG0, 0x02);
+    /* DSP_CFG1 = 0x00: 其他 DSP 参数（AGC 等）保持默认关闭 */
     PCMD_WriteReg(devAddr, PCMD_REG_DSP_CFG1, 0x00);
 }
 
 /**
- * @brief  配置 8 个输入通道
- * @param  devAddr  I2C 设备地址 (7-bit)
- * @note   将所有通道输入源设为 PDM (0x40)
- *         每个通道占 5 个寄存器 (CFG0-CFG4)
+ * @brief   配置 8 个模拟输入通道
+ * @details 每个通道寄存器组占 5 个连续地址 (CHx_CFG0 ~ CHx_CFG4)：
+ *          - CHx_CFG0 (+0): 输入源选择、增益控制
+ *          - CHx_CFG1 (+1): 数字增益低字节
+ *          - CHx_CFG2 (+2): 数字增益高字节
+ *          - CHx_CFG3 (+3): 相位校准系数
+ *          - CHx_CFG4 (+4): 相位校准偏置
+ *
+ *          本工程所有通道均选择 PDM 输入 (CHx_CFG0 = 0x40)，
+ *          增益和相位保持默认 0，后续可通过校准流程写入 CFG1-CFG4。
+ *
+ *          通道基地址：CH1=0x3C, CH2=0x41, CH3=0x46, ..., CH8=0x69
+ *          相邻通道偏移 = 5。
+ * @param   devAddr  7-bit I2C 设备地址 (0x4C 或 0x4D)
  */
 void PCMD_Config_Channels(uint8_t devAddr)
 {
-    // 1. 配置 VREF (Reg 0x3B)
-    // 假设 AVDD=3.3V, 使用 2.75V VREF
+    uint8_t ch_base;
+    uint8_t i;
+
+    /* BIAS_CFG (0x3B) = 0x00: VREF 和偏置电流保持默认值
+     * 数据手册建议 AVDD=3.3V 时使用默认偏置，无需调整 */
     PCMD_WriteReg(devAddr, PCMD_REG_BIAS_CFG, 0x00);
 
-    // 2. 批量配置 8 个通道
-    // 每个通道占 5 个寄存器 (CFG0 - CFG4)
-    // 我们只需要改 CFG0 (开启PDM)，其他(Vol, Phase)保持默认0
-    
-    uint8_t ch_base;
-    for (int i = 0; i < 8; i++) {
-        // 计算每个通道的 CFG0 地址
-        // CH1=0x3C, CH2=0x41, ... 偏移量是 5 * i
-        ch_base = PCMD_REG_CH1_CFG0 + (i * 5);
-        // 关键：将 Input Source 设为 PDM
+    /* 批量配置 8 个通道：仅设置 CFG0 (选为 PDM 输入源)，
+     * 增益 (CFG1/CFG2) 和相位 (CFG3/CFG4) 保持默认 0 */
+    for (i = 0u; i < 8u; i++)
+    {
+        /* 计算第 i 通道的 CFG0 地址：CH1=0x3C, 步长=5 */
+        ch_base = (uint8_t)(PCMD_REG_CH1_CFG0 + (i * 5u));
+        /* CHx_CFG0 = 0x40: bit[7:6]=01 选择 PDM 作为输入源 */
         PCMD_WriteReg(devAddr, ch_base, 0x40);
-        // (可选) 确保 Phase Calibration 为 0 (基地址 + 4)
-        //PCMD_WriteReg(devAddr, ch_base + 4, 0x00);
     }
 }
 
 /**
- * @brief  使能所有功能模块并上电
- * @param  devAddr  I2C 设备地址 (7-bit)
- * @note   按顺序：使能输入通道 -> 使能 ASI 输出 -> 上电 PLL+PDM
- *         本工程 `PWR_CFG` 配置值为 `0x60`。
+ * @brief   使能所有功能模块并上电
+ * @details 按照 TI 数据手册推荐的三步上电顺序执行，顺序不可颠倒：
+ *          1. 先使能输入通道，确保 PDM 路由准备就绪
+ *          2. 再使能 ASI 输出，打通 TDM 总线数据链路
+ *          3. 最后给 PLL 和 PDM 转换器上电，正式开始采样/转换
+ *          若提前上电 PLL 而未完成路由配置，可能产生短暂噪声脉冲。
+ *
+ * @param   devAddr  7-bit I2C 设备地址 (0x4C 或 0x4D)
+ * @note    PWR_CFG = 0x60: bit6=1 上电 PLL，bit5=1 上电 PDM 转换器，
+ *          其余位保持 0（ADC 模块由 PDM 转换器含盖，无需单独上电）
  */
 void PCMD_Enable_Blocks(uint8_t devAddr)
 {
-    // 1. 开启输入通道 (Ch1-Ch8)
-    // 对应文档 Step g: Enable input channels
+    /* Step 1: IN_CH_EN = 0xFF 使能全部 8 个输入通道 (Ch1-Ch8)
+     * 对应 TI 初始化文档 Step g: Enable input channels */
     PCMD_WriteReg(devAddr, PCMD_REG_IN_CH_EN, 0xFF);
 
-    // 2. 开启 ASI 输出 (Ch1-Ch8)
-    // 对应文档 Step h: Enable ASI output
+    /* Step 2: ASI_OUT_EN = 0xFF 使能全部 8 路 TDM 时隙输出 (Ch1-Ch8)
+     * 对应 TI 初始化文档 Step h: Enable ASI output */
     PCMD_WriteReg(devAddr, PCMD_REG_ASI_OUT_EN, 0xFF);
 
-    // 3. 启动 PLL 和 PDM 转换器核心电源
-    // 对应文档 Step i: Power-up PDM & PLL
+    /* Step 3: PWR_CFG = 0x60 上电 PLL 和 PDM 转换器核心
+     * bit6=1: PLL 上电；bit5=1: PDM 转换器上电
+     * 对应 TI 初始化文档 Step i: Power-up PDM & PLL */
     PCMD_WriteReg(devAddr, PCMD_REG_PWR_CFG, 0x60);
 }
 
