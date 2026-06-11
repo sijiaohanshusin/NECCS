@@ -13,6 +13,7 @@
 
 # IDE and editor
 .vscode/
+.codex/
 *.uvoptx
 *.uvguix.*
 .idea/
@@ -39,7 +40,17 @@ Output/
 *.codex-bak
 *.encoding-bak
 
-# Reference materials (large binaries, not part of source)
+# Archives / installers
+*.zip
+*.rar
+*.7z
+*.exe
+
+# Reference materials moved to board-level folders
+PPT/
+tmp/
+claude-code-best-practice-main/
+这是这个开发板的官方资料，需要可以取用/
 OV2640摄像头模块产品资料/
 stm32n6资料/
 docs_current_backup_*/
