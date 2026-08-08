@@ -1,5 +1,4 @@
 # NECCS 项目 Git 属性配置
-
 # 源代码：统一 LF 换行符
 *.c     text eol=lf
 *.h     text eol=lf
@@ -16,7 +15,6 @@
 *.yml   text eol=lf
 *.yaml  text eol=lf
 *.ps1   text eol=crlf
-
 # IDE / 工具链文件：保持 CRLF（Windows 工具链）
 *.uvprojx  text eol=crlf
 *.uvoptx   text eol=crlf
@@ -24,7 +22,6 @@
 *.ioc      text eol=crlf
 *.scvd     text eol=crlf
 *.ini      text eol=crlf
-
 # 二进制文件：不做 diff / merge
 *.axf   binary
 *.hex   binary
@@ -38,3 +35,5 @@
 *.bmp   binary
 *.ico   binary
 *.gif   binary
+MiniPro_H750/**/*.zip filter=lfs diff=lfs merge=lfs -text
+MiniPro_H750/**/*.pdf filter=lfs diff=lfs merge=lfs -text
